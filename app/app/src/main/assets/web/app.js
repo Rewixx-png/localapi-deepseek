@@ -1601,11 +1601,21 @@
   }
 
   function copyText(text) {
+    var value = String(text == null ? "" : text);
+    // The WebView clipboard API is unreliable on Android (rejected promises,
+    // deprecated execCommand); prefer the native ClipboardManager.
+    if (window.Native && Native.copyToClipboard) {
+      try {
+        Native.copyToClipboard(value);
+        toast("Скопировано");
+        return;
+      } catch (e) { /* fall through */ }
+    }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { toast("Скопировано"); },
-        function () { fallbackCopy(text); });
+      navigator.clipboard.writeText(value).then(function () { toast("Скопировано"); },
+        function () { fallbackCopy(value); });
     } else {
-      fallbackCopy(text);
+      fallbackCopy(value);
     }
   }
 
@@ -1616,7 +1626,9 @@
     ta.style.opacity = "0";
     document.body.appendChild(ta);
     ta.select();
-    try { document.execCommand("copy"); toast("Скопировано"); } catch (e) { toast("Не удалось скопировать"); }
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    toast(ok ? "Скопировано" : "Не удалось скопировать");
     document.body.removeChild(ta);
   }
 

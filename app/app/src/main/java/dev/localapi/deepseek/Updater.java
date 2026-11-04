@@ -7,18 +7,15 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
-import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
-import android.util.Log;
 import android.webkit.WebView;
 import android.widget.Toast;
 
@@ -45,7 +42,6 @@ final class Updater {
     static final String MANIFEST_URL =
             "https://raw.githubusercontent.com/Rewixx-png/localapi-deepseek/main/update.json";
     static final String SOURCE_URL = "https://github.com/Rewixx-png/localapi-deepseek";
-    static final String ACTION_INSTALL_RESULT = "dev.localapi.deepseek.INSTALL_RESULT";
     static final int JOB_ID = 9701;
 
     private static final String PREFS = "updater";
@@ -64,52 +60,7 @@ final class Updater {
     private boolean pendingDownload;
     private File pendingInstall;
 
-    private final BroadcastReceiver installReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS,
-                    PackageInstaller.STATUS_FAILURE);
-            if (status == PackageInstaller.STATUS_SUCCESS) {
-                runJs("window.__updateStatus && window.__updateStatus('installed')");
-                return;
-            }
-            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                // The system installer asks the app to show its confirmation
-                // UI. Treating this status as a failure is what produced the
-                // misleading "Установка отменена" message.
-                Intent confirm;
-                if (Build.VERSION.SDK_INT >= 33) {
-                    confirm = intent.getParcelableExtra(
-                            Intent.EXTRA_INTENT, Intent.class);
-                } else {
-                    //noinspection deprecation
-                    confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-                }
-                if (confirm != null) {
-                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    try {
-                        activity.startActivity(confirm);
-                        return;
-                    } catch (Exception e) {
-                        String failure = "Не удалось открыть окно установки: "
-                                + (e.getMessage() == null ? e.getClass().getSimpleName()
-                                : e.getMessage());
-                        Log.w("Updater", failure, e);
-                        runJs("window.__updateError && window.__updateError("
-                                + JSONObject.quote(failure) + ")");
-                        return;
-                    }
-                }
-            }
-            String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-            String text = installErrorText(status, message);
-            Log.w("Updater", "install failed: " + text);
-            runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote(text) + ")");
-        }
-    };
-
-    private static String installErrorText(int status, String message) {
+    static String installErrorText(int status, String message) {
         String base;
         switch (status) {
             case PackageInstaller.STATUS_FAILURE_ABORTED:
@@ -153,15 +104,6 @@ final class Updater {
 
     void onLaunch() {
         scheduleJob(activity);
-        try {
-            IntentFilter filter = new IntentFilter(ACTION_INSTALL_RESULT);
-            if (Build.VERSION.SDK_INT >= 33) {
-                activity.registerReceiver(installReceiver, filter, Context.RECEIVER_EXPORTED);
-            } else {
-                activity.registerReceiver(installReceiver, filter);
-            }
-        } catch (Exception ignored) {
-        }
         SharedPreferences prefs = prefs(activity);
         if (Build.VERSION.SDK_INT >= 26 && !prefs.getBoolean(KEY_INSTALL_ASKED, false)) {
             prefs.edit().putBoolean(KEY_INSTALL_ASKED, true).apply();
@@ -342,11 +284,15 @@ final class Updater {
                     }
                     session.fsync(out);
                 }
-                Intent result = new Intent(ACTION_INSTALL_RESULT)
-                        .setPackage(activity.getPackageName());
+                Intent result = new Intent(activity, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        .putExtra("install_result", true);
                 int flags = PendingIntent.FLAG_UPDATE_CURRENT;
                 if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
-                PendingIntent pending = PendingIntent.getBroadcast(activity, 0, result, flags);
+                // An activity result sender relaunches the app after a
+                // successful install instead of leaving it dead in the background.
+                PendingIntent pending = PendingIntent.getActivity(activity, 1, result, flags);
                 session.commit(pending.getIntentSender());
             }
             runJs("window.__updateStatus && window.__updateStatus('installing')");
@@ -373,13 +319,6 @@ final class Updater {
                 }
             }
         });
-    }
-
-    void onDestroy() {
-        try {
-            activity.unregisterReceiver(installReceiver);
-        } catch (Exception ignored) {
-        }
     }
 
     private void runJs(String script) {
