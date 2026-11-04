@@ -477,8 +477,11 @@ impl StreamParser {
             .collect();
         self.emitted_reasoning.resize(self.types.len(), 0);
         self.emitted_answer.resize(self.types.len(), 0);
-        self.active = None;
 
+        // A snapshot replaces the fragment list, but it must not forget which
+        // fragment is currently receiving tokens: DeepSeek sends snapshots
+        // between THINK and RESPONSE, and a bare `{"v":"…"}` delta right after
+        // one would otherwise be dropped.
         for (idx, fragment) in fragments.iter().enumerate() {
             self.claim(idx, fragment, on_delta)?;
             if matches!(self.kind(idx), Some("RESPONSE") | Some("TEMPLATE_RESPONSE")) {
@@ -508,17 +511,15 @@ impl StreamParser {
             return Ok(());
         }
         if path == "response/fragments" || path == "fragments" {
-            if let Some(fragments) = value.as_array() {
-                for fragment in fragments {
-                    let idx = self.types.len();
-                    self.types
-                        .push(fragment.get("type").and_then(Value::as_str).unwrap_or("").to_string());
-                    self.emitted_reasoning.push(0);
-                    self.emitted_answer.push(0);
-                    self.claim(idx, fragment, on_delta)?;
-                    if matches!(self.kind(idx), Some("RESPONSE") | Some("TEMPLATE_RESPONSE")) {
-                        self.active = Some(idx);
-                    }
+            for fragment in fragment_list(value) {
+                let idx = self.types.len();
+                self.types
+                    .push(fragment.get("type").and_then(Value::as_str).unwrap_or("").to_string());
+                self.emitted_reasoning.push(0);
+                self.emitted_answer.push(0);
+                self.claim(idx, &fragment, on_delta)?;
+                if matches!(self.kind(idx), Some("RESPONSE") | Some("TEMPLATE_RESPONSE")) {
+                    self.active = Some(idx);
                 }
             }
             return Ok(());
@@ -547,11 +548,20 @@ impl StreamParser {
         text: &str,
         on_delta: &mut dyn FnMut(WebDelta) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        if let Some(idx) = self.active {
+        // Bare appends (`{"v":"…"}`) address whatever fragment is active. Once
+        // a RESPONSE fragment exists, answer tokens belong to it even if a
+        // snapshot briefly left `active` unset (or pointing at THINK).
+        if let Some(idx) = self.last_answer_index().or(self.active) {
             self.append_at(idx, text, on_delta)
         } else {
             Ok(())
         }
+    }
+
+    fn last_answer_index(&self) -> Option<usize> {
+        self.types
+            .iter()
+            .rposition(|kind| matches!(kind.as_str(), "RESPONSE" | "TEMPLATE_RESPONSE"))
     }
 
     fn append_at(
@@ -612,6 +622,20 @@ impl StreamParser {
     }
 }
 
+/// DeepSeek has been observed sending the fragment list as an array, a single
+/// object, or a JSON-encoded string. All three mean the same thing.
+fn fragment_list(value: &Value) -> Vec<Value> {
+    let parsed = value
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok());
+    let source = parsed.as_ref().unwrap_or(value);
+    match source {
+        Value::Array(items) => items.iter().filter(|item| item.is_object()).cloned().collect(),
+        Value::Object(_) => vec![source.clone()],
+        _ => Vec::new(),
+    }
+}
+
 /// `response/fragments/-1/content` → -1; other paths → None.
 fn fragment_content_index(path: &str) -> Option<i64> {
     let rest = path.strip_prefix("response/fragments/")?;
@@ -620,6 +644,107 @@ fn fragment_content_index(path: &str) -> Option<i64> {
         return None;
     }
     index.parse::<i64>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn apply(
+        parser: &mut StreamParser,
+        payload: Value,
+        answer: &mut String,
+        reasoning: &mut String,
+    ) {
+        let mut sink = |delta: WebDelta| {
+            match delta {
+                WebDelta::Answer(text) => answer.push_str(&text),
+                WebDelta::Reasoning(text) => reasoning.push_str(&text),
+            }
+            Ok(())
+        };
+        parser
+            .apply(&payload.to_string(), "message", &mut sink)
+            .expect("parser accepts the frame");
+    }
+
+    #[test]
+    fn string_encoded_response_fragment_keeps_first_token() {
+        let mut parser = StreamParser::default();
+        let mut answer = String::new();
+        let mut reasoning = String::new();
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[{"type":"THINK","content":"Думаю."}]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        let fragments = json!([{"type":"RESPONSE","content":"При!"}]).to_string();
+        apply(
+            &mut parser,
+            json!({"p":"response/fragments","o":"APPEND","v":fragments}),
+            &mut answer,
+            &mut reasoning,
+        );
+        apply(
+            &mut parser,
+            json!({"v":"вет! Рад тебя видеть"}),
+            &mut answer,
+            &mut reasoning,
+        );
+        assert_eq!(reasoning, "Думаю.");
+        assert_eq!(answer, "При!вет! Рад тебя видеть");
+    }
+
+    #[test]
+    fn bare_object_response_fragment_is_accepted() {
+        let mut parser = StreamParser::default();
+        let mut answer = String::new();
+        let mut reasoning = String::new();
+        apply(
+            &mut parser,
+            json!({"p":"response/fragments","o":"APPEND",
+                   "v":{"type":"RESPONSE","content":"Ответ"}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        assert_eq!(answer, "Ответ");
+        assert!(reasoning.is_empty());
+    }
+
+    #[test]
+    fn snapshot_between_think_and_response_keeps_the_answer_active() {
+        let mut parser = StreamParser::default();
+        let mut answer = String::new();
+        let mut reasoning = String::new();
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[
+                {"type":"THINK","content":"Думаю."},
+                {"type":"RESPONSE","content":"При!"}
+            ]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // Repeated snapshot must not clear the active RESPONSE fragment.
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[
+                {"type":"THINK","content":"Думаю."},
+                {"type":"RESPONSE","content":"При!"}
+            ]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        apply(
+            &mut parser,
+            json!({"v":"вет! Рад тебя видеть"}),
+            &mut answer,
+            &mut reasoning,
+        );
+        assert_eq!(answer, "При!вет! Рад тебя видеть");
+        assert_eq!(reasoning, "Думаю.");
+    }
 }
 
 fn unauthorized() -> Error {

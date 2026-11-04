@@ -252,6 +252,20 @@ with sync_playwright() as p:
     page.wait_for_timeout(1900)
     page.screenshot(path=f"{SHOTS}/10-settings.png")
 
+    # Settings is a catalog now: every control lives in its own submenu.
+    page.click('.settings-cat[data-settings-pane="model"]')
+    page.click('#model-select button[data-model="deepseek-v4-pro"]')
+    assert "V4 Pro" in (page.text_content("#sheet-model") or "")
+    assert page.is_checked("#search-toggle")
+    page.uncheck("#reasoning-toggle")
+    assert page.is_hidden("#effort-setting")
+    assert page.inner_text("#reasoning-note") == "Выключены"
+    page.check("#reasoning-toggle")
+    assert page.is_visible("#effort-setting")
+    page.click("#settings-back")
+    assert "V4 Pro" in page.inner_text("#cat-sub-model")
+
+    page.click('.settings-cat[data-settings-pane="ui"]')
     page.click('#theme-select button[data-theme-choice="light"]')
     assert page.get_attribute("html", "data-theme") == "light"
     page.click('#theme-select button[data-theme-choice="dark"]')
@@ -263,17 +277,10 @@ with sync_playwright() as p:
     page.wait_for_timeout(120)
     assert page.evaluate("localStorage.getItem('textZoom')") == "115"
     assert page.inner_text("#text-value") == "115%"
+    page.click("#settings-back")
+    assert "текст 115%" in page.inner_text("#cat-sub-ui")
 
-    page.click('#model-select button[data-model="deepseek-v4-pro"]')
-    assert "V4 Pro" in page.inner_text("#sheet-model")
-
-    assert page.is_checked("#search-toggle")
-    page.uncheck("#reasoning-toggle")
-    assert page.is_hidden("#effort-setting")
-    assert page.inner_text("#reasoning-note") == "Выключены"
-    page.check("#reasoning-toggle")
-    assert page.is_visible("#effort-setting")
-
+    page.click('.settings-cat[data-settings-pane="server"]')
     page.check("#server-toggle")
     page.wait_for_timeout(150)
     assert page.is_visible("#server-info")
@@ -286,18 +293,21 @@ with sync_playwright() as p:
     page.wait_for_timeout(300)
     page.screenshot(path=f"{SHOTS}/14-local-server.png")
     page.uncheck("#server-toggle")
+    page.click("#settings-back")
 
     # offline switch blocks sending
+    page.click('.settings-cat[data-settings-pane="system"]')
     page.uncheck("#online-toggle")
-    page.click("#settings-back")
+    page.click("#settings-close")
     page.wait_for_timeout(200)
     assert page.is_visible("#offline-banner")
     assert page.is_disabled("#send-btn")
     page.screenshot(path=f"{SHOTS}/15-offline.png")
     page.click("#menu-btn")
     page.click("#open-settings")
+    page.click('.settings-cat[data-settings-pane="system"]')
     page.check("#online-toggle")
-    page.click("#settings-back")
+    page.click("#settings-close")
     page.wait_for_timeout(200)
     assert page.is_hidden("#offline-banner")
     assert page.is_enabled("#send-btn")
@@ -305,14 +315,16 @@ with sync_playwright() as p:
     # light theme screenshot
     page.click("#menu-btn")
     page.click("#open-settings")
+    page.click('.settings-cat[data-settings-pane="ui"]')
     page.click('#theme-select button[data-theme-choice="light"]')
-    page.click("#settings-back")
+    page.click("#settings-close")
     page.wait_for_timeout(300)
     page.screenshot(path=f"{SHOTS}/11-light-chat.png")
     page.click("#menu-btn")
     page.click("#open-settings")
+    page.click('.settings-cat[data-settings-pane="ui"]')
     page.click('#theme-select button[data-theme-choice="dark"]')
-    page.click("#settings-back")
+    page.click("#settings-close")
 
     # web-token mode: token screen copy, then chat with DeepThink instead of effort
     page.evaluate("""() => {
@@ -339,8 +351,9 @@ with sync_playwright() as p:
     page.wait_for_selector("#screen-chat.active")
     page.click("#menu-btn")
     page.click("#open-settings")
+    page.click('.settings-cat[data-settings-pane="model"]')
     assert page.is_hidden("#model-block")
-    page.click("#settings-back")
+    page.click("#settings-close")
     page.fill("#input", "Проверка веб-режима")
     page.click("#send-btn")
     page.wait_for_timeout(1900)

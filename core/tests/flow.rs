@@ -146,8 +146,18 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
         ];
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
         conn.write_all(head.as_bytes()).unwrap();
-        for event in events {
-            let _ = write!(conn, "data: {event}\n\n");
+        for (index, event) in events.iter().enumerate() {
+            let line = format!("data: {event}\n\n");
+            if index == 2 {
+                // Simulate a TCP boundary in the middle of a `data:` line.
+                let split = line.len() / 2;
+                conn.write_all(&line.as_bytes()[..split]).unwrap();
+                conn.flush().unwrap();
+                std::thread::sleep(Duration::from_millis(5));
+                conn.write_all(&line.as_bytes()[split..]).unwrap();
+            } else {
+                let _ = conn.write_all(line.as_bytes());
+            }
             let _ = conn.flush();
             std::thread::sleep(Duration::from_millis(if slow { 60 } else { 5 }));
         }
@@ -237,20 +247,28 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
                 {"id":1,"type":"THINK","content":""}
             ]}}}),
         );
-        let _ = write_event(
+        // Split one event between two TCP writes: the reader must keep a
+        // partial line instead of parsing each network chunk separately.
+        let _ = write_event_split(
             &mut conn,
             "message",
             &json!({"p":"response/fragments/-1/content","o":"APPEND","v":reasoning}),
         );
+        // The first answer token arrives inside the fragment object; the rest
+        // is appended afterwards. Neither part may be dropped at the THINK →
+        // RESPONSE transition.
+        let split = answer.char_indices().nth(3).map(|(i, _)| i).unwrap_or(answer.len());
+        let (initial, tail) = answer.split_at(split);
         let _ = write_event(
             &mut conn,
             "message",
-            &json!({"p":"response/fragments","o":"APPEND","v":[{"id":2,"type":"RESPONSE","content":""}]}),
+            &json!({"p":"response/fragments","o":"APPEND",
+                    "v":[{"id":2,"type":"RESPONSE","content":initial}]}),
         );
-        let _ = write_event(
+        let _ = write_event_split(
             &mut conn,
             "message",
-            &json!({"p":"response/fragments/-1/content","o":"APPEND","v":answer}),
+            &json!({"p":"response/fragments/-1/content","o":"APPEND","v":tail}),
         );
         let _ = write_event(
             &mut conn,
@@ -266,6 +284,18 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
 
 fn write_event(conn: &mut TcpStream, event: &str, data: &Value) -> std::io::Result<()> {
     write!(conn, "event: {event}\ndata: {data}\n\n")?;
+    conn.flush()
+}
+
+/// Writes one SSE event in two chunks with a pause, simulating a TCP packet
+/// boundary in the middle of the JSON (and possibly inside a UTF-8 sequence).
+fn write_event_split(conn: &mut TcpStream, event: &str, data: &Value) -> std::io::Result<()> {
+    let text = format!("event: {event}\ndata: {data}\n\n");
+    let split = text.len() / 2;
+    conn.write_all(&text.as_bytes()[..split])?;
+    conn.flush()?;
+    std::thread::sleep(Duration::from_millis(5));
+    conn.write_all(&text.as_bytes()[split..])?;
     conn.flush()
 }
 

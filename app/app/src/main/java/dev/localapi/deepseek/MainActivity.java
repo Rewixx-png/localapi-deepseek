@@ -91,33 +91,36 @@ public final class MainActivity extends Activity {
         // Android 15 draws apps edge-to-edge when targetSdk >= 35. Opt into that
         // explicitly on API 30+ and own the insets ourselves: adjustResize is a
         // no-op under edge-to-edge, so the keyboard would otherwise cover the
-        // composer and disturb the WebView's IME session.
+        // composer. On older APIs the manifest's adjustResize still resizes the
+        // window, which is the fallback path.
         if (Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
             getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
 
-            // Resizing the content while the IME animates resets the soft
-            // keyboard's composition and drops characters. Keep the layout
-            // still during the animation and apply the final IME padding once
-            // it has finished.
-            final int[] target = new int[4];
+            final int[] barsInsets = new int[4];
+            final int[] currentIme = {0};
+            final int[] startIme = {0};
+            final int[] endIme = {0};
             final boolean[] animating = {false};
-            final Runnable applyPadding = () -> root.setPadding(
-                    target[0], target[1], target[2], target[3]);
+            final boolean[] opening = {true};
+            final Runnable applyFinal = () -> root.setPadding(
+                    barsInsets[0], barsInsets[1], barsInsets[2],
+                    Math.max(barsInsets[3], currentIme[0]));
             final Runnable animationGuard = () -> {
-                // On API 30 a cancelled animation may never dispatch onEnd.
+                // A cancelled animation may never dispatch onEnd on API 30.
                 animating[0] = false;
-                applyPadding.run();
+                applyFinal.run();
             };
 
             root.setOnApplyWindowInsetsListener((view, insets) -> {
                 android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
                 android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                target[0] = bars.left;
-                target[1] = bars.top;
-                target[2] = bars.right;
-                target[3] = Math.max(bars.bottom, ime.bottom);
-                if (!animating[0]) applyPadding.run();
+                barsInsets[0] = bars.left;
+                barsInsets[1] = bars.top;
+                barsInsets[2] = bars.right;
+                barsInsets[3] = bars.bottom;
+                currentIme[0] = ime.bottom;
+                if (!animating[0]) applyFinal.run();
                 return insets;
             });
 
@@ -128,12 +131,59 @@ public final class MainActivity extends Activity {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0) return;
                     animating[0] = true;
                     root.removeCallbacks(animationGuard);
-                    root.postDelayed(animationGuard, 1000);
+                    // Safety net: an interrupted animation must not leave the
+                    // padding frozen between frames.
+                    root.postDelayed(animationGuard, 1200);
+                }
+
+                @Override
+                public WindowInsetsAnimation.Bounds onStart(
+                        WindowInsetsAnimation animation, WindowInsetsAnimation.Bounds bounds) {
+                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                        startIme[0] = bounds.getLowerBound().bottom;
+                        endIme[0] = bounds.getUpperBound().bottom;
+                        opening[0] = endIme[0] >= startIme[0];
+                    }
+                    return bounds;
                 }
 
                 @Override
                 public WindowInsets onProgress(WindowInsets insets,
                         List<WindowInsetsAnimation> runningAnimations) {
+                    android.graphics.Insets bars =
+                            insets.getInsets(WindowInsets.Type.systemBars());
+                    android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                    barsInsets[0] = bars.left;
+                    barsInsets[1] = bars.top;
+                    barsInsets[2] = bars.right;
+                    barsInsets[3] = bars.bottom;
+                    currentIme[0] = ime.bottom;
+
+                    WindowInsetsAnimation animation = null;
+                    for (WindowInsetsAnimation running : runningAnimations) {
+                        if ((running.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                            animation = running;
+                            break;
+                        }
+                    }
+                    int bottom = ime.bottom;
+                    if (animation != null) {
+                        float fraction = animation.getInterpolatedFraction();
+                        int start = startIme[0];
+                        int end = endIme[0];
+                        if (opening[0] && end > start) {
+                            // Move the composer a little ahead of the keyboard
+                            // while it slides in, so it never looks swallowed.
+                            double eased = Math.pow(fraction, 0.7);
+                            bottom = (int) Math.round(start + (end - start) * eased);
+                        } else if (!opening[0] && start > end) {
+                            // On the way down follow the keyboard exactly: a
+                            // lead there would leave a gap under the panel.
+                            bottom = ime.bottom;
+                        }
+                    }
+                    root.setPadding(barsInsets[0], barsInsets[1], barsInsets[2],
+                            Math.max(barsInsets[3], bottom));
                     return insets;
                 }
 
@@ -142,7 +192,7 @@ public final class MainActivity extends Activity {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0) return;
                     root.removeCallbacks(animationGuard);
                     animating[0] = false;
-                    applyPadding.run();
+                    applyFinal.run();
                 }
             });
         }
