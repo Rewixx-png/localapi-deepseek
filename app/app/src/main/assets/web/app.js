@@ -33,6 +33,8 @@
     lastScroll: 0,
     authMode: localStorage.getItem("authMode") || "api",
     version: "",
+    update: null,
+    updateBusy: false,
     streamEl: null,
     streamContent: null,
     streamReasoning: null,
@@ -403,6 +405,230 @@
     if (resolve) resolve(!!result);
   }
 
+  // ── app updates ──────────────────────────────────────────────────────
+  var SOURCE_URL = "https://github.com/Rewixx-png/localapi-deepseek";
+  var updaterStarted = false;
+
+  function updateRemindEnabled() {
+    return localStorage.getItem("updateRemind") !== "0";
+  }
+
+  function syncUpdatePrefs() {
+    if (!window.Native || !Native.setUpdatePrefs) return;
+    try { Native.setUpdatePrefs(!!S.online, updateRemindEnabled()); } catch (e) { /* old bridge */ }
+  }
+
+  function setUpdateRemind(on) {
+    localStorage.setItem("updateRemind", on ? "1" : "0");
+    var toggle = $("#update-remind-toggle");
+    if (toggle) toggle.checked = !!on;
+    syncUpdatePrefs();
+  }
+
+  function updateFromRaw(raw) {
+    if (!raw) return null;
+    try {
+      var update = JSON.parse(raw);
+      return update && update.url ? update : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function paintUpdateNote(text) {
+    var note = $("#update-note");
+    if (note) note.textContent = text;
+  }
+
+  function resetCheckButton() {
+    var btn = $("#check-update");
+    if (!btn) return;
+    btn.disabled = false;
+    btn.textContent = "Проверить";
+  }
+
+  function setUpdateProgress(percent) {
+    var wrap = $("#update-progress");
+    var bar = $("#update-bar");
+    var label = $("#update-percent");
+    if (!wrap || !bar || !label) return;
+    if (percent == null || percent < 0) {
+      wrap.classList.add("hidden");
+      bar.style.width = "0%";
+      label.textContent = "";
+      return;
+    }
+    var value = Math.max(0, Math.min(100, parseInt(percent, 10) || 0));
+    wrap.classList.remove("hidden");
+    bar.style.width = value + "%";
+    label.textContent = value + "%";
+  }
+
+  function showUpdateDialog(update, manual) {
+    if (!update) return;
+    if (!manual && !updateRemindEnabled()) return;
+    if (S.updateBusy) return;
+    if (!$("#update-scrim").classList.contains("hidden")) return;
+    S.update = update;
+    $("#update-version").textContent = "Версия " + (update.versionName || "");
+    $("#update-notes").textContent = update.notes || "Доступна новая версия приложения.";
+    $("#update-error").textContent = "";
+    $("#update-error").classList.add("hidden");
+    setUpdateProgress(-1);
+    $("#update-now").disabled = false;
+    $("#update-later").disabled = false;
+    $("#update-never").disabled = false;
+    $("#update-later").classList.remove("hidden");
+    $("#update-never").classList.remove("hidden");
+    $("#update-scrim").classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeUpdateDialog() {
+    if (S.updateBusy) return;
+    $("#update-scrim").classList.add("hidden");
+    syncNativeComposer();
+  }
+
+  function downloadUpdate() {
+    S.updateBusy = true;
+    $("#update-error").classList.add("hidden");
+    $("#update-now").disabled = true;
+    $("#update-later").disabled = true;
+    $("#update-never").disabled = true;
+    setUpdateProgress(0);
+    try {
+      Native.downloadUpdate();
+    } catch (e) {
+      window.__updateError("Мост приложения недоступен");
+    }
+  }
+
+  function initUpdater() {
+    if (updaterStarted || !NATIVE_COMPOSER || !window.Native) return;
+    updaterStarted = true;
+    syncUpdatePrefs();
+    var pending = updateFromRaw(
+      Native.pendingUpdate ? Native.pendingUpdate() : ""
+    );
+    if (pending && updateRemindEnabled() && S.status && S.status.has_token) {
+      showUpdateDialog(pending, false);
+    }
+    try {
+      if (Native.checkUpdate) Native.checkUpdate(false);
+    } catch (e) { /* old bridge */ }
+  }
+
+  window.__updateAvailable = function (raw, manual) {
+    resetCheckButton();
+    var update = updateFromRaw(raw);
+    if (!update) return;
+    paintUpdateNote("Доступно " + (update.versionName || "обновление"));
+    if (manual || updateRemindEnabled()) showUpdateDialog(update, manual);
+  };
+
+  window.__updateNone = function (manual) {
+    resetCheckButton();
+    paintUpdateNote("У вас последняя версия");
+    if (manual) {
+      toast("У вас последняя версия" + (S.version ? " — v" + S.version : ""));
+    }
+  };
+
+  window.__updateError = function (message) {
+    resetCheckButton();
+    paintUpdateNote("Не удалось проверить обновления");
+    if ($("#update-scrim").classList.contains("hidden")) {
+      toast(message || "Не удалось проверить обновления");
+      return;
+    }
+    S.updateBusy = false;
+    $("#update-error").textContent = message || "Не удалось обновить приложение";
+    $("#update-error").classList.remove("hidden");
+    $("#update-now").disabled = false;
+    $("#update-later").disabled = false;
+    $("#update-never").disabled = false;
+  };
+
+  window.__updateProgress = function (percent) {
+    setUpdateProgress(percent);
+  };
+
+  window.__updateStatus = function (state) {
+    if (state === "permission") {
+      S.updateBusy = false;
+      $("#update-error").textContent =
+        "Разрешите установку из неизвестных источников, затем вернитесь в приложение.";
+      $("#update-error").classList.remove("hidden");
+      $("#update-now").disabled = false;
+      $("#update-later").disabled = false;
+      $("#update-never").disabled = false;
+      setUpdateProgress(-1);
+    } else if (state === "installing") {
+      S.updateBusy = false;
+      setUpdateProgress(100);
+      $("#update-percent").textContent = "100% · Подтвердите установку";
+      $("#update-error").classList.add("hidden");
+      $("#update-now").disabled = true;
+      $("#update-later").disabled = false;
+      $("#update-never").disabled = true;
+    } else if (state === "installed") {
+      S.updateBusy = false;
+      toast("Обновление установлено");
+      closeUpdateDialog();
+    }
+  };
+
+  window.__showPendingUpdate = function () {
+    var pending = updateFromRaw(
+      Native.pendingUpdate ? Native.pendingUpdate() : ""
+    );
+    if (pending) showUpdateDialog(pending, true);
+  };
+
+  function wireUpdater() {
+    var toggle = $("#update-remind-toggle");
+    if (toggle) {
+      toggle.checked = updateRemindEnabled();
+      toggle.addEventListener("change", function () {
+        setUpdateRemind(this.checked);
+      });
+    }
+    $("#update-now").addEventListener("click", downloadUpdate);
+    $("#update-later").addEventListener("click", closeUpdateDialog);
+    $("#update-never").addEventListener("click", function () {
+      setUpdateRemind(false);
+      S.updateBusy = false;
+      closeUpdateDialog();
+      toast("Больше не напоминаем об обновлениях");
+    });
+    $("#update-scrim").addEventListener("click", function (e) {
+      if (e.target === this) closeUpdateDialog();
+    });
+    $("#check-update").addEventListener("click", function () {
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = "Проверяю…";
+      try {
+        Native.checkUpdate(true);
+      } catch (e) {
+        resetCheckButton();
+        toast("Мост приложения недоступен");
+      }
+    });
+    $("#open-source").addEventListener("click", function () {
+      if (window.Native && Native.openUrl) {
+        try {
+          Native.openUrl(SOURCE_URL);
+        } catch (e) {
+          toast("Не удалось открыть ссылку");
+        }
+      } else {
+        window.open(SOURCE_URL, "_blank");
+      }
+    });
+  }
+
   function balanceText(b) {
     var symbol = b.currency === "USD" ? "$" : b.currency === "CNY" ? "¥" : "";
     return symbol + b.total + " " + (b.currency === "USD" ? "" : b.currency);
@@ -517,7 +743,8 @@
     var drawer = $("#drawer").classList.contains("open");
     var dialog = !$("#dialog-scrim").classList.contains("hidden");
     var viewer = !$("#image-viewer").classList.contains("hidden");
-    Native.setComposerVisible(chat && !drawer && !dialog && !viewer);
+    var update = !$("#update-scrim").classList.contains("hidden");
+    Native.setComposerVisible(chat && !drawer && !dialog && !viewer && !update);
   }
 
   function openImageViewer(src) {
@@ -549,6 +776,7 @@
     $("#cf-toggle").disabled = !online;
     $("#sheet-revalidate").disabled = !online;
     syncComposerState();
+    syncUpdatePrefs();
     refreshTokenButton();
   }
 
@@ -1571,6 +1799,7 @@
     wireTokenScreen();
     wireComposer();
     wireSettings();
+    wireUpdater();
 
     paintTheme();
     paintTextZoom();
@@ -1756,6 +1985,7 @@
     document.body.classList.add("native-composer");
     syncNativeComposer();
     syncComposerState();
+    initUpdater();
   };
 
   window.__nativeSend = function (raw) {

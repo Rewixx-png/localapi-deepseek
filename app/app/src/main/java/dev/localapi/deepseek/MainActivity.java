@@ -30,6 +30,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -52,6 +53,7 @@ public final class MainActivity extends Activity {
     private WebView web;
     private LinearLayout root;
     private NativeComposer composer;
+    private Updater updater;
     private CloudflareTunnel tunnel;
     private volatile boolean foreground = false;
 
@@ -153,6 +155,8 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
 
+        updater = new Updater(this, web);
+        updater.onLaunch();
         web.loadUrl(ORIGIN + "index.html");
     }
 
@@ -162,6 +166,18 @@ public final class MainActivity extends Activity {
         foreground = true;
         if (web != null) {
             web.evaluateJavascript("window.__onResume && window.__onResume()", null);
+        }
+        if (updater != null) {
+            updater.onResume();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (updater != null) {
+            updater.onResume();
         }
     }
 
@@ -225,6 +241,9 @@ public final class MainActivity extends Activity {
         if (tunnel != null) {
             tunnel.detachWebView();
         }
+        if (updater != null) {
+            updater.onDestroy();
+        }
         super.onDestroy();
     }
 
@@ -254,6 +273,8 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String setOnline(boolean online) {
             String raw = Rust.nativeSetOnline(online);
+            Updater.setPrefs(MainActivity.this, online,
+                    Updater.remindersEnabled(MainActivity.this));
             if (!online) {
                 stopLocalService();
             }
@@ -458,6 +479,47 @@ public final class MainActivity extends Activity {
                     web.getSettings().setTextZoom(clamped);
                 }
                 if (composer != null) composer.setTextZoom(clamped);
+            });
+            return "{}";
+        }
+
+        @JavascriptInterface
+        public String checkUpdate(boolean manual) {
+            if (updater != null) updater.check(manual);
+            return "{}";
+        }
+
+        @JavascriptInterface
+        public String pendingUpdate() {
+            return updater == null ? "" : updater.pending();
+        }
+
+        @JavascriptInterface
+        public String downloadUpdate() {
+            runOnUiThread(() -> {
+                if (updater != null) updater.download();
+            });
+            return "{}";
+        }
+
+        @JavascriptInterface
+        public String setUpdatePrefs(boolean online, boolean remind) {
+            Updater.setPrefs(MainActivity.this, online, remind);
+            return "{}";
+        }
+
+        @JavascriptInterface
+        public String openUrl(String url) {
+            runOnUiThread(() -> {
+                try {
+                    Uri uri = Uri.parse(url);
+                    String scheme = uri.getScheme();
+                    if (!"https".equals(scheme) && !"http".equals(scheme)) return;
+                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "Не удалось открыть ссылку",
+                            Toast.LENGTH_SHORT).show();
+                }
             });
             return "{}";
         }

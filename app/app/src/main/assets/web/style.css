@@ -731,6 +731,20 @@ a { color: var(--primary); text-decoration: none; }
 .dialog p { color: var(--on-surface-variant); font-size: 14px; line-height: 1.5; margin: 0 0 24px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* ── updater ─────────────────────────────────────────── */
+.update-track {
+  height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--surface-container-highest);
+}
+.update-track span {
+  display: block; width: 0; height: 100%;
+  background: var(--primary); transition: width .18s linear;
+}
+.update-percent { color: var(--on-surface-variant); font-size: 12.5px; margin-top: 6px; }
+.update-error { color: var(--error) !important; margin: 0 0 16px !important; }
+.update-actions { display: flex; flex-direction: column; gap: 8px; }
+.update-actions .btn { width: 100%; }
+
 /* ── image viewer ───────────────────────────────────── */
 .image-viewer {
   position: fixed; inset: 0; z-index: 80;

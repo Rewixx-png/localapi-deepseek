@@ -1,0 +1,7 @@
+{
+  "versionCode": 22,
+  "versionName": "1.6.8",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.8/LocalApiDeepSeek.apk",
+  "sha256": "db14100f14ee78c7e48ef75a7fc2bae699435fc98ae7688f3cecdd23ebbab9f1",
+  "notes": "Окно обновления с загрузкой и прогрессом, установка прямо из приложения, уведомления о новых версиях, ссылка на исходный код и тумблер «не напоминать»."
+}
