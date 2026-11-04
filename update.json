@@ -1,7 +1,7 @@
 {
-  "versionCode": 27,
-  "versionName": "1.6.13",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.13/LocalApiDeepSeek.apk",
-  "sha256": "9bcdff2a485bf8fe84c845807fe43f81bd1b26282e312e775a4070231fe33fbe",
-  "notes": "Блоки кода: подсветка синтаксиса, номера строк и счётчик строк, кнопка «Запустить» для HTML с изолированным предпросмотром. Rust: фрагменты дедуплицируются по id — повторный THINK-дескриптор больше не уводит токены ответа в reasoning."
+  "versionCode": 28,
+  "versionName": "1.6.14",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.14/LocalApiDeepSeek.apk",
+  "sha256": "804e808ed4ef7ce110944701f97b51a93a0fc0ea0a89e64380f3d1f6a36a900c",
+  "notes": "Копирование снова работает через системный ClipboardManager. OTA: «Обновить» скачивает APK, открывает системное подтверждение установки, а после успешной установки приложение само открывается новой версией; ошибки установки показывают код и причину."
 }
