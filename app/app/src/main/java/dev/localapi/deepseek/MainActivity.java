@@ -11,8 +11,10 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -61,6 +63,8 @@ public final class MainActivity extends Activity {
     private Updater updater;
     private CloudflareTunnel tunnel;
     private volatile boolean foreground = false;
+    private boolean pageReady;
+    private String pendingInstallError;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -194,6 +198,7 @@ public final class MainActivity extends Activity {
 
         updater = new Updater(this, web);
         updater.onLaunch();
+        handleInstallIntent(getIntent());
         web.loadUrl(ORIGIN + "index.html");
     }
 
@@ -213,6 +218,7 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleInstallIntent(intent);
         if (updater != null) {
             updater.onResume();
         }
@@ -258,6 +264,49 @@ public final class MainActivity extends Activity {
                         finish();
                     }
                 });
+    }
+
+    private void handleInstallIntent(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra("install_result", false)) return;
+        intent.removeExtra("install_result");
+        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS,
+                PackageInstaller.STATUS_FAILURE);
+        String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+        if (status == PackageInstaller.STATUS_SUCCESS) {
+            pendingInstallError = null;
+            Toast.makeText(this, "Обновление установлено", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirm;
+            if (Build.VERSION.SDK_INT >= 33) {
+                confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
+            } else {
+                //noinspection deprecation
+                confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            }
+            if (confirm != null) {
+                confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    startActivity(confirm);
+                    return;
+                } catch (Exception e) {
+                    String reason = e.getMessage() == null
+                            ? e.getClass().getSimpleName() : e.getMessage();
+                    message = "Не удалось открыть окно установки: " + reason;
+                }
+            }
+        }
+        pendingInstallError = Updater.installErrorText(status, message);
+        showPendingInstallError();
+    }
+
+    private void showPendingInstallError() {
+        if (!pageReady || pendingInstallError == null || web == null) return;
+        String message = pendingInstallError;
+        pendingInstallError = null;
+        web.evaluateJavascript("window.__updateError && window.__updateError("
+                + JSONObject.quote(message) + ")", null);
     }
 
     private void hideIme() {
@@ -354,9 +403,6 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         if (tunnel != null) {
             tunnel.detachWebView();
-        }
-        if (updater != null) {
-            updater.onDestroy();
         }
         super.onDestroy();
     }
@@ -717,6 +763,21 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void copyToClipboard(String text) {
+            runOnUiThread(() -> {
+                try {
+                    ClipboardManager cm = (ClipboardManager)
+                            getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) {
+                        cm.setPrimaryClip(ClipData.newPlainText(
+                                "Local API DeepSeek", text == null ? "" : text));
+                    }
+                } catch (Exception ignored) {
+                }
+            });
+        }
+
+        @JavascriptInterface
         public String readClipboard() {
             try {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -886,9 +947,16 @@ public final class MainActivity extends Activity {
         }
 
         @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            pageReady = false;
+        }
+
+        @Override
         public void onPageFinished(WebView view, String url) {
+            pageReady = true;
             view.evaluateJavascript(
                     "window.__nativeComposerReady && window.__nativeComposerReady()", null);
+            showPendingInstallError();
         }
 
         @Override
