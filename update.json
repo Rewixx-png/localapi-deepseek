@@ -1,7 +1,7 @@
 {
-  "versionCode": 32,
-  "versionName": "1.6.18",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.18/LocalApiDeepSeek.apk",
-  "sha256": "da59361ae2f480dc5c59495dcb1d3a072a51fafef83b6baa692dffc721ae0bf6",
-  "notes": "Ссылка на docs/get-token.md на экране ввода токена. Инструкция по фоновой работе для Samsung/One UI и Xiaomi/HyperOS; кнопка «Настройки фоновой работы» открывает экран приложения."
+  "versionCode": 34,
+  "versionName": "1.6.20",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.20/LocalApiDeepSeek.apk",
+  "sha256": "e738a8ea8e5ad7a9618918b3e5a33c2697d52dcf89639c919e10451db2822f6f",
+  "notes": "Возвращён переключатель режима рассуждения в настройках API; таблицы Markdown; плавное появление стриминга; мультивыбор фото; неактивная кнопка отправки без текста и вложений. Параметры модели — в чате, системная инструкция — в правом меню."
 }

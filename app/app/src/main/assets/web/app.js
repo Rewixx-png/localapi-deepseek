@@ -34,11 +34,13 @@
     stick: true,
     lastScroll: 0,
     authMode: localStorage.getItem("authMode") || "api",
+    systemPrompt: localStorage.getItem("systemPrompt") || "",
     version: "",
     update: null,
     updateBusy: false,
     streamEl: null,
     streamContent: null,
+    streamAnim: null,
     streamReasoning: null,
     streamStage: null,
     lastContent: "",
@@ -56,8 +58,8 @@
     listChats: function () { return Native.listChats(); },
     getChat: function (id) { return Native.getChat(id); },
     deleteChat: function (id) { return Native.deleteChat(id); },
-    send: function (chatId, text, model, effort, thinking, search, imagesJson) {
-      return Native.send(chatId, text, model, effort, thinking, search, imagesJson);
+    send: function (chatId, text, model, effort, thinking, search, imagesJson, systemPrompt) {
+      return Native.send(chatId, text, model, effort, thinking, search, imagesJson, systemPrompt);
     },
     startServer: function (port) { return Native.startServer(port); },
     stopServer: function () { return Native.stopServer(); },
@@ -231,6 +233,69 @@
     });
   }
 
+  function splitTableRow(line) {
+    var s = line.trim();
+    if (s.charAt(0) === "|") s = s.slice(1);
+    if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+    var cells = [];
+    var cur = "";
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      if (ch === "\\" && s.charAt(i + 1) === "|") {
+        cur += "|";
+        i++;
+        continue;
+      }
+      if (ch === "|") {
+        cells.push(cur.trim());
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  function tableAt(lines, start) {
+    var head = lines[start];
+    var sep = lines[start + 1];
+    if (!head || !sep || head.indexOf("|") < 0) return null;
+    if (!/^\s*\|?[\s:|-]*-{3,}[\s:|-]*\|?\s*$/.test(sep)) return null;
+    var headCells = splitTableRow(head);
+    var sepCells = splitTableRow(sep);
+    if (!headCells.length || sepCells.length !== headCells.length) return null;
+    if (!sepCells.every(function (c) { return /^:?-{3,}:?$/.test(c); })) return null;
+
+    var aligns = sepCells.map(function (c) {
+      var left = c.charAt(0) === ":";
+      var right = c.charAt(c.length - 1) === ":";
+      return left && right ? "center" : right ? "right" : "left";
+    });
+    var rows = [];
+    var i = start + 2;
+    while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") >= 0) {
+      var cells = splitTableRow(lines[i]);
+      while (cells.length < headCells.length) cells.push("");
+      rows.push(cells.slice(0, headCells.length));
+      i++;
+    }
+    var html = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+    headCells.forEach(function (c, idx) {
+      html += '<th class="md-' + aligns[idx] + '">' + inline(c) + "</th>";
+    });
+    html += "</tr></thead><tbody>";
+    rows.forEach(function (r) {
+      html += "<tr>";
+      r.forEach(function (c, idx) {
+        html += '<td class="md-' + aligns[idx] + '">' + inline(c) + "</td>";
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table></div>";
+    return { html: html, next: i };
+  }
+
   function renderBlocks(text) {
     if (!text) return "";
     var lines = text.replace(/\r\n?/g, "\n").split("\n");
@@ -260,6 +325,14 @@
         continue;
       }
       var m;
+      var table = tableAt(lines, i);
+      if (table) {
+        flushPara();
+        closeList();
+        out.push(table.html);
+        i = table.next - 1;
+        continue;
+      }
       if ((m = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/))) {
         flushPara();
         closeList();
@@ -403,6 +476,7 @@
 
   function openDrawer() {
     hideToast();
+    if ($("#right-drawer").classList.contains("open")) closeSystemDrawer();
     refreshChats();
     // Drop the keyboard before the drawer starts sliding: otherwise the
     // viewport collapses mid-transition and the menu jumps.
@@ -462,7 +536,6 @@
   }
 
   var SETTINGS_PANES = {
-    model: "Модель и ИИ",
     token: "Авторизация и ключи",
     server: "Локальный API",
     tunnel: "Cloudflare Туннель",
@@ -472,8 +545,6 @@
 
   function paintSettingsCatalog() {
     var status = S.status || {};
-    var mode = isWebMode() ? "Web" : "API";
-    $("#cat-sub-model").textContent = mode + " · " + modelShortName();
     $("#cat-sub-token").textContent = !status.has_token
       ? "Токен не добавлен"
       : (isWebMode() ? "Веб-токен сохранён" : "Ключ API сохранён");
@@ -902,6 +973,14 @@
     });
     $("#reasoning-toggle").checked = !!S.thinking;
     $("#reasoning-note").textContent = S.thinking ? "DeepThink" : "Выключены";
+    var apiReasoning = $("#api-reasoning-toggle");
+    if (apiReasoning) apiReasoning.checked = !!S.thinking;
+    var apiReasoningNote = $("#api-reasoning-note");
+    if (apiReasoningNote) {
+      apiReasoningNote.textContent = S.thinking ? "DeepThink включён" : "Выключен";
+    }
+    var apiReasoningGroup = $("#api-reasoning-group");
+    if (apiReasoningGroup) apiReasoningGroup.classList.toggle("hidden", S.authMode === "web");
 
     var showEffort = S.thinking && !web;
     $("#model-block").classList.toggle("hidden", web);
@@ -919,6 +998,8 @@
     });
     $("#sheet-model").textContent =
       (S.model === "deepseek-v4-pro" ? pro : flash) + (S.thinking ? " · reasoning" : "");
+    var chip = $("#model-chip-label");
+    if (chip) chip.textContent = modelShortName();
 
     var empty = $("#messages .empty");
     if (empty && (!S.chat || !S.chat.messages || !S.chat.messages.length)) {
@@ -989,7 +1070,9 @@
     var dialog = !$("#dialog-scrim").classList.contains("hidden");
     var viewer = !$("#image-viewer").classList.contains("hidden");
     var update = !$("#update-scrim").classList.contains("hidden");
-    Native.setComposerVisible(chat && !drawer && !dialog && !viewer && !update);
+    var right = $("#right-drawer").classList.contains("open");
+    var model = !$("#model-scrim").classList.contains("hidden");
+    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model);
   }
 
   function openImageViewer(src) {
@@ -1010,13 +1093,67 @@
     Native.setComposerState(!!S.stream, !!S.online);
   }
 
+  function openModelSheet() {
+    closeDrawer();
+    paintModel();
+    $("#model-scrim").classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeModelSheet() {
+    $("#model-scrim").classList.add("hidden");
+    syncNativeComposer();
+  }
+
+  var rightDrawerSyncTimer = null;
+
+  function openSystemDrawer() {
+    closeDrawer();
+    closeModelSheet();
+    var field = $("#system-prompt");
+    if (field) field.value = S.systemPrompt || "";
+    $("#right-drawer").classList.add("open");
+    $("#right-backdrop").classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeSystemDrawer() {
+    if (!$("#right-drawer").classList.contains("open")) return;
+    $("#right-drawer").classList.remove("open");
+    $("#right-backdrop").classList.add("hidden");
+    clearTimeout(rightDrawerSyncTimer);
+    rightDrawerSyncTimer = setTimeout(function () {
+      rightDrawerSyncTimer = null;
+      syncNativeComposer();
+    }, 360);
+  }
+
+  function saveSystemPrompt() {
+    var field = $("#system-prompt");
+    S.systemPrompt = field ? field.value.trim() : "";
+    try { localStorage.setItem("systemPrompt", S.systemPrompt); } catch (e) { /* ignore */ }
+    closeSystemDrawer();
+    toast(S.systemPrompt ? "Системная инструкция сохранена" : "Системная инструкция очищена");
+  }
+
+  function refreshSendButton() {
+    var btn = $("#send-btn");
+    var input = $("#input");
+    if (!btn || !input) return;
+    if (S.stream) {
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = !S.online || !input.value.trim();
+  }
+
   function paintOnline() {
     var online = !!S.online;
     $("#online-toggle").checked = online;
     $("#online-note").textContent = online ? "Запросы разрешены" : "Запросы заблокированы";
     $("#offline-banner").classList.toggle("hidden", online);
     $("#token-offline").classList.toggle("hidden", online);
-    $("#send-btn").disabled = !online;
+    refreshSendButton();
     $("#server-toggle").disabled = !online;
     $("#cf-toggle").disabled = !online;
     $("#sheet-revalidate").disabled = !online;
@@ -1188,6 +1325,12 @@
     });
 
     $("#reasoning-toggle").addEventListener("change", function () {
+      S.thinking = this.checked;
+      localStorage.setItem("thinking", S.thinking ? "1" : "0");
+      paintModel();
+    });
+
+    $("#api-reasoning-toggle").addEventListener("change", function () {
       S.thinking = this.checked;
       localStorage.setItem("thinking", S.thinking ? "1" : "0");
       paintModel();
@@ -1833,12 +1976,24 @@
       ? '<svg class="icon"><use href="#i-stop"></use></svg>'
       : '<svg class="icon"><use href="#i-send"></use></svg>';
     btn.setAttribute("aria-label", on ? "Остановить" : "Отправить");
+    refreshSendButton();
     syncComposerState();
   }
 
   function wireComposer() {
     var form = $("#composer");
     var input = $("#input");
+    $("#model-chip").addEventListener("click", openModelSheet);
+    $("#model-close").addEventListener("click", closeModelSheet);
+    $("#model-done").addEventListener("click", closeModelSheet);
+    $("#model-scrim").addEventListener("click", function (e) {
+      if (e.target === this) closeModelSheet();
+    });
+    $("#system-btn").addEventListener("click", openSystemDrawer);
+    $("#right-drawer-close").addEventListener("click", closeSystemDrawer);
+    $("#right-backdrop").addEventListener("click", closeSystemDrawer);
+    $("#system-save").addEventListener("click", saveSystemPrompt);
+    input.addEventListener("input", refreshSendButton);
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
@@ -1886,6 +2041,7 @@
     }
 
     if (!fromNative) input.value = "";
+    refreshSendButton();
 
     var optimistic = { role: "user", content: text, images: images };
     S.chat.messages.push(optimistic);
@@ -1904,7 +2060,8 @@
         S.effort,
         !!S.thinking,
         !!S.search,
-        JSON.stringify(images)
+        JSON.stringify(images),
+        S.systemPrompt || ""
       );
     } catch (e) {
       S.chat.messages.pop();
@@ -1915,6 +2072,7 @@
       } else if (text && window.Native && Native.restoreComposerText) {
         Native.restoreComposerText(text);
       }
+      refreshSendButton();
       toast(e.message);
       return;
     }
@@ -1989,6 +2147,15 @@
     }
     if (changed) {
       S.streamContent.classList.add("cursor");
+      if (S.streamContent.animate) {
+        try {
+          if (S.streamAnim) S.streamAnim.cancel();
+          S.streamAnim = S.streamContent.animate(
+            [{ opacity: 0.72 }, { opacity: 1 }],
+            { duration: 160, easing: "ease-out" }
+          );
+        } catch (e) { /* animation is cosmetic */ }
+      }
       scrollToBottom(false);
     }
   }
@@ -2002,6 +2169,10 @@
         S.streamStage = null;
       }
       S.streamContent.classList.remove("cursor");
+      if (S.streamAnim) {
+        try { S.streamAnim.cancel(); } catch (e) { /* ignore */ }
+        S.streamAnim = null;
+      }
       if (S.streamReasoning) {
         S.streamReasoning._text.textContent = p.reasoning || "";
         if (!p.reasoning) {
@@ -2055,7 +2226,7 @@
     S.streamReasoning = null;
     S.streamStage = null;
     setStreaming(false);
-    $("#send-btn").disabled = !S.online;
+    refreshSendButton();
 
     if (chatId) {
       try {
@@ -2366,6 +2537,8 @@
   };
 
   window.__onAndroidBack = function () {
+    if (!$("#model-scrim").classList.contains("hidden")) { closeModelSheet(); return true; }
+    if ($("#right-drawer").classList.contains("open")) { closeSystemDrawer(); return true; }
     if (!$("#image-viewer").classList.contains("hidden")) { closeImageViewer(); return true; }
     if (!$("#dialog-scrim").classList.contains("hidden")) { closeDialog(false); return true; }
     if ($("#screen-settings").classList.contains("active")) {

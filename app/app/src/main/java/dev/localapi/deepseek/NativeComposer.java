@@ -10,7 +10,9 @@ import android.graphics.Matrix;
 import android.graphics.drawable.GradientDrawable;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -124,6 +126,23 @@ final class NativeComposer {
         input.setVerticalScrollBarEnabled(false);
         input.setOnFocusChangeListener((v, hasFocus) -> {
             if (hasFocus) web.clearFocus();
+        });
+        // Keep the send button disabled until there is text or an attachment.
+        // The watcher only refreshes the button; it never rewrites the editor,
+        // so IME composition is untouched.
+        input.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                updateSendButton();
+            }
         });
         // Fixed height: the bar must not re-layout on every typed line.
         inputWrap.addView(input, new LinearLayout.LayoutParams(0, dp(56), 1f));
@@ -271,29 +290,48 @@ final class NativeComposer {
         sentPending.clear();
         attachmentScroll.setVisibility(pending.isEmpty() ? View.GONE : View.VISIBLE);
         updateAttachTint();
+        updateSendButton();
     }
 
     void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode != REQ_IMAGE || resultCode != Activity.RESULT_OK
-                || data == null || data.getData() == null) {
+        if (requestCode != REQ_IMAGE || resultCode != Activity.RESULT_OK || data == null) {
             return;
         }
-        if (pending.size() >= MAX_IMAGES) {
+        List<Uri> uris = new ArrayList<>();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                Uri uri = data.getClipData().getItemAt(i).getUri();
+                if (uri != null) uris.add(uri);
+            }
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        if (uris.isEmpty()) return;
+        int slots = MAX_IMAGES - pending.size();
+        if (slots <= 0) {
             Toast.makeText(activity, "Можно прикрепить не больше " + MAX_IMAGES + " фото",
                     Toast.LENGTH_SHORT).show();
             return;
         }
-        Uri uri = data.getData();
+        if (uris.size() > slots) {
+            Toast.makeText(activity,
+                    "Можно прикрепить не больше " + MAX_IMAGES + " фото",
+                    Toast.LENGTH_SHORT).show();
+            uris = uris.subList(0, slots);
+        }
+        List<Uri> selected = new ArrayList<>(uris);
         new Thread(() -> {
-            Encoded encoded = encode(uri);
-            activity.runOnUiThread(() -> {
-                if (encoded == null) {
-                    Toast.makeText(activity, "Не удалось прочитать изображение",
-                            Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                addPending(encoded);
-            });
+            for (Uri uri : selected) {
+                Encoded encoded = encode(uri);
+                activity.runOnUiThread(() -> {
+                    if (encoded == null) {
+                        Toast.makeText(activity, "Не удалось прочитать изображение",
+                                Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    addPending(encoded);
+                });
+            }
         }, "image-encode").start();
     }
 
@@ -335,6 +373,7 @@ final class NativeComposer {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         try {
             activity.startActivityForResult(Intent.createChooser(intent, "Фото"), REQ_IMAGE);
         } catch (Exception e) {
@@ -375,6 +414,7 @@ final class NativeComposer {
             attachmentStrip.removeView(holder);
             attachmentScroll.setVisibility(pending.isEmpty() ? View.GONE : View.VISIBLE);
             updateAttachTint();
+            updateSendButton();
         });
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(64), dp(64));
@@ -384,6 +424,7 @@ final class NativeComposer {
         attachmentScroll.setVisibility(View.VISIBLE);
         applyTheme();
         updateAttachTint();
+        updateSendButton();
     }
 
     private void preview(Bitmap bitmap) {
@@ -434,7 +475,8 @@ final class NativeComposer {
             send.setBackground(rounded(primary, 16));
             send.setColorFilter(onPrimary);
             send.setContentDescription("Отправить");
-            send.setEnabled(online);
+            boolean hasText = input.getText().toString().trim().length() > 0;
+            send.setEnabled(online && (hasText || !pending.isEmpty()));
         }
     }
 

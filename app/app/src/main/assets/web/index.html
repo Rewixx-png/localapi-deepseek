@@ -144,12 +144,19 @@
       <svg class="icon"><use href="#i-menu"></use></svg>
     </button>
     <div class="app-bar-title"><h1 id="chat-title">Новый чат</h1></div>
+    <button id="system-btn" class="icon-btn" aria-label="Системная инструкция" type="button">
+      <svg class="icon"><use href="#i-tune"></use></svg>
+    </button>
     <button id="new-chat-btn" class="icon-btn" aria-label="Новый чат" type="button">
       <svg class="icon"><use href="#i-add"></use></svg>
     </button>
   </header>
 
   <div class="chips" id="chips">
+    <button id="model-chip" class="chip model-chip" type="button" aria-label="Модель и параметры">
+      <svg class="icon"><use href="#i-bolt"></use></svg>
+      <span id="model-chip-label">Flash 1017</span>
+    </button>
     <button id="reasoning-chip" class="chip" type="button">
       <svg class="icon"><use href="#i-bolt"></use></svg>
       <span>DeepThink</span>
@@ -207,6 +214,76 @@
       <div id="drawer-version" class="version"></div>
     </div>
   </aside>
+
+  <div id="right-backdrop" class="scrim hidden"></div>
+  <aside id="right-drawer" class="drawer right" aria-label="Системная инструкция">
+    <div class="drawer-head">
+      <div class="drawer-brand">
+        <span class="brand-badge"><svg class="brand-icon"><use href="#i-tune"></use></svg></span>
+        <span>Системная инструкция</span>
+      </div>
+      <button id="right-drawer-close" class="icon-btn" aria-label="Закрыть" type="button">
+        <svg class="icon"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <p class="drawer-help">Инструкция применяется ко всем сообщениям на этом устройстве.
+      Хранится только на устройстве.</p>
+    <textarea id="system-prompt" class="system-prompt" rows="8"
+              placeholder="Например: отвечай кратко, по делу и с примерами кода"></textarea>
+    <p class="fine drawer-fine">Можно очистить поле и сохранить, чтобы отключить инструкцию.</p>
+    <button id="system-save" class="btn filled wide" type="button">Сохранить</button>
+  </aside>
+
+  <div id="model-scrim" class="dialog-scrim hidden">
+    <div class="dialog model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-title">
+      <div class="model-head">
+        <h2 id="model-title">Модель и ИИ</h2>
+        <button id="model-close" class="icon-btn" aria-label="Закрыть" type="button">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div class="card model-card">
+
+              <div class="list-item column" id="model-block">
+                <div class="primary">Модель</div>
+                <div class="segmented settings-segmented" id="model-select">
+                  <button type="button" data-model="deepseek-flash">Flash 1017</button>
+                  <button type="button" data-model="deepseek-v4-pro">V4 Pro</button>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="list-item">
+                <span class="list-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+                <div class="texts">
+                  <div class="primary">Рассуждения</div>
+                  <div class="supporting" id="reasoning-note">DeepThink</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="reasoning-toggle"><span></span></label>
+              </div>
+              <div class="divider"></div>
+              <div class="list-item">
+                <span class="list-icon"><svg class="icon"><use href="#i-search"></use></svg></span>
+                <div class="texts">
+                  <div class="primary">Поиск в интернете</div>
+                  <div class="supporting" id="search-note">DeepSeek Search · платно за запрос</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="search-toggle"><span></span></label>
+              </div>
+              <div class="divider" id="effort-divider"></div>
+              <div class="list-item column" id="effort-setting">
+                <div class="primary">Усилие</div>
+                <div class="segmented settings-segmented" id="effort-select">
+                  <button type="button" data-effort="low">low</button>
+                  <button type="button" data-effort="high">high</button>
+                  <button type="button" data-effort="max">max</button>
+                </div>
+              </div>
+      </div>
+      <div class="dialog-actions">
+        <button id="model-done" class="btn filled" type="button">Готово</button>
+      </div>
+    </div>
+  </div>
 </section>
 
 <section id="screen-settings" class="screen">
@@ -222,14 +299,6 @@
 
   <main class="settings-scroll">
     <div id="settings-root" class="settings-catalog">
-      <button class="settings-cat" type="button" data-settings-pane="model">
-        <span class="cat-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
-        <span class="cat-texts">
-          <span class="cat-title">Модель и ИИ</span>
-          <span class="cat-sub" id="cat-sub-model">—</span>
-        </span>
-        <span class="cat-arrow" aria-hidden="true">›</span>
-      </button>
       <button class="settings-cat" type="button" data-settings-pane="token">
         <span class="cat-icon"><svg class="icon"><use href="#i-key"></use></svg></span>
         <span class="cat-texts">
@@ -273,61 +342,19 @@
     </div>
 
     <div id="settings-detail" class="hidden">
-      <section class="settings-pane" data-settings-pane="model">
-        <div class="settings-group">
-          <h2 class="group-title">Модель и ИИ</h2>
-          <div class="card">
-            <div class="list-item column">
-              <div class="primary">Режим</div>
-              <div class="segmented settings-segmented" id="settings-auth-mode">
-                <button type="button" data-settings-auth="api" class="active">API-ключ</button>
-                <button type="button" data-settings-auth="web">Веб-токен</button>
-              </div>
-              <div class="supporting">Для нового токена; активный режим — в «Авторизация и ключи».</div>
-            </div>
-            <div class="divider"></div>
-            <div class="list-item column" id="model-block">
-              <div class="primary">Модель</div>
-              <div class="segmented settings-segmented" id="model-select">
-                <button type="button" data-model="deepseek-flash">Flash 1017</button>
-                <button type="button" data-model="deepseek-v4-pro">V4 Pro</button>
-              </div>
-            </div>
-            <div class="divider"></div>
-            <div class="list-item">
-              <span class="list-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
-              <div class="texts">
-                <div class="primary">Рассуждения</div>
-                <div class="supporting" id="reasoning-note">DeepThink</div>
-              </div>
-              <label class="switch"><input type="checkbox" id="reasoning-toggle"><span></span></label>
-            </div>
-            <div class="divider"></div>
-            <div class="list-item">
-              <span class="list-icon"><svg class="icon"><use href="#i-search"></use></svg></span>
-              <div class="texts">
-                <div class="primary">Поиск в интернете</div>
-                <div class="supporting" id="search-note">DeepSeek Search · платно за запрос</div>
-              </div>
-              <label class="switch"><input type="checkbox" id="search-toggle"><span></span></label>
-            </div>
-            <div class="divider" id="effort-divider"></div>
-            <div class="list-item column" id="effort-setting">
-              <div class="primary">Усилие</div>
-              <div class="segmented settings-segmented" id="effort-select">
-                <button type="button" data-effort="low">low</button>
-                <button type="button" data-effort="high">high</button>
-                <button type="button" data-effort="max">max</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section class="settings-pane" data-settings-pane="token">
         <div class="settings-group">
           <h2 class="group-title">Доступ</h2>
           <div class="card">
+            <div class="list-item column">
+              <div class="primary">Режим для нового токена</div>
+              <div class="segmented settings-segmented" id="settings-auth-mode">
+                <button type="button" data-settings-auth="api" class="active">API-ключ</button>
+                <button type="button" data-settings-auth="web">Веб-токен</button>
+              </div>
+              <div class="supporting">Активный режим показан ниже.</div>
+            </div>
+            <div class="divider"></div>
             <div class="kv"><span>Режим</span><b id="sheet-mode">—</b></div>
             <div class="kv" id="sheet-model-row"><span>Модель</span><b id="sheet-model">—</b></div>
             <div class="kv"><span id="sheet-cred-label">Ключ</span><b id="sheet-token" class="mono">—</b></div>
@@ -336,6 +363,19 @@
               <button id="sheet-clear" class="btn text danger" type="button">Удалить</button>
             </div>
             <p class="fine inset-bottom" id="sheet-note"></p>
+          </div>
+        </div>
+        <div class="settings-group" id="api-reasoning-group">
+          <h2 class="group-title">API</h2>
+          <div class="card">
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Режим рассуждения</div>
+                <div class="supporting" id="api-reasoning-note">DeepThink включён</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="api-reasoning-toggle"><span></span></label>
+            </div>
           </div>
         </div>
         <div class="settings-group">

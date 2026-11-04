@@ -467,8 +467,8 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public String send(String chatId, String message, String model, String effort, boolean thinking, boolean search, String imagesJson) {
-            String raw = Rust.nativeSend(chatId, message, model, effort, thinking, search, imagesJson);
+        public String send(String chatId, String message, String model, String effort, boolean thinking, boolean search, String imagesJson, String systemPrompt) {
+            String raw = Rust.nativeSend(chatId, message, model, effort, thinking, search, imagesJson, systemPrompt);
             watch(raw);
             return raw;
         }

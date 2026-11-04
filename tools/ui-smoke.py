@@ -57,7 +57,7 @@ MOCK = r"""
     };
   }
   const REASON = ['Пользователь просит ', 'сравнить процессы ', 'и потоки. ', 'Отвечу структурно: ', 'сначала различие ', 'в памяти, затем ', 'в стоимости переключения.'];
-  const CONTENT = ['Процесс — ', 'это изолированная ', 'программа со своей ', 'адресной памятью.\n\n', '**Поток** — ', 'единица выполнения ', 'внутри процесса: ', 'он делит память ', 'с остальными ', 'потоками.\n\n', 'Ссылка: https://example.com/', 'a'.repeat(160), '\n\n', '### Заголовок\n', '- пункт один\n', '- пункт два с *курсивом*\n', '\n> цитата\n\n', '[ссылка](https://example.com)\n', '```rust\n', 'fn main() {}\n', '```'];
+  const CONTENT = ['Процесс — ', 'это изолированная ', 'программа со своей ', 'адресной памятью.\n\n', '**Поток** — ', 'единица выполнения ', 'внутри процесса: ', 'он делит память ', 'с остальными ', 'потоками.\n\n', 'Ссылка: https://example.com/', 'a'.repeat(160), '\n\n', '### Заголовок\n', '- пункт один\n', '- пункт два с *курсивом*\n', '\n> цитата\n\n', '[ссылка](https://example.com)\n', '```rust\n', 'fn main() {}\n', '```', '\n| Метрика | Процесс | Поток |\n', '|---|---:|---|\n', '| Память | своя | общая |\n', '| Переключение | дорого | дёшево |\n'];
   window.Native = {
     status: () => ok(status()),
     setToken: (t, mode) => {
@@ -87,8 +87,9 @@ MOCK = r"""
       return c ? ok(c) : bad('not_found', 'Чат не найден');
     },
     deleteChat: id => { st.chats = st.chats.filter(x => x.id !== id); persist(); return ok(null); },
-    send: function (chatId, text, model, effort, thinking, search, images) {
-      if (arguments.length !== 7) throw new Error('send bridge args=' + arguments.length);
+    send: function (chatId, text, model, effort, thinking, search, images, systemPrompt) {
+      if (arguments.length !== 8) throw new Error('send bridge args=' + arguments.length);
+      window.__lastSystemPrompt = systemPrompt;
       let c = st.chats.find(x => x.id === chatId);
       if (!c) {
         c = { id: 'c' + (st.seq++), title: text.slice(0, 48), created_at: Date.now(), updated_at: Date.now(), messages: [] };
@@ -146,7 +147,7 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
-    appInfo: () => JSON.stringify({ version: '1.6.4', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.20', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -200,7 +201,7 @@ with sync_playwright() as p:
     page.click("#send-btn")
     page.wait_for_timeout(260)
     page.screenshot(path=f"{SHOTS}/07-chat-streaming.png")
-    page.wait_for_timeout(1400)
+    page.wait_for_timeout(2400)
     assert page.locator(".reasoning").count() == 1
     assert page.locator(".reasoning .reasoning-toggle svg").count() == 1
     page.locator(".reasoning-toggle").first.click()
@@ -225,6 +226,13 @@ with sync_playwright() as p:
     assert page.locator(".code-block .code-gutter").first.inner_text().strip() == "1"
     assert "строка" in page.inner_text(".code-block .code-count")
     assert page.locator(".code-block .hljs-keyword").count() >= 1
+    assert page.locator(".md-table").count() == 1
+    assert page.locator(".md-table th").count() == 3
+    assert page.locator(".md-table tr").count() == 3
+    assert "общая" in page.inner_text(".md-table")
+    page.locator(".md-table").scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    page.screenshot(path=f"{SHOTS}/08a-table.png")
     page.locator(".code-copy").first.click()
     page.wait_for_timeout(200)
     assert page.is_visible("#toast")
@@ -255,8 +263,12 @@ with sync_playwright() as p:
     page.wait_for_timeout(1900)
     page.screenshot(path=f"{SHOTS}/10-settings.png")
 
-    # Settings is a catalog now: every control lives in its own submenu.
-    page.click('.settings-cat[data-settings-pane="model"]')
+    # Model controls live in the chat now; the settings catalog only has
+    # device/server/account groups.
+    page.click("#settings-close")
+    page.wait_for_timeout(300)
+    page.click("#model-chip")
+    page.wait_for_selector("#model-scrim:not(.hidden)")
     page.click('#model-select button[data-model="deepseek-v4-pro"]')
     assert "V4 Pro" in (page.text_content("#sheet-model") or "")
     assert page.is_checked("#search-toggle")
@@ -265,9 +277,39 @@ with sync_playwright() as p:
     assert page.inner_text("#reasoning-note") == "Выключены"
     page.check("#reasoning-toggle")
     assert page.is_visible("#effort-setting")
-    page.click("#settings-back")
-    assert "V4 Pro" in page.inner_text("#cat-sub-model")
+    page.wait_for_timeout(340)
+    page.screenshot(path=f"{SHOTS}/10a-model-sheet.png")
+    page.click("#model-done")
+    assert "V4 Pro" in page.inner_text("#model-chip-label")
 
+    # System instruction is a right-side drawer and travels with the next send.
+    page.click("#system-btn")
+    page.wait_for_selector("#right-drawer.open")
+    page.wait_for_timeout(380)
+    page.fill("#system-prompt", "Отвечай кратко")
+    page.screenshot(path=f"{SHOTS}/10b-system-drawer.png")
+    page.click("#system-save")
+    page.wait_for_timeout(380)
+    assert page.evaluate("localStorage.getItem('systemPrompt')") == "Отвечай кратко"
+    page.fill("#input", "Третий вопрос")
+    page.click("#send-btn")
+    page.wait_for_timeout(220)
+    assert page.evaluate("window.__lastSystemPrompt") == "Отвечай кратко"
+    page.wait_for_timeout(1800)
+
+    page.click("#menu-btn")
+    page.click("#open-settings")
+    page.wait_for_timeout(450)
+    page.click('.settings-cat[data-settings-pane="token"]')
+    assert page.is_visible("#settings-auth-mode")
+    assert page.is_visible("#sheet-mode")
+    assert page.is_visible("#api-reasoning-toggle")
+    page.uncheck("#api-reasoning-toggle")
+    assert page.inner_text("#api-reasoning-note") == "Выключен"
+    page.check("#api-reasoning-toggle")
+    assert page.inner_text("#api-reasoning-note") == "DeepThink включён"
+    page.screenshot(path=f"{SHOTS}/10c-api-reasoning.png")
+    page.click("#settings-back")
     page.click('.settings-cat[data-settings-pane="ui"]')
     page.click('#theme-select button[data-theme-choice="light"]')
     assert page.get_attribute("html", "data-theme") == "light"
@@ -313,7 +355,11 @@ with sync_playwright() as p:
     page.click("#settings-close")
     page.wait_for_timeout(200)
     assert page.is_hidden("#offline-banner")
+    assert page.is_disabled("#send-btn")
+    page.fill("#input", "Проверка")
     assert page.is_enabled("#send-btn")
+    page.fill("#input", "")
+    assert page.is_disabled("#send-btn")
 
     # light theme screenshot
     page.click("#menu-btn")
@@ -352,11 +398,10 @@ with sync_playwright() as p:
     assert "веб-сессия" in page.inner_text("#result-mode")
     page.click("#token-open")
     page.wait_for_selector("#screen-chat.active")
-    page.click("#menu-btn")
-    page.click("#open-settings")
-    page.click('.settings-cat[data-settings-pane="model"]')
+    page.click("#model-chip")
+    page.wait_for_selector("#model-scrim:not(.hidden)")
     assert page.is_hidden("#model-block")
-    page.click("#settings-close")
+    page.click("#model-done")
     page.fill("#input", "Проверка веб-режима")
     page.click("#send-btn")
     page.wait_for_timeout(1900)

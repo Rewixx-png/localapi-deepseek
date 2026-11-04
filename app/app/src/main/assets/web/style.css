@@ -413,6 +413,34 @@ a { color: var(--primary); text-decoration: none; }
 }
 .content a { color: var(--primary); text-decoration: underline; overflow-wrap: anywhere; }
 .content hr { border: 0; border-top: 1px solid var(--outline-variant); margin: 12px 0; }
+
+.md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.md-table {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.md-table th, .md-table td {
+  border: 1px solid var(--outline-variant);
+  padding: 6px 10px;
+  vertical-align: top;
+  min-width: 64px;
+  white-space: nowrap;
+}
+.md-table th {
+  background: var(--surface-container-high);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.md-table tbody tr:nth-child(even) td { background: var(--surface-container); }
+.md-table .md-center { text-align: center; }
+.md-table .md-right { text-align: right; }
+.md-table .md-left { text-align: left; }
 .content del { opacity: .8; }
 .content strong { font-weight: 600; }
 .content code {
@@ -661,6 +689,34 @@ a { color: var(--primary); text-decoration: none; }
   transition: transform .32s var(--ease-emphasized);
 }
 .drawer.open { transform: translateZ(0); }
+.drawer.right {
+  inset: 0 0 0 auto;
+  border-radius: 16px 0 0 16px;
+  transform: translateX(102%) translateZ(0);
+  overflow-y: auto;
+}
+.drawer.right.open { transform: translateZ(0); }
+.drawer-help {
+  color: var(--on-surface-variant);
+  font-size: 13px; line-height: 1.45;
+  padding: 0 8px 12px;
+}
+.drawer-fine { padding: 8px 8px 12px; }
+.system-prompt {
+  width: 100%; min-height: 180px; flex: 1 1 auto;
+  resize: vertical; box-sizing: border-box;
+  margin: 0 0 4px; padding: 12px;
+  border: 1px solid var(--outline-variant); border-radius: 16px;
+  background: var(--surface-container-high); color: var(--on-surface);
+  font: inherit; font-size: 14px; line-height: 1.5;
+}
+.system-prompt:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+.model-chip { max-width: 48%; }
+.model-chip span { overflow: hidden; text-overflow: ellipsis; }
+.model-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.model-head h2 { margin: 0; }
+.model-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.model-card { background: var(--surface-container-low); margin-bottom: 16px; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 12px 8px; }
 .drawer-brand { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; min-width: 0; }
 .drawer-brand span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
