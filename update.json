@@ -1,7 +1,7 @@
 {
-  "versionCode": 29,
-  "versionName": "1.6.15",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.15/LocalApiDeepSeek.apk",
-  "sha256": "3a79cac5f4d699c9ee0d68d4146a5740c92fe84e1e1af0f49d319857f1181446",
-  "notes": "Исправлена потеря второго токена на переходе THINK → RESPONSE: патч контента без поля o теперь APPEND. Локальный API: reasoning только явно, SSE-заголовки сразу, переиспользуемая Web-сессия, тело по Content-Length, общий пул соединений."
+  "versionCode": 30,
+  "versionName": "1.6.16",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.16/LocalApiDeepSeek.apk",
+  "sha256": "f7bceea8018ec1a40f36d502bbc26a14c32a8bbe8b8a6f11f426523a2814bca4",
+  "notes": "Убрана 120-секундная задержка локального API: SSE-поток обрывается сразу на response/status FINISHED (top-level, snapshot, path, BATCH) и finish_reason, не ожидая EOF keep-alive сокета. Тест удерживает апстрим 120 секунд, ответ приходит < 100 мс."
 }
