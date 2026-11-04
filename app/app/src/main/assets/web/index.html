@@ -42,6 +42,7 @@
   <symbol id="i-chat" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></symbol>
   <symbol id="i-warning" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="currentColor"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></symbol>
 </svg>
 
 <div id="screen-boot" class="screen active boot-screen">
@@ -391,10 +392,71 @@
     </div>
 
     <div class="settings-group">
+      <h2 class="group-title">Приложение</h2>
+      <div class="card">
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-refresh"></use></svg></span>
+          <div class="texts">
+            <div class="primary">Обновления</div>
+            <div class="supporting" id="update-note">Проверяются при запуске</div>
+          </div>
+          <button id="check-update" class="btn text small" type="button">Проверить</button>
+        </div>
+        <div class="divider"></div>
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-bell"></use></svg></span>
+          <div class="texts">
+            <div class="primary">Не напоминать об обновлении</div>
+            <div class="supporting">Без окна и уведомлений о новых версиях</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="update-remind-toggle"><span></span></label>
+        </div>
+        <div class="divider"></div>
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
+          <div class="texts">
+            <div class="primary">Исходный код</div>
+            <div class="supporting">github.com/Rewixx-png/localapi-deepseek</div>
+          </div>
+          <button id="open-source" class="btn text small" type="button">Открыть</button>
+        </div>
+        <div class="divider"></div>
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-brand"></use></svg></span>
+          <div class="texts">
+            <div class="primary">Local API DeepSeek</div>
+            <div class="supporting">Неофициальный клиент. Токены хранятся только на устройстве.</div>
+          </div>
+        </div>
+      </div>
+      <p class="fine">cloudflared распространяется по Apache 2.0, CA bundle — MPL 2.0.
+        Полный список — в THIRD_PARTY_NOTICES.md репозитория.</p>
+    </div>
+
+    <div class="settings-group">
       <div class="version" id="sheet-version"></div>
     </div>
   </main>
 </section>
+
+<div id="update-scrim" class="dialog-scrim hidden">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">
+    <div class="dialog-icon"><svg class="icon"><use href="#i-refresh"></use></svg></div>
+    <h2 id="update-title">Доступно обновление</h2>
+    <p id="update-version"></p>
+    <p id="update-notes"></p>
+    <div id="update-progress" class="update-progress hidden">
+      <div class="update-track"><span id="update-bar"></span></div>
+      <div id="update-percent" class="update-percent"></div>
+    </div>
+    <p id="update-error" class="update-error hidden"></p>
+    <div class="update-actions">
+      <button id="update-now" class="btn filled" type="button">Обновить</button>
+      <button id="update-later" class="btn text" type="button">Позже</button>
+      <button id="update-never" class="btn text" type="button">Больше не напоминать</button>
+    </div>
+  </div>
+</div>
 
 <div id="dialog-scrim" class="dialog-scrim hidden">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
