@@ -15,8 +15,10 @@ import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.animation.DecelerateInterpolator;
 import android.webkit.WebView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -59,6 +61,7 @@ final class NativeComposer {
     private boolean streaming;
     private boolean online = true;
     private boolean light;
+    private boolean visible;
 
     NativeComposer(Activity activity, WebView web) {
         this.activity = activity;
@@ -148,22 +151,54 @@ final class NativeComposer {
 
     void setVisible(boolean visible) {
         if (visible) {
+            if (this.visible && bar.getVisibility() == View.VISIBLE) return;
+            this.visible = true;
             // The IME serves the focused editor. Keeping the WebView focusable
             // lets it steal the session and reset the native composition.
             web.clearFocus();
             web.setFocusable(false);
             web.setFocusableInTouchMode(false);
+            bar.animate().cancel();
             bar.setVisibility(View.VISIBLE);
+            bar.setAlpha(0f);
+            bar.setTranslationY(dp(16));
+            bar.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(160)
+                    .setInterpolator(new DecelerateInterpolator())
+                    .start();
             return;
         }
+        input.clearFocus();
         InputMethodManager imm = (InputMethodManager)
                 activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
         if (imm != null) {
             imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
         }
-        input.clearFocus();
-        bar.setVisibility(View.GONE);
-        // Restore WebView focusability so HTML fields in settings still work.
+        if (!this.visible && bar.getVisibility() != View.VISIBLE) {
+            web.setFocusable(true);
+            web.setFocusableInTouchMode(true);
+            return;
+        }
+        this.visible = false;
+        // Fade the bar out instead of yanking it away from under the still
+        // closing keyboard; the drawer slides over this short animation.
+        bar.animate().cancel();
+        bar.setAlpha(bar.getAlpha() == 0f ? 1f : bar.getAlpha());
+        bar.animate()
+                .alpha(0f)
+                .translationY(dp(16))
+                .setDuration(140)
+                .withEndAction(() -> {
+                    if (this.visible) return;
+                    bar.setVisibility(View.GONE);
+                    bar.setAlpha(1f);
+                    bar.setTranslationY(0f);
+                })
+                .start();
+        // Restore WebView focusability so HTML fields in settings still work;
+        // the bar keeps its layout slot until the fade completes.
         web.setFocusable(true);
         web.setFocusableInTouchMode(true);
     }
@@ -198,6 +233,9 @@ final class NativeComposer {
 
     void restoreDraft(String text) {
         if (text == null || text.isEmpty() || input.getText().length() > 0) return;
+        // Never rewrite the editor while Gboard owns a composing region: the
+        // IME would drop its pending characters.
+        if (BaseInputConnection.getComposingSpanStart(input.getText()) >= 0) return;
         input.setText(text);
         input.setSelection(input.getText().length());
         focusInput();

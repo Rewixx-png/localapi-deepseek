@@ -207,234 +207,343 @@
     <button id="settings-back" class="icon-btn" aria-label="Назад" type="button">
       <svg class="icon"><use href="#i-back"></use></svg>
     </button>
-    <div class="app-bar-title"><h1>Настройки</h1></div>
+    <div class="app-bar-title"><h1 id="settings-title">Настройки</h1></div>
+    <button id="settings-close" class="icon-btn" aria-label="Закрыть" type="button">
+      <svg class="icon"><use href="#i-close"></use></svg>
+    </button>
   </header>
 
   <main class="settings-scroll">
-    <div class="settings-group">
-      <h2 class="group-title">Генерация</h2>
-      <div class="card">
-        <div class="list-item column" id="model-block">
-          <div class="primary">Модель</div>
-          <div class="segmented settings-segmented" id="model-select">
-            <button type="button" data-model="deepseek-flash">Flash 1017</button>
-            <button type="button" data-model="deepseek-v4-pro">V4 Pro</button>
-          </div>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Рассуждения</div>
-            <div class="supporting" id="reasoning-note">DeepThink</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="reasoning-toggle"><span></span></label>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-search"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Поиск в интернете</div>
-            <div class="supporting" id="search-note">DeepSeek Search · платно за запрос</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="search-toggle"><span></span></label>
-        </div>
-        <div class="divider" id="effort-divider"></div>
-        <div class="list-item column" id="effort-setting">
-          <div class="primary">Усилие</div>
-          <div class="segmented settings-segmented" id="effort-select">
-            <button type="button" data-effort="low">low</button>
-            <button type="button" data-effort="high">high</button>
-            <button type="button" data-effort="max">max</button>
-          </div>
-        </div>
-      </div>
+    <div id="settings-root" class="settings-catalog">
+      <button class="settings-cat" type="button" data-settings-pane="model">
+        <span class="cat-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+        <span class="cat-texts">
+          <span class="cat-title">Режим и модель</span>
+          <span class="cat-sub" id="cat-sub-model">—</span>
+        </span>
+        <span class="cat-arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="settings-cat" type="button" data-settings-pane="token">
+        <span class="cat-icon"><svg class="icon"><use href="#i-key"></use></svg></span>
+        <span class="cat-texts">
+          <span class="cat-title">Токен и авторизация</span>
+          <span class="cat-sub" id="cat-sub-token">—</span>
+        </span>
+        <span class="cat-arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="settings-cat" type="button" data-settings-pane="server">
+        <span class="cat-icon"><svg class="icon"><use href="#i-dns"></use></svg></span>
+        <span class="cat-texts">
+          <span class="cat-title">Локальный API сервер</span>
+          <span class="cat-sub" id="cat-sub-server">—</span>
+        </span>
+        <span class="cat-arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="settings-cat" type="button" data-settings-pane="tunnel">
+        <span class="cat-icon"><svg class="icon"><use href="#i-refresh"></use></svg></span>
+        <span class="cat-texts">
+          <span class="cat-title">Туннель Cloudflared</span>
+          <span class="cat-sub" id="cat-sub-tunnel">—</span>
+        </span>
+        <span class="cat-arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="settings-cat" type="button" data-settings-pane="system">
+        <span class="cat-icon"><svg class="icon"><use href="#i-settings"></use></svg></span>
+        <span class="cat-texts">
+          <span class="cat-title">Система и обновления</span>
+          <span class="cat-sub" id="cat-sub-system">—</span>
+        </span>
+        <span class="cat-arrow" aria-hidden="true">›</span>
+      </button>
+      <button class="settings-cat" type="button" data-settings-pane="ui">
+        <span class="cat-icon"><svg class="icon"><use href="#i-palette"></use></svg></span>
+        <span class="cat-texts">
+          <span class="cat-title">Интерфейс</span>
+          <span class="cat-sub" id="cat-sub-ui">—</span>
+        </span>
+        <span class="cat-arrow" aria-hidden="true">›</span>
+      </button>
     </div>
 
-    <div class="settings-group">
-      <h2 class="group-title">Интерфейс</h2>
-      <div class="card">
-        <div class="list-item column">
-          <div class="primary">Тема</div>
-          <div class="segmented settings-segmented" id="theme-select">
-            <button type="button" data-theme-choice="system">Системная</button>
-            <button type="button" data-theme-choice="dark">Тёмная</button>
-            <button type="button" data-theme-choice="light">Светлая</button>
-          </div>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item column">
-          <div class="primary">Размер текста</div>
-          <div class="slider-row">
-            <span class="slider-end">A−</span>
-            <input id="text-slider" type="range" min="85" max="150" step="1"
-                   value="100" aria-label="Размер текста">
-            <span class="slider-end">A+</span>
-          </div>
-          <div class="supporting" id="text-value">100%</div>
-          <div class="chat-preview">
-            <div class="preview-row user">
-              <div class="preview-bubble">Как будет выглядеть текст в чате?</div>
+    <div id="settings-detail" class="hidden">
+      <section class="settings-pane" data-settings-pane="model">
+        <div class="settings-group">
+          <h2 class="group-title">Генерация</h2>
+          <div class="card">
+            <div class="list-item column" id="model-block">
+              <div class="primary">Модель</div>
+              <div class="segmented settings-segmented" id="model-select">
+                <button type="button" data-model="deepseek-flash">Flash 1017</button>
+                <button type="button" data-model="deepseek-v4-pro">V4 Pro</button>
+              </div>
             </div>
-            <div class="preview-row assistant">
-              <div class="preview-bubble">Вот так. <strong>Жирный</strong>,
-                <em>курсив</em> и <code>код</code>.</div>
+            <div class="divider"></div>
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Рассуждения</div>
+                <div class="supporting" id="reasoning-note">DeepThink</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="reasoning-toggle"><span></span></label>
             </div>
-          </div>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-compact"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Компактно</div>
-            <div class="supporting">Меньше отступов в списках</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="compact-toggle"><span></span></label>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-group">
-      <h2 class="group-title">Сеть</h2>
-      <div class="card">
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-wifi-off"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Доступ к интернету</div>
-            <div class="supporting" id="online-note">Запросы разрешены</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="online-toggle"><span></span></label>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-dns"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Локальный API</div>
-            <div class="supporting" id="server-note">127.0.0.1:8787</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="server-toggle"><span></span></label>
-        </div>
-        <div id="server-info" class="hidden">
-          <div class="divider"></div>
-          <div class="kv inset"><span>Endpoint</span><b class="mono" id="server-url">—</b></div>
-          <div class="kv inset"><span>Модель</span><b class="mono" id="server-model">deepseek-flash</b></div>
-          <div class="kv inset"><span>Ключ</span><b class="mono" id="server-key">—</b></div>
-          <div class="row-actions">
-            <button id="server-copy-key" class="btn tonal small" type="button">Ключ</button>
-            <button id="server-copy-url" class="btn tonal small" type="button">URL</button>
-            <button id="server-copy-model" class="btn tonal small" type="button">Модель</button>
-          </div>
-          <p class="fine inset-bottom">Слушает только localhost. Запросы требуют ключ и уходят в DeepSeek
-            с вашим токеном.</p>
-        </div>
-        <p class="fine inset-bottom hidden" id="server-web-note">Веб-режим: сессия DeepSeek удаляется
-          после каждого ответа. История остаётся только на этом устройстве.</p>
-
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-dns"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Cloudflare Tunnel</div>
-            <div class="supporting" id="cf-note">Публичный HTTPS для локального API</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="cf-toggle"><span></span></label>
-        </div>
-        <div id="cf-panel">
-          <div class="divider"></div>
-          <div class="list-item column">
-            <div class="primary">Режим</div>
-            <div class="segmented settings-segmented" id="cf-mode">
-              <button type="button" data-cf-mode="quick" class="active">Быстрый</button>
-              <button type="button" data-cf-mode="token">Токен</button>
+            <div class="divider"></div>
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-search"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Поиск в интернете</div>
+                <div class="supporting" id="search-note">DeepSeek Search · платно за запрос</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="search-toggle"><span></span></label>
+            </div>
+            <div class="divider" id="effort-divider"></div>
+            <div class="list-item column" id="effort-setting">
+              <div class="primary">Усилие</div>
+              <div class="segmented settings-segmented" id="effort-select">
+                <button type="button" data-effort="low">low</button>
+                <button type="button" data-effort="high">high</button>
+                <button type="button" data-effort="max">max</button>
+              </div>
             </div>
           </div>
-          <div id="cf-token-field" class="cf-field hidden">
-            <label class="field-label" for="cf-token">Токен туннеля</label>
-            <div class="text-field">
-              <input id="cf-token" type="password" autocomplete="off" autocapitalize="none"
-                     spellcheck="false" placeholder="eyJhIjoi…">
+        </div>
+      </section>
+
+      <section class="settings-pane" data-settings-pane="token">
+        <div class="settings-group">
+          <h2 class="group-title">Доступ</h2>
+          <div class="card">
+            <div class="kv"><span>Режим</span><b id="sheet-mode">—</b></div>
+            <div class="kv" id="sheet-model-row"><span>Модель</span><b id="sheet-model">—</b></div>
+            <div class="kv"><span id="sheet-cred-label">Ключ</span><b id="sheet-token" class="mono">—</b></div>
+            <div class="row-actions padded">
+              <button id="sheet-revalidate" class="btn tonal" type="button">Проверить</button>
+              <button id="sheet-clear" class="btn text danger" type="button">Удалить</button>
+            </div>
+            <p class="fine inset-bottom" id="sheet-note"></p>
+          </div>
+        </div>
+        <div class="settings-group">
+          <h2 class="group-title">Сменить токен</h2>
+          <div class="card">
+            <div class="list-item column">
+              <div class="primary">Режим авторизации</div>
+              <div class="segmented settings-segmented" id="settings-auth-mode">
+                <button type="button" data-settings-auth="api" class="active">API-ключ</button>
+                <button type="button" data-settings-auth="web">Веб-токен</button>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item column">
+              <div class="primary">Новый токен</div>
+              <div class="text-field">
+                <input id="settings-token-input" type="password" autocomplete="off"
+                       autocapitalize="none" spellcheck="false" placeholder="sk-…">
+              </div>
+              <div class="row-actions">
+                <button id="settings-token-save" class="btn tonal" type="button" disabled>Сохранить</button>
+              </div>
+              <p class="fine" id="settings-token-note">Ключ проверяется перед сохранением и хранится
+                только на устройстве.</p>
             </div>
           </div>
-          <div id="cf-host-field" class="cf-field hidden">
-            <label class="field-label" for="cf-host">Публичный адрес</label>
-            <div class="text-field">
-              <input id="cf-host" type="text" autocomplete="off" autocapitalize="none"
-                     spellcheck="false" placeholder="api.example.com">
+        </div>
+        <div class="settings-group">
+          <div class="card">
+            <div class="row-actions padded">
+              <button id="token-howto" class="btn tonal" type="button">Инструкция по токену</button>
+            </div>
+            <p class="fine inset-bottom">Ключ можно удалить существующей кнопкой «Удалить» —
+              приложение вернётся на экран авторизации.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-pane" data-settings-pane="server">
+        <div class="settings-group">
+          <h2 class="group-title">Локальный API</h2>
+          <div class="card">
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-dns"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Сервер</div>
+                <div class="supporting" id="server-note">127.0.0.1:8787</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="server-toggle"><span></span></label>
+            </div>
+            <div id="server-info" class="hidden">
+              <div class="divider"></div>
+              <div class="kv inset"><span>Endpoint</span><b class="mono" id="server-url">—</b></div>
+              <div class="kv inset"><span>Модель</span><b class="mono" id="server-model">deepseek-flash</b></div>
+              <div class="kv inset"><span>Ключ</span><b class="mono" id="server-key">—</b></div>
+              <div class="row-actions">
+                <button id="server-copy-key" class="btn tonal small" type="button">Ключ</button>
+                <button id="server-copy-url" class="btn tonal small" type="button">URL</button>
+                <button id="server-copy-model" class="btn tonal small" type="button">Модель</button>
+              </div>
+              <p class="fine inset-bottom">Слушает только localhost. Запросы требуют ключ и уходят в DeepSeek
+                с вашим токеном.</p>
+            </div>
+            <p class="fine inset-bottom hidden" id="server-web-note">Веб-режим: сессия DeepSeek удаляется
+              после каждого ответа. История остаётся только на этом устройстве.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-pane" data-settings-pane="tunnel">
+        <div class="settings-group">
+          <h2 class="group-title">Cloudflare Tunnel</h2>
+          <div class="card">
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-refresh"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Туннель</div>
+                <div class="supporting" id="cf-note">Публичный HTTPS для локального API</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="cf-toggle"><span></span></label>
+            </div>
+            <div id="cf-panel">
+              <div class="divider"></div>
+              <div class="list-item column">
+                <div class="primary">Режим</div>
+                <div class="segmented settings-segmented" id="cf-mode">
+                  <button type="button" data-cf-mode="quick" class="active">Быстрый</button>
+                  <button type="button" data-cf-mode="token">Токен</button>
+                </div>
+              </div>
+              <div id="cf-token-field" class="cf-field hidden">
+                <label class="field-label" for="cf-token">Токен туннеля</label>
+                <div class="text-field">
+                  <input id="cf-token" type="password" autocomplete="off" autocapitalize="none"
+                         spellcheck="false" placeholder="eyJhIjoi…">
+                </div>
+              </div>
+              <div id="cf-host-field" class="cf-field hidden">
+                <label class="field-label" for="cf-host">Публичный адрес</label>
+                <div class="text-field">
+                  <input id="cf-host" type="text" autocomplete="off" autocapitalize="none"
+                         spellcheck="false" placeholder="api.example.com">
+                </div>
+              </div>
+              <div class="kv inset"><span>Статус</span><b id="cf-status">Выключен</b></div>
+              <div class="kv inset hidden" id="cf-url-row">
+                <span>URL</span><b class="mono" id="cf-url">—</b>
+              </div>
+              <div class="row-actions">
+                <button id="cf-copy" class="btn tonal small hidden" type="button">Копировать URL</button>
+              </div>
+              <p class="fine inset-bottom">Публичный адрес требует ключ локального API. Ключ даёт
+                доступ к вашему токену DeepSeek — не публикуйте его. Быстрый URL меняется после
+                перезапуска приложения. Для постоянного адреса используйте именованный туннель
+                и Cloudflare Access.</p>
             </div>
           </div>
-          <div class="kv inset"><span>Статус</span><b id="cf-status">Выключен</b></div>
-          <div class="kv inset hidden" id="cf-url-row">
-            <span>URL</span><b class="mono" id="cf-url">—</b>
-          </div>
-          <div class="row-actions">
-            <button id="cf-copy" class="btn tonal small hidden" type="button">Копировать URL</button>
-          </div>
-          <p class="fine inset-bottom">Публичный адрес требует ключ локального API. Ключ даёт
-            доступ к вашему токену DeepSeek — не публикуйте его. Быстрый URL меняется после
-            перезапуска приложения. Для постоянного адреса используйте именованный туннель
-            и Cloudflare Access.</p>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <div class="settings-group">
-      <h2 class="group-title">Доступ</h2>
-      <div class="card">
-        <div class="kv"><span>Режим</span><b id="sheet-mode">—</b></div>
-        <div class="kv" id="sheet-model-row"><span>Модель</span><b id="sheet-model">—</b></div>
-        <div class="kv"><span id="sheet-cred-label">Ключ</span><b id="sheet-token" class="mono">—</b></div>
-        <div class="row-actions padded">
-          <button id="sheet-revalidate" class="btn tonal" type="button">Проверить</button>
-          <button id="sheet-clear" class="btn text danger" type="button">Удалить</button>
+      <section class="settings-pane" data-settings-pane="system">
+        <div class="settings-group">
+          <h2 class="group-title">Сеть</h2>
+          <div class="card">
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-wifi-off"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Доступ к интернету</div>
+                <div class="supporting" id="online-note">Запросы разрешены</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="online-toggle"><span></span></label>
+            </div>
+          </div>
         </div>
-        <p class="fine inset-bottom" id="sheet-note"></p>
-      </div>
-    </div>
+        <div class="settings-group">
+          <h2 class="group-title">Обновления</h2>
+          <div class="card">
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-refresh"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Обновления</div>
+                <div class="supporting" id="update-note">Проверяются при запуске</div>
+              </div>
+              <button id="check-update" class="btn text small" type="button">Проверить</button>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-bell"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Не напоминать об обновлении</div>
+                <div class="supporting">Без окна и уведомлений о новых версиях</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="update-remind-toggle"><span></span></label>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Исходный код</div>
+                <div class="supporting">github.com/Rewixx-png/localapi-deepseek</div>
+              </div>
+              <button id="open-source" class="btn text small" type="button">Открыть</button>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-brand"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Local API DeepSeek</div>
+                <div class="supporting">Неофициальный клиент. Токены хранятся только на устройстве.</div>
+              </div>
+            </div>
+          </div>
+          <p class="fine">cloudflared распространяется по Apache 2.0, CA bundle — MPL 2.0.
+            Полный список — в THIRD_PARTY_NOTICES.md репозитория.</p>
+        </div>
+        <div class="settings-group">
+          <div class="version" id="sheet-version"></div>
+        </div>
+      </section>
 
-    <div class="settings-group">
-      <h2 class="group-title">Приложение</h2>
-      <div class="card">
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-refresh"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Обновления</div>
-            <div class="supporting" id="update-note">Проверяются при запуске</div>
+      <section class="settings-pane" data-settings-pane="ui">
+        <div class="settings-group">
+          <h2 class="group-title">Интерфейс</h2>
+          <div class="card">
+            <div class="list-item column">
+              <div class="primary">Тема</div>
+              <div class="segmented settings-segmented" id="theme-select">
+                <button type="button" data-theme-choice="system">Системная</button>
+                <button type="button" data-theme-choice="dark">Тёмная</button>
+                <button type="button" data-theme-choice="light">Светлая</button>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item column">
+              <div class="primary">Размер текста</div>
+              <div class="slider-row">
+                <span class="slider-end">A−</span>
+                <input id="text-slider" type="range" min="85" max="150" step="1"
+                       value="100" aria-label="Размер текста">
+                <span class="slider-end">A+</span>
+              </div>
+              <div class="supporting" id="text-value">100%</div>
+              <div class="chat-preview">
+                <div class="preview-row user">
+                  <div class="preview-bubble">Как будет выглядеть текст в чате?</div>
+                </div>
+                <div class="preview-row assistant">
+                  <div class="preview-bubble">Вот так. <strong>Жирный</strong>,
+                    <em>курсив</em> и <code>код</code>.</div>
+                </div>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item">
+              <span class="list-icon"><svg class="icon"><use href="#i-compact"></use></svg></span>
+              <div class="texts">
+                <div class="primary">Компактно</div>
+                <div class="supporting">Меньше отступов в списках</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="compact-toggle"><span></span></label>
+            </div>
           </div>
-          <button id="check-update" class="btn text small" type="button">Проверить</button>
         </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-bell"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Не напоминать об обновлении</div>
-            <div class="supporting">Без окна и уведомлений о новых версиях</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="update-remind-toggle"><span></span></label>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Исходный код</div>
-            <div class="supporting">github.com/Rewixx-png/localapi-deepseek</div>
-          </div>
-          <button id="open-source" class="btn text small" type="button">Открыть</button>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-brand"></use></svg></span>
-          <div class="texts">
-            <div class="primary">Local API DeepSeek</div>
-            <div class="supporting">Неофициальный клиент. Токены хранятся только на устройстве.</div>
-          </div>
-        </div>
-      </div>
-      <p class="fine">cloudflared распространяется по Apache 2.0, CA bundle — MPL 2.0.
-        Полный список — в THIRD_PARTY_NOTICES.md репозитория.</p>
-    </div>
-
-    <div class="settings-group">
-      <div class="version" id="sheet-version"></div>
+      </section>
     </div>
   </main>
 </section>

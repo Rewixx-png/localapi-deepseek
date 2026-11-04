@@ -29,6 +29,7 @@
     server: { running: false, port: 0, key: "", base_url: "" },
     online: true,
     settingsReturn: null,
+    settingsPane: null,
     stick: true,
     lastScroll: 0,
     authMode: localStorage.getItem("authMode") || "api",
@@ -322,18 +323,32 @@
   }
 
   // ── settings sheet & drawer ──────────────────────────────────────────
+  var drawerSyncTimer = null;
+
   function openDrawer() {
     hideToast();
     refreshChats();
+    if (drawerSyncTimer) {
+      clearTimeout(drawerSyncTimer);
+      drawerSyncTimer = null;
+    }
     $("#drawer").classList.add("open");
     $("#drawer-backdrop").classList.remove("hidden");
+    // Hide the native bar immediately (and drop the keyboard), but give the
+    // drawer the full slide-in to cover the WebView.
     syncNativeComposer();
   }
 
   function closeDrawer() {
     $("#drawer").classList.remove("open");
     $("#drawer-backdrop").classList.add("hidden");
-    syncNativeComposer();
+    // The drawer slides out for 320 ms. Re-showing the native bar in the same
+    // frame would paint it over the still visible menu.
+    clearTimeout(drawerSyncTimer);
+    drawerSyncTimer = setTimeout(function () {
+      drawerSyncTimer = null;
+      syncNativeComposer();
+    }, 360);
   }
 
   function currentScreen() {
@@ -359,6 +374,73 @@
     $("#sheet-version").textContent = S.version ? "v" + S.version : "";
   }
 
+  var SETTINGS_PANES = {
+    model: "Режим и модель",
+    token: "Токен и авторизация",
+    server: "Локальный API",
+    tunnel: "Туннель Cloudflare",
+    system: "Система и обновления",
+    ui: "Интерфейс"
+  };
+
+  function paintSettingsCatalog() {
+    var status = S.status || {};
+    var mode = isWebMode() ? "Web" : "API";
+    $("#cat-sub-model").textContent = mode + " · " + modelShortName();
+    $("#cat-sub-token").textContent = !status.has_token
+      ? "Токен не добавлен"
+      : (isWebMode() ? "Веб-токен сохранён" : "Ключ API сохранён");
+    $("#cat-sub-server").textContent = S.server && S.server.running
+      ? "127.0.0.1:" + S.server.port
+      : "Выключен";
+    var cfOn = $("#cf-toggle") && $("#cf-toggle").checked;
+    $("#cat-sub-tunnel").textContent = cfOn
+      ? (($("#cf-status") && $("#cf-status").textContent) || "Включён")
+      : "Выключен";
+    var version = S.version ? "v" + S.version : "версия неизвестна";
+    var available = S.update && S.update.versionName
+      ? " · доступно " + S.update.versionName
+      : "";
+    $("#cat-sub-system").textContent = version + available;
+    var theme = S.theme === "light" ? "Светлая"
+      : (S.theme === "dark" ? "Тёмная" : "Системная");
+    $("#cat-sub-ui").textContent = theme + " · текст " + S.textZoom + "%";
+  }
+
+  function showSettingsRoot() {
+    S.settingsPane = null;
+    $("#settings-title").textContent = "Настройки";
+    $("#settings-root").classList.remove("hidden");
+    $("#settings-detail").classList.add("hidden");
+    $$(".settings-pane").forEach(function (pane) {
+      pane.classList.remove("active");
+    });
+    var scroll = $(".settings-scroll");
+    if (scroll) scroll.scrollTop = 0;
+    paintSettingsCatalog();
+  }
+
+  function openSettingsPane(name) {
+    if (!SETTINGS_PANES[name]) return;
+    S.settingsPane = name;
+    $("#settings-title").textContent = SETTINGS_PANES[name];
+    $("#settings-root").classList.add("hidden");
+    $("#settings-detail").classList.remove("hidden");
+    $$(".settings-pane").forEach(function (pane) {
+      pane.classList.toggle(
+        "active",
+        pane.getAttribute("data-settings-pane") === name
+      );
+    });
+    var scroll = $(".settings-scroll");
+    if (scroll) scroll.scrollTop = 0;
+    paintSettingsCatalog();
+  }
+
+  function closeSettingsPane() {
+    showSettingsRoot();
+  }
+
   function openSettings() {
     hideToast();
     closeDrawer();
@@ -367,6 +449,7 @@
       S.settingsReturn = current;
     }
     show("screen-settings");
+    showSettingsRoot();
     paintModel();
     paintTheme();
     paintTextZoom();
@@ -378,10 +461,68 @@
     paintCfMode();
     refreshTunnelStatus();
     fillAccess();
+    paintSettingsTokenMode();
+    refreshSettingsTokenButton();
+    paintSettingsCatalog();
   }
 
   function closeSettings() {
+    S.settingsPane = null;
     show(S.settingsReturn || "screen-chat");
+  }
+
+  function paintSettingsTokenMode() {
+    $$("#settings-auth-mode button").forEach(function (button) {
+      button.classList.toggle(
+        "active",
+        button.getAttribute("data-settings-auth") === S.authMode
+      );
+    });
+    var input = $("#settings-token-input");
+    if (input) {
+      input.placeholder = S.authMode === "web" ? '{"value":"…"}' : "sk-…";
+    }
+  }
+
+  function refreshSettingsTokenButton() {
+    var input = $("#settings-token-input");
+    var button = $("#settings-token-save");
+    if (!input || !button) return;
+    button.disabled = !S.online || input.value.trim().length < 8;
+  }
+
+  function saveSettingsToken() {
+    var input = $("#settings-token-input");
+    var note = $("#settings-token-note");
+    var button = $("#settings-token-save");
+    if (!input || !note || !button) return;
+    var value = input.value.trim();
+    if (value.length < 8 || !S.online) return;
+    button.disabled = true;
+    button.textContent = "Проверяю…";
+    note.classList.remove("token-error");
+    note.textContent = "Проверяю токен…";
+    setTimeout(function () {
+      try {
+        S.status = invoke("setToken", value, S.authMode);
+        S.online = S.status.online !== false;
+        input.value = "";
+        applyAuthMode(S.status.mode, false);
+        paintSettingsTokenMode();
+        fillAccess();
+        paintModel();
+        paintOnline();
+        paintSettingsCatalog();
+        note.textContent = "Токен сохранён.";
+        toast("Токен сохранён");
+      } catch (e) {
+        note.textContent = tokenErrorText(e);
+        note.classList.add("token-error");
+      } finally {
+        button.textContent = "Сохранить";
+        refreshSettingsTokenButton();
+      }
+    }, 80);
   }
 
   var dialogResolve = null;
@@ -783,6 +924,7 @@
     syncComposerState();
     syncUpdatePrefs();
     refreshTokenButton();
+    refreshSettingsTokenButton();
   }
 
   function ensureLocalService() {
@@ -1833,7 +1975,41 @@
       focusComposer();
     });
     $("#open-settings").addEventListener("click", openSettings);
-    $("#settings-back").addEventListener("click", closeSettings);
+    $("#settings-back").addEventListener("click", function () {
+      if (S.settingsPane) {
+        closeSettingsPane();
+      } else {
+        closeSettings();
+      }
+    });
+    $("#settings-close").addEventListener("click", closeSettings);
+    $$(".settings-cat[data-settings-pane]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        openSettingsPane(button.getAttribute("data-settings-pane"));
+      });
+    });
+    $("#token-howto").addEventListener("click", function () {
+      var url = SOURCE_URL + "/blob/main/docs/get-token.md";
+      if (window.Native && Native.openUrl) {
+        try {
+          Native.openUrl(url);
+        } catch (e) {
+          toast("Не удалось открыть ссылку");
+        }
+      } else {
+        window.open(url, "_blank");
+      }
+    });
+    $$("#settings-auth-mode button").forEach(function (button) {
+      button.addEventListener("click", function () {
+        applyAuthMode(button.getAttribute("data-settings-auth"), true);
+        paintSettingsTokenMode();
+        refreshSettingsTokenButton();
+        toast(S.authMode === "web" ? "Веб-токен" : "API-ключ");
+      });
+    });
+    $("#settings-token-input").addEventListener("input", refreshSettingsTokenButton);
+    $("#settings-token-save").addEventListener("click", saveSettingsToken);
     $("#reasoning-chip").addEventListener("click", function () {
       S.thinking = !S.thinking;
       localStorage.setItem("thinking", S.thinking ? "1" : "0");
@@ -2019,7 +2195,14 @@
   window.__onAndroidBack = function () {
     if (!$("#image-viewer").classList.contains("hidden")) { closeImageViewer(); return true; }
     if (!$("#dialog-scrim").classList.contains("hidden")) { closeDialog(false); return true; }
-    if ($("#screen-settings").classList.contains("active")) { closeSettings(); return true; }
+    if ($("#screen-settings").classList.contains("active")) {
+      if (S.settingsPane) {
+        showSettingsRoot();
+      } else {
+        closeSettings();
+      }
+      return true;
+    }
     if ($("#drawer").classList.contains("open")) { closeDrawer(); return true; }
     return false;
   };

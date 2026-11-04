@@ -645,6 +645,44 @@ a { color: var(--primary); text-decoration: none; }
 }
 .settings-scroll::-webkit-scrollbar { display: none; }
 .settings-group { margin: 4px 16px 16px; }
+
+/* ── settings catalog & submenus ────────────────────── */
+.settings-catalog {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 16px 24px;
+}
+.settings-cat {
+  display: flex; align-items: center; gap: 16px; width: 100%;
+  padding: 16px; border: 0; border-radius: 20px;
+  background: var(--surface-container); color: var(--on-surface);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: background-color .18s ease;
+}
+.settings-cat:active { background: var(--surface-container-high); }
+.cat-icon {
+  width: 40px; height: 40px; border-radius: 12px; flex: 0 0 40px;
+  display: grid; place-items: center;
+  background: var(--secondary-container); color: var(--on-secondary-container);
+}
+.cat-texts { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cat-title { font-size: 16px; line-height: 1.35; }
+.cat-sub {
+  color: var(--on-surface-variant); font-size: 12.5px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cat-arrow {
+  color: var(--on-surface-variant); font-size: 24px; line-height: 1;
+  padding: 0 4px;
+}
+.settings-pane { display: none; }
+.settings-pane.active {
+  display: block;
+  animation: pane-in .22s var(--ease-emphasized);
+}
+@keyframes pane-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
 .group-title {
   color: var(--primary); font-size: 13px; font-weight: 500;
   letter-spacing: .2px; margin: 16px 4px 8px;
@@ -744,6 +782,7 @@ a { color: var(--primary); text-decoration: none; }
 .update-error { color: var(--error) !important; margin: 0 0 16px !important; }
 .update-actions { display: flex; flex-direction: column; gap: 8px; }
 .update-actions .btn { width: 100%; }
+.token-error { color: var(--error) !important; }
 
 /* ── image viewer ───────────────────────────────────── */
 .image-viewer {
