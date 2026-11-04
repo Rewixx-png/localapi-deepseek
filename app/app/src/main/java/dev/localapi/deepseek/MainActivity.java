@@ -23,6 +23,7 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsAnimation;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -98,18 +99,36 @@ public final class MainActivity extends Activity {
             getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
 
             final int[] barsInsets = new int[4];
-            final int[] currentIme = {0};
-            final int[] startIme = {0};
-            final int[] endIme = {0};
+            final int[] imeBottom = {0};
+            final int[] lastImeCss = {-1};
             final boolean[] animating = {false};
-            final boolean[] opening = {true};
-            final Runnable applyFinal = () -> root.setPadding(
-                    barsInsets[0], barsInsets[1], barsInsets[2],
-                    Math.max(barsInsets[3], currentIme[0]));
-            final Runnable animationGuard = () -> {
+
+            final Runnable applyBars = () -> root.setPadding(
+                    barsInsets[0], barsInsets[1], barsInsets[2], barsInsets[3]);
+            // The IME is handled by translationY only: no requestLayout and no
+            // bottom margin, so the bar moves on the render thread in lockstep
+            // with the keyboard.
+            final Runnable applyIme = () -> {
+                int offset = Math.max(0, imeBottom[0] - barsInsets[3]);
+                if (composer != null) composer.setImeOffset(offset);
+            };
+            final Runnable notifyIme = () -> {
+                int offset = Math.max(0, imeBottom[0] - barsInsets[3]);
+                int css = Math.round(offset / getResources().getDisplayMetrics().density);
+                if (css == lastImeCss[0]) return;
+                lastImeCss[0] = css;
+                if (web != null) {
+                    web.evaluateJavascript(
+                            "window.__imeHeight && window.__imeHeight(" + css + ")",
+                            null);
+                }
+            };
+            final Runnable finishAnimation = () -> {
                 // A cancelled animation may never dispatch onEnd on API 30.
                 animating[0] = false;
-                applyFinal.run();
+                applyBars.run();
+                applyIme.run();
+                notifyIme.run();
             };
 
             root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -119,8 +138,12 @@ public final class MainActivity extends Activity {
                 barsInsets[1] = bars.top;
                 barsInsets[2] = bars.right;
                 barsInsets[3] = bars.bottom;
-                currentIme[0] = ime.bottom;
-                if (!animating[0]) applyFinal.run();
+                imeBottom[0] = ime.bottom;
+                applyBars.run();
+                if (!animating[0]) {
+                    applyIme.run();
+                    notifyIme.run();
+                }
                 return insets;
             });
 
@@ -130,69 +153,29 @@ public final class MainActivity extends Activity {
                 public void onPrepare(WindowInsetsAnimation animation) {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0) return;
                     animating[0] = true;
-                    root.removeCallbacks(animationGuard);
-                    // Safety net: an interrupted animation must not leave the
-                    // padding frozen between frames.
-                    root.postDelayed(animationGuard, 1200);
-                }
-
-                @Override
-                public WindowInsetsAnimation.Bounds onStart(
-                        WindowInsetsAnimation animation, WindowInsetsAnimation.Bounds bounds) {
-                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
-                        startIme[0] = bounds.getLowerBound().bottom;
-                        endIme[0] = bounds.getUpperBound().bottom;
-                        opening[0] = endIme[0] >= startIme[0];
-                    }
-                    return bounds;
+                    root.removeCallbacks(finishAnimation);
+                    root.postDelayed(finishAnimation, 1200);
                 }
 
                 @Override
                 public WindowInsets onProgress(WindowInsets insets,
                         List<WindowInsetsAnimation> runningAnimations) {
-                    android.graphics.Insets bars =
-                            insets.getInsets(WindowInsets.Type.systemBars());
                     android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                    barsInsets[0] = bars.left;
-                    barsInsets[1] = bars.top;
-                    barsInsets[2] = bars.right;
-                    barsInsets[3] = bars.bottom;
-                    currentIme[0] = ime.bottom;
-
-                    WindowInsetsAnimation animation = null;
-                    for (WindowInsetsAnimation running : runningAnimations) {
-                        if ((running.getTypeMask() & WindowInsets.Type.ime()) != 0) {
-                            animation = running;
-                            break;
-                        }
-                    }
-                    int bottom = ime.bottom;
-                    if (animation != null) {
-                        float fraction = animation.getInterpolatedFraction();
-                        int start = startIme[0];
-                        int end = endIme[0];
-                        if (opening[0] && end > start) {
-                            // Move the composer a little ahead of the keyboard
-                            // while it slides in, so it never looks swallowed.
-                            double eased = Math.pow(fraction, 0.7);
-                            bottom = (int) Math.round(start + (end - start) * eased);
-                        } else if (!opening[0] && start > end) {
-                            // On the way down follow the keyboard exactly: a
-                            // lead there would leave a gap under the panel.
-                            bottom = ime.bottom;
-                        }
-                    }
-                    root.setPadding(barsInsets[0], barsInsets[1], barsInsets[2],
-                            Math.max(barsInsets[3], bottom));
+                    imeBottom[0] = ime.bottom;
+                    // Translation is a render-thread property: no layout pass
+                    // per frame, so the bar cannot lag behind the keyboard.
+                    applyIme.run();
                     return insets;
                 }
 
                 @Override
                 public void onEnd(WindowInsetsAnimation animation) {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0) return;
-                    root.removeCallbacks(animationGuard);
+                    root.removeCallbacks(finishAnimation);
                     animating[0] = false;
-                    applyFinal.run();
+                    applyBars.run();
+                    applyIme.run();
+                    notifyIme.run();
                 }
             });
         }
@@ -436,6 +419,30 @@ public final class MainActivity extends Activity {
             } catch (Exception e) {
                 return "{\"ok\":false,\"error\":{\"message\":\"tunnel status\"}}";
             }
+        }
+
+        @JavascriptInterface
+        public void hideComposer() {
+            runOnUiThread(() -> {
+                if (composer != null) composer.hideImmediately();
+            });
+        }
+
+        @JavascriptInterface
+        public void hideKeyboard() {
+            runOnUiThread(() -> {
+                InputMethodManager imm = (InputMethodManager)
+                        getSystemService(Context.INPUT_METHOD_SERVICE);
+                View focus = getCurrentFocus();
+                if (focus != null) {
+                    if (imm != null) {
+                        imm.hideSoftInputFromWindow(focus.getWindowToken(), 0);
+                    }
+                    focus.clearFocus();
+                } else if (web != null && imm != null) {
+                    imm.hideSoftInputFromWindow(web.getWindowToken(), 0);
+                }
+            });
         }
 
         @JavascriptInterface

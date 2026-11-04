@@ -200,6 +200,8 @@ impl WebApi {
             return Err(envelope_error(&text));
         }
 
+        // BufReader::read_line keeps an unfinished `data:` line in its buffer
+        // when TCP splits it between chunks. Do not parse per-chunk bytes here.
         let mut reader = BufReader::new(resp);
         let mut line = String::new();
         let mut event = String::new();
@@ -391,8 +393,11 @@ impl WebApi {
 struct StreamParser {
     types: Vec<String>,
     active: Option<usize>,
-    emitted_reasoning: Vec<usize>,
-    emitted_answer: Vec<usize>,
+    // Content already sent for each fragment. Prefix-safe: a snapshot that
+    // replaces a fragment with different text must still emit the whole new
+    // text instead of skipping its first bytes at a stale offset.
+    emitted_reasoning: Vec<String>,
+    emitted_answer: Vec<String>,
     message_id: Option<i64>,
     filtered: bool,
 }
@@ -475,8 +480,9 @@ impl StreamParser {
             .iter()
             .map(|f| f.get("type").and_then(Value::as_str).unwrap_or("").to_string())
             .collect();
-        self.emitted_reasoning.resize(self.types.len(), 0);
-        self.emitted_answer.resize(self.types.len(), 0);
+        self.emitted_reasoning
+            .resize_with(self.types.len(), String::new);
+        self.emitted_answer.resize_with(self.types.len(), String::new);
 
         // A snapshot replaces the fragment list, but it must not forget which
         // fragment is currently receiving tokens: DeepSeek sends snapshots
@@ -515,8 +521,8 @@ impl StreamParser {
                 let idx = self.types.len();
                 self.types
                     .push(fragment.get("type").and_then(Value::as_str).unwrap_or("").to_string());
-                self.emitted_reasoning.push(0);
-                self.emitted_answer.push(0);
+                self.emitted_reasoning.push(String::new());
+                self.emitted_answer.push(String::new());
                 self.claim(idx, &fragment, on_delta)?;
                 if matches!(self.kind(idx), Some("RESPONSE") | Some("TEMPLATE_RESPONSE")) {
                     self.active = Some(idx);
@@ -573,13 +579,13 @@ impl StreamParser {
         match self.kind(idx) {
             Some("THINK") => {
                 if let Some(slot) = self.emitted_reasoning.get_mut(idx) {
-                    *slot += text.len();
+                    slot.push_str(text);
                 }
                 on_delta(WebDelta::Reasoning(text.to_string()))
             }
             Some("RESPONSE") | Some("TEMPLATE_RESPONSE") => {
                 if let Some(slot) = self.emitted_answer.get_mut(idx) {
-                    *slot += text.len();
+                    slot.push_str(text);
                 }
                 on_delta(WebDelta::Answer(text.to_string()))
             }
@@ -599,17 +605,39 @@ impl StreamParser {
         };
         match self.kind(idx) {
             Some("THINK") => {
-                let seen = self.emitted_reasoning.get(idx).copied().unwrap_or(0);
-                if content.len() > seen {
-                    on_delta(WebDelta::Reasoning(content[seen..].to_string()))?;
-                    self.emitted_reasoning[idx] = content.len();
+                let previous = self
+                    .emitted_reasoning
+                    .get(idx)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                let delta = if content.starts_with(previous) {
+                    &content[previous.len()..]
+                } else {
+                    content
+                };
+                if !delta.is_empty() {
+                    on_delta(WebDelta::Reasoning(delta.to_string()))?;
+                }
+                if idx < self.emitted_reasoning.len() {
+                    self.emitted_reasoning[idx] = content.to_string();
                 }
             }
             Some("RESPONSE") | Some("TEMPLATE_RESPONSE") => {
-                let seen = self.emitted_answer.get(idx).copied().unwrap_or(0);
-                if content.len() > seen {
-                    on_delta(WebDelta::Answer(content[seen..].to_string()))?;
-                    self.emitted_answer[idx] = content.len();
+                let previous = self
+                    .emitted_answer
+                    .get(idx)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                let delta = if content.starts_with(previous) {
+                    &content[previous.len()..]
+                } else {
+                    content
+                };
+                if !delta.is_empty() {
+                    on_delta(WebDelta::Answer(delta.to_string()))?;
+                }
+                if idx < self.emitted_answer.len() {
+                    self.emitted_answer[idx] = content.to_string();
                 }
             }
             _ => {}
@@ -710,6 +738,33 @@ mod tests {
         );
         assert_eq!(answer, "Ответ");
         assert!(reasoning.is_empty());
+    }
+
+    #[test]
+    fn reused_fragment_index_does_not_skip_new_text() {
+        let mut parser = StreamParser::default();
+        let mut answer = String::new();
+        let mut reasoning = String::new();
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[
+                {"type":"RESPONSE","content":"При"}
+            ]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // Snapshots may rebuild the fragment list; the same index can start a
+        // different fragment. Its first bytes must not be skipped because an
+        // older fragment at this index had already been partially emitted.
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[
+                {"type":"RESPONSE","content":"вет!"}
+            ]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        assert_eq!(answer, "Привет!");
     }
 
     #[test]
