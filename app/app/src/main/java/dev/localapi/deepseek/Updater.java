@@ -123,7 +123,17 @@ final class Updater {
     }
 
     String pending() {
-        return pendingJson(activity);
+        String raw = pendingJson(activity);
+        if (raw.isEmpty()) return "";
+        try {
+            JSONObject manifest = new JSONObject(raw);
+            // A pending update left over from an older install must not be
+            // offered again once that version (or newer) is already installed.
+            if (manifest.optInt("versionCode", 0) <= versionCode(activity)) return "";
+            return raw;
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     void check(final boolean manual) {
@@ -143,6 +153,7 @@ final class Updater {
                     runJs("window.__updateAvailable && window.__updateAvailable("
                             + JSONObject.quote(manifest.toString()) + "," + manual + ")");
                 } else {
+                    clearPending(activity);
                     runJs("window.__updateNone && window.__updateNone(" + manual + ")");
                 }
             } catch (Exception e) {
@@ -365,6 +376,10 @@ final class Updater {
         prefs(context).edit().putString(KEY_PENDING, json).apply();
     }
 
+    static void clearPending(Context context) {
+        prefs(context).edit().remove(KEY_PENDING).apply();
+    }
+
     static void setPrefs(Context context, boolean online, boolean remind) {
         prefs(context).edit()
                 .putBoolean(KEY_ONLINE, online)
@@ -444,6 +459,9 @@ final class Updater {
         connection.setInstanceFollowRedirects(true);
         connection.setRequestProperty("User-Agent", "LocalApiDeepSeek");
         connection.setRequestProperty("Accept", accept);
+        // update.json sits behind a CDN; never reuse a stale manifest.
+        connection.setRequestProperty("Cache-Control", "no-cache");
+        connection.setRequestProperty("Pragma", "no-cache");
         return connection;
     }
 

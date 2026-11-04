@@ -609,10 +609,22 @@
     if (!update) return;
     if (!manual && !updateRemindEnabled()) return;
     if (S.updateBusy) return;
-    if (!$("#update-scrim").classList.contains("hidden")) return;
+    var currentCode = S.update && S.update.versionCode
+      ? S.update.versionCode
+      : 0;
+    if (update.versionCode && currentCode && update.versionCode < currentCode) {
+      return;
+    }
+    var visible = !$("#update-scrim").classList.contains("hidden");
     S.update = update;
     $("#update-version").textContent = "Версия " + (update.versionName || "");
     $("#update-notes").textContent = update.notes || "Доступна новая версия приложения.";
+    if (visible) {
+      // A stored update is shown immediately on launch; the fresh check may
+      // discover a newer one while the dialog is already open. Refresh its
+      // content instead of keeping the stale version on screen.
+      return;
+    }
     $("#update-error").textContent = "";
     $("#update-error").classList.add("hidden");
     setUpdateProgress(-1);
