@@ -222,6 +222,9 @@ with sync_playwright() as p:
     assert page.locator(".content em").count() == 1
     assert page.locator('.content a[href="https://example.com"]').count() == 1
     assert page.locator(".code-block .code-copy").count() == 1
+    assert page.locator(".code-block .code-gutter").first.inner_text().strip() == "1"
+    assert "строка" in page.inner_text(".code-block .code-count")
+    assert page.locator(".code-block .hljs-keyword").count() >= 1
     page.locator(".code-copy").first.click()
     page.wait_for_timeout(200)
     assert page.is_visible("#toast")

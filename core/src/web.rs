@@ -392,6 +392,7 @@ impl WebApi {
 #[derive(Default)]
 struct StreamParser {
     types: Vec<String>,
+    ids: Vec<Option<i64>>,
     active: Option<usize>,
     // Content already sent for each fragment. Prefix-safe: a snapshot that
     // replaces a fragment with different text must still emit the whole new
@@ -480,6 +481,10 @@ impl StreamParser {
             .iter()
             .map(|f| f.get("type").and_then(Value::as_str).unwrap_or("").to_string())
             .collect();
+        self.ids = fragments
+            .iter()
+            .map(|f| f.get("id").and_then(Value::as_i64))
+            .collect();
         self.emitted_reasoning
             .resize_with(self.types.len(), String::new);
         self.emitted_answer.resize_with(self.types.len(), String::new);
@@ -518,11 +523,30 @@ impl StreamParser {
         }
         if path == "response/fragments" || path == "fragments" {
             for fragment in fragment_list(value) {
-                let idx = self.types.len();
-                self.types
-                    .push(fragment.get("type").and_then(Value::as_str).unwrap_or("").to_string());
-                self.emitted_reasoning.push(String::new());
-                self.emitted_answer.push(String::new());
+                let fragment_id = fragment.get("id").and_then(Value::as_i64);
+                // A fragment descriptor may be repeated after RESPONSE has
+                // appeared (e.g. the THINK descriptor is re-sent). Appending a
+                // duplicate would move `-1` onto THINK and route the next
+                // answer token into the reasoning buffer.
+                let existing = fragment_id.and_then(|id| {
+                    self.ids.iter().position(|current| *current == Some(id))
+                });
+                let idx = if let Some(idx) = existing {
+                    if let Some(kind) = fragment.get("type").and_then(Value::as_str) {
+                        if !kind.is_empty() && idx < self.types.len() {
+                            self.types[idx] = kind.to_string();
+                        }
+                    }
+                    idx
+                } else {
+                    let idx = self.types.len();
+                    self.types.push(
+                        fragment.get("type").and_then(Value::as_str).unwrap_or("").to_string());
+                    self.ids.push(fragment_id);
+                    self.emitted_reasoning.push(String::new());
+                    self.emitted_answer.push(String::new());
+                    idx
+                };
                 self.claim(idx, &fragment, on_delta)?;
                 if matches!(self.kind(idx), Some("RESPONSE") | Some("TEMPLATE_RESPONSE")) {
                     self.active = Some(idx);
@@ -738,6 +762,47 @@ mod tests {
         );
         assert_eq!(answer, "Ответ");
         assert!(reasoning.is_empty());
+    }
+
+    #[test]
+    fn repeated_think_descriptor_does_not_steal_answer_tokens() {
+        let mut parser = StreamParser::default();
+        let mut answer = String::new();
+        let mut reasoning = String::new();
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[
+                {"id":1,"type":"THINK","content":""}
+            ]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        apply(
+            &mut parser,
+            json!({"p":"response/fragments","o":"APPEND","v":[
+                {"id":2,"type":"RESPONSE","content":"При"}
+            ]}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // The server repeats the THINK descriptor after the answer started.
+        apply(
+            &mut parser,
+            json!({"p":"response/fragments","o":"APPEND","v":[
+                {"id":1,"type":"THINK","content":"Думаю."}
+            ]}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // `-1` must still point at RESPONSE, not at a duplicate THINK.
+        apply(
+            &mut parser,
+            json!({"p":"response/fragments/-1/content","o":"APPEND","v":"вет!"}),
+            &mut answer,
+            &mut reasoning,
+        );
+        assert_eq!(answer, "Привет!");
+        assert_eq!(reasoning, "Думаю.");
     }
 
     #[test]

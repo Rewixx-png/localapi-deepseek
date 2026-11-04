@@ -141,19 +141,94 @@
         var nl = part.indexOf("\n");
         var lang = nl >= 0 ? part.slice(0, nl).trim().slice(0, 24) : "";
         var code = nl >= 0 ? part.slice(nl + 1) : part;
-        html += '<div class="code-block"><div class="code-head" role="button" tabindex="0" aria-expanded="true">' +
-          '<span class="code-lang">' + escapeHtml(lang || "code") + "</span>" +
-          '<span class="code-tools"><button type="button" class="code-copy">' +
+        var codeLang = normalizeCodeLang(lang);
+        var canRun = /^(html|htm)$/i.test(lang);
+        html += '<div class="code-block" data-lang="' + escapeHtml(lang) + '">' +
+          '<div class="code-head" role="button" tabindex="0" aria-expanded="true">' +
+          '<span class="code-meta"><span class="code-lang">' + escapeHtml(lang || "code") +
+          '</span><span class="code-count"></span></span>' +
+          '<span class="code-tools">' +
+          (canRun
+            ? '<button type="button" class="code-run">' +
+              '<svg class="icon"><use href="#i-play"></use></svg><span>Запустить</span></button>'
+            : "") +
+          '<button type="button" class="code-copy">' +
           '<svg class="icon"><use href="#i-copy"></use></svg><span>Копировать</span></button>' +
           '<svg class="icon code-chevron"><use href="#i-expand"></use></svg></span></div>' +
-          '<div class="code-body"><div class="code-inner"><pre class="code"><code>' +
+          '<div class="code-body"><div class="code-inner"><div class="code-scroll">' +
+          '<div class="code-gutter" aria-hidden="true"></div>' +
+          '<pre class="code"><code class="' + (codeLang ? "language-" + codeLang : "") + '">' +
           escapeHtml(code.replace(/\n$/, "")) +
-          "</code></pre></div></div></div>";
+          "</code></pre></div></div></div></div>";
       } else {
         html += renderBlocks(part);
       }
     }
     return html;
+  }
+
+  function normalizeCodeLang(lang) {
+    var value = String(lang || "").toLowerCase();
+    var aliases = {
+      js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript",
+      py: "python", rb: "ruby", rs: "rust", sh: "bash", shell: "bash", zsh: "bash",
+      yml: "yaml", html: "xml", htm: "xml", cxx: "cpp", hpp: "cpp", cs: "csharp",
+      kt: "kotlin", md: "markdown", text: "plaintext", plain: "plaintext"
+    };
+    return aliases[value] || value;
+  }
+
+  function lineCountText(count) {
+    var mod10 = count % 10;
+    var mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return count + " строка";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
+      return count + " строки";
+    }
+    return count + " строк";
+  }
+
+  // Highlight + line numbers are applied after the markdown HTML is mounted:
+  // highlight.js owns the code spans and the gutter is generated from the raw
+  // text, so copy/run still see clean source.
+  function enhanceCodeBlocks(root) {
+    if (!root) return;
+    $$(".code-block", root).forEach(function (block) {
+      var code = block.querySelector("pre code");
+      if (!code) return;
+      var raw = code.textContent || "";
+      var lang = normalizeCodeLang(block.getAttribute("data-lang"));
+      var hash = 0;
+      for (var i = 0; i < raw.length; i++) {
+        hash = (hash * 31 + raw.charCodeAt(i)) | 0;
+      }
+      var key = raw.length + ":" + hash + ":" + lang;
+      if (block.getAttribute("data-enhanced") === key) return;
+      block.setAttribute("data-enhanced", key);
+
+      var lineTotal = raw.split("\n").length;
+      var gutter = block.querySelector(".code-gutter");
+      if (gutter) {
+        var numbers = [];
+        for (var line = 1; line <= lineTotal; line++) numbers.push(line);
+        gutter.textContent = numbers.join("\n");
+      }
+      var count = block.querySelector(".code-count");
+      if (count) count.textContent = lineCountText(lineTotal);
+
+      if (window.hljs && lang && lang !== "plaintext" && lang !== "code" &&
+          hljs.getLanguage(lang)) {
+        code.className = "language-" + lang;
+        try {
+          hljs.highlightElement(code);
+        } catch (e) {
+          code.textContent = raw;
+        }
+      } else if (window.hljs) {
+        code.className = "";
+        code.textContent = raw;
+      }
+    });
   }
 
   function renderBlocks(text) {
@@ -1488,6 +1563,7 @@
       var md = document.createElement("div");
       md.className = "content" + (opts.streaming ? " cursor" : "");
       md.innerHTML = renderMarkdown(m.content);
+      enhanceCodeBlocks(md);
       bubble.appendChild(md);
 
       if (!opts.streaming && m.sources && m.sources.length) {
@@ -1867,6 +1943,7 @@
         && S.lastContent.indexOf(content) === 0;
       if (!stalePrefix) {
         S.streamContent.innerHTML = renderMarkdown(content);
+        enhanceCodeBlocks(S.streamContent);
         S.lastContent = content;
         changed = true;
       }
@@ -2087,6 +2164,23 @@
         closeImageViewer();
         return;
       }
+      var runButton = target.closest(".code-run");
+      if (runButton) {
+        var runBlock = runButton.closest(".code-block");
+        var runCode = runBlock ? runBlock.querySelector("pre code") : null;
+        if (runCode) {
+          if (window.Native && Native.previewHtml) {
+            try {
+              Native.previewHtml(runCode.textContent || "");
+            } catch (e) {
+              toast("Не удалось открыть предпросмотр");
+            }
+          } else {
+            toast("Предпросмотр доступен только в приложении");
+          }
+        }
+        return;
+      }
       var copyButton = target.closest(".code-copy");
       if (copyButton) {
         var block = copyButton.closest(".code-block");
@@ -2101,7 +2195,7 @@
       if (e.key !== "Enter" && e.key !== " ") return;
       var target = e.target;
       if (!target || !target.closest) return;
-      if (target.closest(".code-copy")) return;
+      if (target.closest(".code-copy") || target.closest(".code-run")) return;
       var head = target.closest(".code-head");
       if (head) {
         e.preventDefault();

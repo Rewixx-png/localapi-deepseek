@@ -2,6 +2,7 @@ package dev.localapi.deepseek;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Dialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -18,6 +19,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -30,6 +32,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
@@ -256,6 +260,83 @@ public final class MainActivity extends Activity {
                 });
     }
 
+    private void hideIme() {
+        InputMethodManager imm = (InputMethodManager)
+                getSystemService(Context.INPUT_METHOD_SERVICE);
+        View focus = getCurrentFocus();
+        if (focus != null) {
+            if (imm != null) imm.hideSoftInputFromWindow(focus.getWindowToken(), 0);
+            focus.clearFocus();
+        } else if (web != null && imm != null) {
+            imm.hideSoftInputFromWindow(web.getWindowToken(), 0);
+        }
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * Runs a model-generated HTML block in a separate WebView with no
+     * JavascriptInterface. The preview cannot reach Native.*, app files or
+     * local storage; it is a throwaway full-screen dialog.
+     */
+    private void showHtmlPreview(String html) {
+        hideIme();
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        WebView preview = new WebView(this);
+        WebSettings settings = preview.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setDomStorageEnabled(false);
+        settings.setDatabaseEnabled(false);
+        settings.setSupportZoom(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        preview.setBackgroundColor(Color.BLACK);
+        preview.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        preview.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String scheme = request.getUrl().getScheme();
+                return !("http".equals(scheme) || "https".equals(scheme)
+                        || "data".equals(scheme) || "about".equals(scheme));
+            }
+        });
+        preview.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(Color.BLACK);
+        frame.addView(preview, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        ImageButton close = new ImageButton(this);
+        close.setImageResource(R.drawable.ic_close_small);
+        close.setBackgroundColor(Color.TRANSPARENT);
+        close.setColorFilter(Color.WHITE);
+        close.setContentDescription("Закрыть");
+        int padding = dp(12);
+        close.setPadding(padding, padding, padding, padding);
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(
+                dp(48), dp(48), Gravity.TOP | Gravity.END);
+        closeParams.setMargins(0, dp(24), dp(12), 0);
+        frame.addView(close, closeParams);
+        close.setOnClickListener(v -> dialog.dismiss());
+
+        dialog.setOnDismissListener(d -> {
+            frame.removeAllViews();
+            preview.destroy();
+        });
+        dialog.setContentView(frame);
+        dialog.show();
+    }
+
     private boolean notificationsGranted() {
         if (Build.VERSION.SDK_INT < 33) {
             return true;
@@ -419,6 +500,11 @@ public final class MainActivity extends Activity {
             } catch (Exception e) {
                 return "{\"ok\":false,\"error\":{\"message\":\"tunnel status\"}}";
             }
+        }
+
+        @JavascriptInterface
+        public void previewHtml(String html) {
+            runOnUiThread(() -> showHtmlPreview(html == null ? "" : html));
         }
 
         @JavascriptInterface
