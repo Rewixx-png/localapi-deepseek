@@ -1,7 +1,7 @@
 {
-  "versionCode": 28,
-  "versionName": "1.6.14",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.14/LocalApiDeepSeek.apk",
-  "sha256": "804e808ed4ef7ce110944701f97b51a93a0fc0ea0a89e64380f3d1f6a36a900c",
-  "notes": "Копирование снова работает через системный ClipboardManager. OTA: «Обновить» скачивает APK, открывает системное подтверждение установки, а после успешной установки приложение само открывается новой версией; ошибки установки показывают код и причину."
+  "versionCode": 29,
+  "versionName": "1.6.15",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.15/LocalApiDeepSeek.apk",
+  "sha256": "3a79cac5f4d699c9ee0d68d4146a5740c92fe84e1e1af0f49d319857f1181446",
+  "notes": "Исправлена потеря второго токена на переходе THINK → RESPONSE: патч контента без поля o теперь APPEND. Локальный API: reasoning только явно, SSE-заголовки сразу, переиспользуемая Web-сессия, тело по Content-Length, общий пул соединений."
 }
