@@ -514,6 +514,7 @@
     if (pending && updateRemindEnabled() && S.status && S.status.has_token) {
       showUpdateDialog(pending, false);
     }
+    if (!S.online) return;
     try {
       if (Native.checkUpdate) Native.checkUpdate(false);
     } catch (e) { /* old bridge */ }
@@ -606,6 +607,10 @@
       if (e.target === this) closeUpdateDialog();
     });
     $("#check-update").addEventListener("click", function () {
+      if (!S.online) {
+        toast("Нет доступа к интернету");
+        return;
+      }
       var btn = this;
       btn.disabled = true;
       btn.textContent = "Проверяю…";
