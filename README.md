@@ -197,7 +197,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.6.12-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.6.13-debug.apk`.
 
 ## Обновления
 
