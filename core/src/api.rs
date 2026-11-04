@@ -265,18 +265,28 @@ fn handle_event(
         });
     }
 
-    let delta = value.pointer("/choices/0/delta");
-    let Some(delta) = delta else { return Ok(Stop::Continue) };
-
-    if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str) {
-        if !reasoning.is_empty() {
-            on_delta(Delta::Reasoning(reasoning.to_string()))?;
+    if let Some(delta) = value.pointer("/choices/0/delta") {
+        if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str) {
+            if !reasoning.is_empty() {
+                on_delta(Delta::Reasoning(reasoning.to_string()))?;
+            }
+        }
+        if let Some(content) = delta.get("content").and_then(Value::as_str) {
+            if !content.is_empty() {
+                on_delta(Delta::Content(content.to_string()))?;
+            }
         }
     }
-    if let Some(content) = delta.get("content").and_then(Value::as_str) {
-        if !content.is_empty() {
-            on_delta(Delta::Content(content.to_string()))?;
-        }
+
+    // The upstream may keep the HTTP connection open after the final chunk.
+    // finish_reason is the authoritative end of the completion, just like
+    // `data: [DONE]`; waiting for EOF would block until the keep-alive timeout.
+    if value
+        .pointer("/choices/0/finish_reason")
+        .map(|reason| !reason.is_null())
+        .unwrap_or(false)
+    {
+        return Ok(Stop::Done);
     }
     Ok(Stop::Continue)
 }
@@ -322,5 +332,36 @@ fn preview(body: &str) -> String {
         "пустой ответ".to_string()
     } else {
         flat
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_reason_ends_the_stream_without_done() {
+        let mut usage = None;
+        let mut sink = |_: Delta| -> Result<(), Error> { Ok(()) };
+        let stop = handle_event(
+            r#"{"choices":[{"delta":{"content":"!"},"finish_reason":"stop"}]}"#,
+            &mut sink,
+            &mut usage,
+        )
+        .expect("event");
+        assert!(matches!(stop, Stop::Done));
+    }
+
+    #[test]
+    fn null_finish_reason_keeps_the_stream_open() {
+        let mut usage = None;
+        let mut sink = |_: Delta| -> Result<(), Error> { Ok(()) };
+        let stop = handle_event(
+            r#"{"choices":[{"delta":{"content":"!"},"finish_reason":null}]}"#,
+            &mut sink,
+            &mut usage,
+        )
+        .expect("event");
+        assert!(matches!(stop, Stop::Continue));
     }
 }

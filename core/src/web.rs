@@ -401,6 +401,7 @@ struct StreamParser {
     emitted_answer: Vec<String>,
     message_id: Option<i64>,
     filtered: bool,
+    finished: bool,
 }
 
 impl StreamParser {
@@ -420,13 +421,17 @@ impl StreamParser {
             if let Some(id) = value.get("response_message_id").and_then(Value::as_i64) {
                 self.message_id = Some(id);
             }
-            return Ok(false);
+            return Ok(self.finished);
+        }
+
+        if value.get("status").and_then(Value::as_str) == Some("FINISHED") {
+            self.finished = true;
         }
 
         // Snapshot: the complete response object.
         if let Some(snapshot) = value.get("v").filter(|v| v.get("response").is_some()) {
             self.snapshot(snapshot, on_delta)?;
-            return Ok(false);
+            return Ok(self.finished);
         }
 
         // Path patch: {"p":"…","o":"APPEND|SET","v":…}. This must run before the
@@ -438,7 +443,7 @@ impl StreamParser {
             // second token, e.g. "вет" in "Привет!").
             let op = value.get("o").and_then(Value::as_str);
             self.patch(path, op, value.get("v").unwrap_or(&Value::Null), on_delta)?;
-            return Ok(false);
+            return Ok(self.finished);
         }
 
         // Terminal batch: {"v":[{p,o,v}, …]}.
@@ -450,14 +455,14 @@ impl StreamParser {
                     self.patch(p, op, inner, on_delta)?;
                 }
             }
-            return Ok(false);
+            return Ok(self.finished);
         }
 
         // Bare token append: {"v":"…"}.
         if let Some(text) = value.get("v").and_then(Value::as_str) {
             self.append(text, on_delta)?;
         }
-        Ok(false)
+        Ok(self.finished)
     }
 
     fn snapshot(
@@ -491,6 +496,14 @@ impl StreamParser {
         self.emitted_reasoning
             .resize_with(self.types.len(), String::new);
         self.emitted_answer.resize_with(self.types.len(), String::new);
+        if snapshot
+            .get("response")
+            .and_then(|response| response.get("status"))
+            .and_then(Value::as_str)
+            == Some("FINISHED")
+        {
+            self.finished = true;
+        }
 
         // A snapshot replaces the fragment list, but it must not forget which
         // fragment is currently receiving tokens: DeepSeek sends snapshots
@@ -512,10 +525,31 @@ impl StreamParser {
         value: &Value,
         on_delta: &mut dyn FnMut(WebDelta) -> Result<(), Error>,
     ) -> Result<(), Error> {
+        if matches!(path, "response/status" | "status")
+            && value.as_str() == Some("FINISHED")
+        {
+            self.finished = true;
+            return Ok(());
+        }
         if (path == "response/status" || path == "status")
             && value.as_str() == Some("CONTENT_FILTER")
         {
             self.filtered = true;
+            self.finished = true;
+            return Ok(());
+        }
+        // DeepSeek may wrap status/terminal patches in
+        // {"p":"response","o":"BATCH","v":[{"p":"status","v":"FINISHED"}, …]}.
+        if path == "response" && matches!(op, Some("BATCH") | None) {
+            if let Some(patches) = value.as_array() {
+                for patch in patches {
+                    if let Some(inner_path) = patch.get("p").and_then(Value::as_str) {
+                        let inner_op = patch.get("o").and_then(Value::as_str);
+                        let inner_value = patch.get("v").unwrap_or(&Value::Null);
+                        self.patch(inner_path, inner_op, inner_value, on_delta)?;
+                    }
+                }
+            }
             return Ok(());
         }
         if path.ends_with("message_id") {
@@ -767,6 +801,20 @@ mod tests {
         );
         assert_eq!(answer, "Ответ");
         assert!(reasoning.is_empty());
+    }
+
+    #[test]
+    fn batch_finished_status_stops_the_stream() {
+        let mut parser = StreamParser::default();
+        let mut sink = |_: WebDelta| -> Result<(), Error> { Ok(()) };
+        let done = parser
+            .apply(
+                r#"{"p":"response","o":"BATCH","v":[{"p":"status","v":"FINISHED"}]}"#,
+                "message",
+                &mut sink,
+            )
+            .expect("frame");
+        assert!(done);
     }
 
     #[test]

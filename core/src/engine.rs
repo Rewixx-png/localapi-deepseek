@@ -426,6 +426,9 @@ impl Engine {
             let inner = lock(&self.inner);
             (inner.mode, inner.api.clone(), inner.web.clone())
         };
+        // api/web are clones of the engine's configured clients, so the local
+        // server reuses the same reqwest::Client (TLS, DNS, connection pool)
+        // as the in-app chat instead of building a new one per request.
         let backend = match mode {
             Some(AuthMode::Api) => Backend::Api(api.ok_or_else(|| {
                 Error::new(ErrorKind::Unauthorized, "Сначала добавьте API-ключ DeepSeek")
