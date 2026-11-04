@@ -22,6 +22,7 @@ static DIR_ID: AtomicU64 = AtomicU64::new(0);
 static LAST_CHAT_BODY: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::new()));
 static LAST_WEB_BODY: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::new()));
 static LAST_WEB_DELETE: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::new()));
+static WEB_SESSION_CREATES: AtomicUsize = AtomicUsize::new(0);
 static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn temp_dir() -> PathBuf {
@@ -174,6 +175,7 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
             respond_json(&mut conn, 200, r#"{"code":40003,"msg":"Authorization Failed (invalid token)","data":null}"#);
             return;
         }
+        WEB_SESSION_CREATES.fetch_add(1, Ordering::Relaxed);
         respond_json(
             &mut conn,
             200,
@@ -226,11 +228,12 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
         }
 
         let message_id = (turn as i64 + 1) * 42;
-        let second = request
+        let prompt = request
             .get("prompt")
             .and_then(Value::as_str)
-            .map(|p| p.contains("Ещё"))
-            .unwrap_or(false);
+            .unwrap_or("");
+        let second = prompt.contains("Ещё");
+        let transition = prompt.contains("переход");
         let (reasoning, answer) = if second {
             ("Думаю ещё.", "Второй ответ!")
         } else {
@@ -238,6 +241,48 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
         };
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
         conn.write_all(head.as_bytes()).unwrap();
+
+        if transition {
+            // Real-shape transition: BATCH creates RESPONSE with "При", the
+            // next data line is a content patch without "o" ("вет"), and the
+            // tail is a split data line. Two events share one TCP write.
+            let _ = write_event(
+                &mut conn,
+                "ready",
+                &json!({"response_message_id": message_id}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"v":{"response":{"message_id": message_id,"fragments":[
+                    {"id":1,"type":"THINK","content":""}
+                ]}}}),
+            );
+            let batch = json!({"v":[
+                {"p":"response/fragments","o":"APPEND","v":[
+                    {"id":2,"type":"RESPONSE","content":"При"}
+                ]}
+            ]});
+            let no_operator = json!({"p":"response/fragments/1/content","v":"вет"});
+            let combined = format!(
+                "event: message\ndata: {batch}\n\nevent: message\ndata: {no_operator}\n\n"
+            );
+            conn.write_all(combined.as_bytes()).unwrap();
+            conn.flush().unwrap();
+            let _ = write_event_split(
+                &mut conn,
+                "message",
+                &json!({"v":"! Рад тебя видеть"}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"p":"response/status","o":"SET","v":"FINISHED"}),
+            );
+            let _ = write_event(&mut conn, "finish", &json!({}));
+            let _ = write_event(&mut conn, "close", &json!({}));
+            return;
+        }
 
         let _ = write_event(&mut conn, "ready", &json!({"response_message_id": message_id}));
         let _ = write_event(
@@ -538,6 +583,32 @@ fn web_mode_validates_pow_streams_and_continues_thread() {
 }
 
 #[test]
+fn web_transition_without_operator_keeps_second_token() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(WEB_TOKEN, "web").unwrap();
+
+    let chat = engine.new_chat().unwrap();
+    let start = engine
+        .send_opts(
+            &chat.id,
+            "проверка перехода",
+            "deepseek-flash",
+            false,
+            false,
+            Vec::new(),
+            "high",
+        )
+        .unwrap();
+    let poll = wait_done(&engine, start.stream_id);
+    assert!(poll.error.is_none(), "stream error: {:?}", poll.error);
+    assert_eq!(poll.content, "Привет! Рад тебя видеть");
+    assert!(poll.reasoning.is_empty(), "reasoning: {:?}", poll.reasoning);
+}
+
+#[test]
 fn bad_web_token_is_rejected_even_with_http_200() {
     let _guard = TEST_LOCK.lock().unwrap();
     let base = start_mock();
@@ -643,6 +714,7 @@ fn local_server_works_with_web_session() {
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap();
+    WEB_SESSION_CREATES.store(0, Ordering::Relaxed);
     let response = client
         .post(format!("http://127.0.0.1:{}/v1/chat/completions", status.port))
         .bearer_auth(&status.key)
@@ -662,7 +734,28 @@ fn local_server_works_with_web_session() {
         "Думаю про веб."
     );
 
+    // The local server keeps one web session for its lifetime instead of
+    // creating a new one for every request.
+    *LAST_WEB_DELETE.lock().unwrap() = String::new();
+    let second = client
+        .post(format!("http://127.0.0.1:{}/v1/chat/completions", status.port))
+        .bearer_auth(&status.key)
+        .json(&json!({
+            "messages": [
+                {"role": "system", "content": "Отвечай кратко."},
+                {"role": "user", "content": "привет"}
+            ]
+        }))
+        .send()
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    let body: Value = second.json().unwrap();
+    assert_eq!(body["choices"][0]["message"]["content"], "Веб-ответ!");
+    assert_eq!(WEB_SESSION_CREATES.load(Ordering::Relaxed), 1);
+
     engine.stop_server();
+    let deleted: Value = serde_json::from_str(&LAST_WEB_DELETE.lock().unwrap()).unwrap();
+    assert_eq!(deleted["chat_session_ids"][0], WEB_SESSION);
 }
 
 #[test]

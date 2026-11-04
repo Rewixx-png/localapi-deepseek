@@ -7,7 +7,7 @@
 use std::io::{Cursor, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -33,6 +33,8 @@ pub struct LocalServer {
     handle: Option<JoinHandle<()>>,
     unix_handle: Option<JoinHandle<()>>,
     unix_path: Option<PathBuf>,
+    backend: Arc<Backend>,
+    web_session: Arc<Mutex<Option<String>>>,
 }
 
 impl LocalServer {
@@ -79,19 +81,22 @@ impl LocalServer {
         let shutdown = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&shutdown);
         let backend = Arc::new(backend);
+        let web_session = Arc::new(Mutex::new(None));
         let worker_key = key.clone();
         let handle = spawn_accept(
             server,
             Arc::clone(&backend),
             worker_key.clone(),
+            Arc::clone(&web_session),
             Arc::clone(&flag),
             "local-api-accept",
         )?;
         let unix_handle = match unix_server {
             Some(server) => match spawn_accept(
                 server,
-                backend,
+                Arc::clone(&backend),
                 worker_key,
+                Arc::clone(&web_session),
                 flag,
                 "local-api-unix",
             ) {
@@ -115,6 +120,8 @@ impl LocalServer {
             handle: Some(handle),
             unix_handle,
             unix_path,
+            backend,
+            web_session,
         })
     }
 
@@ -137,6 +144,14 @@ impl LocalServer {
         if let Some(path) = self.unix_path.take() {
             let _ = std::fs::remove_file(path);
         }
+        let session = self
+            .web_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let (Backend::Web(web), Some(session)) = (&*self.backend, session) {
+            let _ = web.delete_session(&session);
+        }
     }
 }
 
@@ -150,6 +165,7 @@ fn spawn_accept(
     server: Server,
     backend: Arc<Backend>,
     worker_key: String,
+    web_session: Arc<Mutex<Option<String>>>,
     flag: Arc<AtomicBool>,
     name: &str,
 ) -> Result<JoinHandle<()>, Error> {
@@ -161,7 +177,8 @@ fn spawn_accept(
                     Ok(Some(request)) => {
                         let backend = Arc::clone(&backend);
                         let key = worker_key.clone();
-                        thread::spawn(move || handle_request(request, &backend, &key));
+                        let session = Arc::clone(&web_session);
+                        thread::spawn(move || handle_request(request, &backend, &key, &session));
                     }
                     Ok(None) => {}
                     Err(_) => break,
@@ -171,7 +188,12 @@ fn spawn_accept(
         .map_err(|e| Error::new(ErrorKind::Io, format!("Сервер не стартовал: {e}")))
 }
 
-fn handle_request(mut request: Request, backend: &Backend, key: &str) {
+fn handle_request(
+    mut request: Request,
+    backend: &Backend,
+    key: &str,
+    web_session: &Arc<Mutex<Option<String>>>,
+) {
     let is_post = *request.method() == Method::Post;
     let is_get = *request.method() == Method::Get;
     let is_options = *request.method() == Method::Options;
@@ -211,10 +233,17 @@ fn handle_request(mut request: Request, backend: &Backend, key: &str) {
             ));
         }
         (_, true, "/v1/chat/completions" | "/chat/completions") => {
+            // Read exactly the declared body length. A keep-alive client must
+            // not be waited on until it closes the socket.
+            let limit = request
+                .body_length()
+                .map(|n| n as u64)
+                .unwrap_or(MAX_BODY)
+                .min(MAX_BODY);
             let mut body = String::new();
             if request
                 .as_reader()
-                .take(MAX_BODY)
+                .take(limit)
                 .read_to_string(&mut body)
                 .is_err()
             {
@@ -237,9 +266,9 @@ fn handle_request(mut request: Request, backend: &Backend, key: &str) {
             };
 
             if chat.stream {
-                respond_stream(request, backend, chat);
+                respond_stream(request, backend, chat, Arc::clone(web_session));
             } else {
-                match complete(backend, &chat) {
+                match complete(backend, &chat, web_session) {
                     Ok(response) => {
                         let _ = request.respond(json_response(200, &response));
                     }
@@ -258,14 +287,33 @@ fn handle_request(mut request: Request, backend: &Backend, key: &str) {
     }
 }
 
-fn complete(backend: &Backend, chat: &ChatRequest) -> Result<Value, Error> {
+fn cached_web_session(
+    web: &WebApi,
+    cache: &Arc<Mutex<Option<String>>>,
+) -> Result<String, Error> {
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(session) = guard.as_ref() {
+        return Ok(session.clone());
+    }
+    let session = web.create_session()?;
+    *guard = Some(session.clone());
+    Ok(session)
+}
+
+fn complete(
+    backend: &Backend,
+    chat: &ChatRequest,
+    web_session: &Arc<Mutex<Option<String>>>,
+) -> Result<Value, Error> {
     let mut content = String::new();
     let mut reasoning = String::new();
     let mut usage: Option<Usage> = None;
 
     match backend {
         Backend::Api(api) => accumulate_api(api, chat, &mut content, &mut reasoning, &mut usage)?,
-        Backend::Web(web) => accumulate_web(web, chat, &mut content, &mut reasoning)?,
+        Backend::Web(web) => {
+            accumulate_web(web, chat, &mut content, &mut reasoning, web_session)?
+        }
     }
 
     let mut message = json!({"role": "assistant", "content": content});
@@ -321,10 +369,11 @@ fn accumulate_web(
     chat: &ChatRequest,
     content: &mut String,
     reasoning: &mut String,
+    web_session: &Arc<Mutex<Option<String>>>,
 ) -> Result<(), Error> {
     let cancel = AtomicBool::new(false);
     let prompt = web_prompt(&chat.messages);
-    let session = web.create_session()?;
+    let session = cached_web_session(web, web_session)?;
     let result = web.stream_completion(
         &session,
         None,
@@ -342,24 +391,18 @@ fn accumulate_web(
             Ok(())
         },
     );
-    let _ = web.delete_session(&session);
     result.map(|_| ())
 }
 
-fn respond_stream(request: Request, backend: &Backend, chat: ChatRequest) {
-    // Web mode needs a server-side session before the first byte goes out.
-    let web_session = match backend {
-        Backend::Web(web) => match web.create_session() {
-            Ok(session) => Some(session),
-            Err(e) => {
-                let _ = request.respond(json_response(status_for(&e), &error_body(&e.message)));
-                return;
-            }
-        },
-        Backend::Api(_) => None,
-    };
-
+fn respond_stream(
+    request: Request,
+    backend: &Backend,
+    chat: ChatRequest,
+    web_session: Arc<Mutex<Option<String>>>,
+) {
     // tiny_http buffers a Response body; SSE needs a raw writer we can flush.
+    // Headers go out before the upstream session/PoW work so clients get an
+    // immediate response instead of waiting silently.
     let mut writer = request.into_writer();
     let head = concat!(
         "HTTP/1.1 200 OK\r\n",
@@ -398,11 +441,10 @@ fn respond_stream(request: Request, backend: &Backend, chat: ChatRequest) {
                 &cancel,
                 &mut |delta| sink.api_delta(delta),
             ),
-            Backend::Web(web) => {
-                let session = web_session.clone().unwrap_or_default();
-                let prompt = web_prompt(&chat.messages);
-                let result = web
-                    .stream_completion(
+            Backend::Web(web) => match cached_web_session(web, &web_session) {
+                Ok(session) => {
+                    let prompt = web_prompt(&chat.messages);
+                    web.stream_completion(
                         &session,
                         None,
                         &prompt,
@@ -413,10 +455,10 @@ fn respond_stream(request: Request, backend: &Backend, chat: ChatRequest) {
                         &cancel,
                         &mut |delta| sink.web_delta(delta),
                     )
-                    .map(|_| None);
-                let _ = web.delete_session(&session);
-                result
-            }
+                    .map(|_| None)
+                }
+                Err(e) => Err(e),
+            },
         };
 
         if let Err(e) = &result {
@@ -424,6 +466,8 @@ fn respond_stream(request: Request, backend: &Backend, chat: ChatRequest) {
                 sink.error(e);
             }
         }
+        // Send [DONE] immediately; the web session is kept in the server-wide
+        // cache and deleted when the local server stops.
         sink.finish();
     });
 }
@@ -527,6 +571,7 @@ impl ChatRequest {
 
         let model = match value.get("model").and_then(Value::as_str) {
             Some("deepseek-v4-pro") => "deepseek-v4-pro",
+            Some("deepseek-reasoner") => "deepseek-reasoner",
             _ => MODEL_ID,
         };
         // Local API is fast by default: reasoning is opt-in. Without this,
@@ -547,13 +592,12 @@ impl ChatRequest {
             Some("max") => "max",
             _ => "high",
         };
-        let thinking = match explicit_thinking {
-            Some(on) => on,
-            None => match requested_effort {
-                Some("none" | "minimal") | None => false,
-                Some(_) => true,
-            },
-        };
+        // Only an explicit thinking flag (or the reasoner model) enables the
+        // slow reasoning phase. `reasoning_effort` alone must not force it:
+        // plain OpenAI clients send it and then wait for a full DeepThink run.
+        let requested_model = value.get("model").and_then(Value::as_str);
+        let model_reasoner = requested_model == Some("deepseek-reasoner");
+        let thinking = explicit_thinking.unwrap_or(model_reasoner);
         let stream = value.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
         Ok(Self {
@@ -668,12 +712,18 @@ mod tests {
         assert!(parse(json!({"thinking": true})).thinking);
         assert!(parse(json!({"thinking": {"type": "enabled"}})).thinking);
         assert!(!parse(json!({"thinking": {"type": "disabled"}})).thinking);
-        assert!(parse(json!({"reasoning_effort": "high"})).thinking);
-        assert!(parse(json!({"reasoning_effort": "max"})).thinking);
+        // Effort alone must not enable the slow reasoning phase.
+        assert!(!parse(json!({"reasoning_effort": "high"})).thinking);
+        assert!(!parse(json!({"reasoning_effort": "max"})).thinking);
         assert_eq!(parse(json!({"reasoning_effort": "max"})).effort, "max");
-        assert!(parse(json!({"reasoning_effort": "low"})).thinking);
+        assert!(!parse(json!({"reasoning_effort": "low"})).thinking);
         assert_eq!(parse(json!({"reasoning_effort": "low"})).effort, "low");
         assert!(!parse(json!({"reasoning_effort": "none"})).thinking);
+        assert!(parse(json!({"model": "deepseek-reasoner"})).thinking);
+        assert_eq!(parse(json!({"model": "deepseek-reasoner"})).model,
+                   "deepseek-reasoner");
+        assert!(!parse(json!({"model": "deepseek-reasoner",
+                              "thinking": false})).thinking);
         assert_eq!(
             parse(json!({"thinking": {"type": "enabled"}, "reasoning_effort": "low"})).effort,
             "low"

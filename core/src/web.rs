@@ -433,7 +433,10 @@ impl StreamParser {
         // batch branch, because `response/fragments` APPEND carries an array as
         // `v` and would otherwise be mistaken for a list of patches.
         if let Some(path) = value.get("p").and_then(Value::as_str) {
-            let op = value.get("o").and_then(Value::as_str).unwrap_or("SET");
+            // DeepSeek sometimes omits `o` on a content patch; such a patch is
+            // an append, not a SET (treating it as SET silently dropped the
+            // second token, e.g. "вет" in "Привет!").
+            let op = value.get("o").and_then(Value::as_str);
             self.patch(path, op, value.get("v").unwrap_or(&Value::Null), on_delta)?;
             return Ok(false);
         }
@@ -442,7 +445,7 @@ impl StreamParser {
         if let Some(Value::Array(patches)) = value.get("v") {
             for patch in patches {
                 if let Some(p) = patch.get("p").and_then(Value::as_str) {
-                    let op = patch.get("o").and_then(Value::as_str).unwrap_or("SET");
+                    let op = patch.get("o").and_then(Value::as_str);
                     let inner = patch.get("v").unwrap_or(&Value::Null);
                     self.patch(p, op, inner, on_delta)?;
                 }
@@ -505,7 +508,7 @@ impl StreamParser {
     fn patch(
         &mut self,
         path: &str,
-        op: &str,
+        op: Option<&str>,
         value: &Value,
         on_delta: &mut dyn FnMut(WebDelta) -> Result<(), Error>,
     ) -> Result<(), Error> {
@@ -563,7 +566,9 @@ impl StreamParser {
             if idx < self.types.len() {
                 self.active = Some(idx);
             }
-            if op == "APPEND" {
+            // No `o` means append for fragment content. An explicit SET is a
+            // replacement and is not an append.
+            if matches!(op, None | Some("APPEND")) {
                 if let Some(text) = value.as_str() {
                     self.append_at(idx, text, on_delta)?;
                 }
@@ -761,6 +766,46 @@ mod tests {
             &mut reasoning,
         );
         assert_eq!(answer, "Ответ");
+        assert!(reasoning.is_empty());
+    }
+
+    #[test]
+    fn transition_without_operator_keeps_second_token() {
+        let mut parser = StreamParser::default();
+        let mut answer = String::new();
+        let mut reasoning = String::new();
+        apply(
+            &mut parser,
+            json!({"v":{"response":{"fragments":[
+                {"id":1,"type":"THINK","content":""}
+            ]}}}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // First answer token arrives inside a BATCH fragment descriptor.
+        apply(
+            &mut parser,
+            json!({"v":[{"p":"response/fragments","o":"APPEND","v":[
+                {"id":2,"type":"RESPONSE","content":"При"}
+            ]}]}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // Second token: no "o" field at all (must be an append).
+        apply(
+            &mut parser,
+            json!({"p":"response/fragments/1/content","v":"вет"}),
+            &mut answer,
+            &mut reasoning,
+        );
+        // Third and following tokens: bare append.
+        apply(
+            &mut parser,
+            json!({"v":"! Рад тебя видеть"}),
+            &mut answer,
+            &mut reasoning,
+        );
+        assert_eq!(answer, "Привет! Рад тебя видеть");
         assert!(reasoning.is_empty());
     }
 
