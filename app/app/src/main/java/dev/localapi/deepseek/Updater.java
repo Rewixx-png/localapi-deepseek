@@ -127,6 +127,13 @@ final class Updater {
     }
 
     void check(final boolean manual) {
+        if (!online(activity)) {
+            if (manual) {
+                runJs("window.__updateError && window.__updateError("
+                        + JSONObject.quote("Нет доступа к интернету") + ")");
+            }
+            return;
+        }
         new Thread(() -> {
             try {
                 JSONObject manifest = fetchManifest();
@@ -149,6 +156,11 @@ final class Updater {
 
     void download() {
         if (downloading) return;
+        if (!online(activity)) {
+            runJs("window.__updateError && window.__updateError("
+                    + JSONObject.quote("Нет доступа к интернету") + ")");
+            return;
+        }
         if (!canInstall(activity)) {
             pendingDownload = true;
             runJs("window.__updateStatus && window.__updateStatus('permission')");
