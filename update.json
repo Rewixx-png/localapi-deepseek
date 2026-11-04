@@ -1,7 +1,7 @@
 {
-  "versionCode": 26,
-  "versionName": "1.6.12",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.12/LocalApiDeepSeek.apk",
-  "sha256": "6a3b427176ae699f9afe579ae055c0b1e91b746641978fe6d2b4f3035aff46cc",
-  "notes": "Исправлена установка обновления: STATUS_PENDING_USER_ACTION теперь открывает системное окно подтверждения, а не ложную ошибку «установка отменена». Ошибки установки показывают код и текст причины."
+  "versionCode": 27,
+  "versionName": "1.6.13",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.13/LocalApiDeepSeek.apk",
+  "sha256": "9bcdff2a485bf8fe84c845807fe43f81bd1b26282e312e775a4070231fe33fbe",
+  "notes": "Блоки кода: подсветка синтаксиса, номера строк и счётчик строк, кнопка «Запустить» для HTML с изолированным предпросмотром. Rust: фрагменты дедуплицируются по id — повторный THINK-дескриптор больше не уводит токены ответа в reasoning."
 }
