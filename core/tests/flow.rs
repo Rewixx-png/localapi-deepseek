@@ -234,6 +234,7 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
             .unwrap_or("");
         let second = prompt.contains("Ещё");
         let transition = prompt.contains("переход");
+        let no_close = prompt.contains("незакрытый");
         let (reasoning, answer) = if second {
             ("Думаю ещё.", "Второй ответ!")
         } else {
@@ -241,6 +242,51 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
         };
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
         conn.write_all(head.as_bytes()).unwrap();
+
+        if no_close {
+            // The upstream sends FINISHED and then keeps the TCP connection
+            // open (Cloudflare keep-alive). The reader must stop at FINISHED,
+            // not wait for EOF.
+            let _ = write_event(
+                &mut conn,
+                "ready",
+                &json!({"response_message_id": message_id}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"v":{"response":{"message_id": message_id,"fragments":[
+                    {"id":1,"type":"THINK","content":""}
+                ]}}}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"p":"response/fragments","o":"APPEND","v":[
+                    {"id":2,"type":"RESPONSE","content":"При"}
+                ]}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"p":"response/fragments/1/content","v":"вет"}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"v":"! Рад тебя видеть"}),
+            );
+            let _ = write_event(
+                &mut conn,
+                "message",
+                &json!({"p":"response","o":"BATCH","v":[
+                    {"p":"response/status","o":"SET","v":"FINISHED"}
+                ]}),
+            );
+            let _ = conn.flush();
+            std::thread::sleep(Duration::from_secs(120));
+            return;
+        }
 
         if transition {
             // Real-shape transition: BATCH creates RESPONSE with "При", the
@@ -609,6 +655,66 @@ fn web_transition_without_operator_keeps_second_token() {
 }
 
 #[test]
+fn local_api_stops_on_finished_without_socket_close() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(WEB_TOKEN, "web").unwrap();
+    let status = engine.start_server(0).unwrap();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{}/v1/chat/completions", status.port);
+
+    let started = Instant::now();
+    let response = client
+        .post(&url)
+        .bearer_auth(&status.key)
+        .json(&json!({
+            "messages": [{"role": "user", "content": "незакрытый"}]
+        }))
+        .send()
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().unwrap();
+    assert_eq!(
+        body["choices"][0]["message"]["content"],
+        "Привет! Рад тебя видеть"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "non-stream waited for socket close: {:?}",
+        started.elapsed()
+    );
+
+    let started = Instant::now();
+    let response = client
+        .post(&url)
+        .bearer_auth(&status.key)
+        .json(&json!({
+            "messages": [{"role": "user", "content": "незакрытый"}],
+            "stream": true
+        }))
+        .send()
+        .unwrap();
+    let text = response.text().unwrap();
+    // The stream carries deltas, not the concatenated message.
+    assert!(text.contains("\"content\":\"При\""), "stream: {text}");
+    assert!(text.contains("\"content\":\"вет\""), "stream: {text}");
+    assert!(text.contains("\"content\":\"! Рад тебя видеть\""), "stream: {text}");
+    assert!(text.contains("data: [DONE]"), "stream: {text}");
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "stream waited for socket close: {:?}",
+        started.elapsed()
+    );
+
+    engine.stop_server();
+}
+
+#[test]
 fn bad_web_token_is_rejected_even_with_http_200() {
     let _guard = TEST_LOCK.lock().unwrap();
     let base = start_mock();
@@ -756,6 +862,56 @@ fn local_server_works_with_web_session() {
     engine.stop_server();
     let deleted: Value = serde_json::from_str(&LAST_WEB_DELETE.lock().unwrap()).unwrap();
     assert_eq!(deleted["chat_session_ids"][0], WEB_SESSION);
+}
+
+#[test]
+fn local_server_reads_lowercase_content_length_and_continue() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(API_TOKEN, "api").unwrap();
+    let status = engine.start_server(0).unwrap();
+
+    let mut socket = TcpStream::connect(("127.0.0.1", status.port)).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let body = json!({
+        "messages": [{"role": "user", "content": "привет"}]
+    })
+    .to_string();
+    write!(
+        socket,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\ncontent-length: {}\r\nexpect: 100-continue\r\nConnection: keep-alive\r\n\r\n",
+        status.key,
+        body.len()
+    )
+    .unwrap();
+    socket.flush().unwrap();
+
+    // tiny_http must answer the expectation before the body is sent.
+    let mut first = [0u8; 512];
+    let n = socket.read(&mut first).unwrap();
+    let head = String::from_utf8_lossy(&first[..n]).to_string();
+    assert!(head.contains("100 Continue"), "expected 100 Continue, got: {head}");
+
+    write!(socket, "{body}").unwrap();
+    socket.flush().unwrap();
+    let mut collected = Vec::new();
+    let mut buf = [0u8; 4096];
+    while !String::from_utf8_lossy(&collected).contains("choices") {
+        let n = socket.read(&mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        collected.extend_from_slice(&buf[..n]);
+    }
+    let response = String::from_utf8_lossy(&collected);
+    assert!(response.contains("200 OK"), "response: {response}");
+    assert!(response.contains("Привет, мир!"), "response: {response}");
+
+    engine.stop_server();
 }
 
 #[test]
