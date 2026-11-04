@@ -226,6 +226,9 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        // Only notifications depend on foreground. The Rust engine, the local
+        // API and the tunnel stay alive in ServerService; do not stop them and
+        // do not pause WebView timers here.
         foreground = false;
         super.onPause();
     }
@@ -475,7 +478,10 @@ public final class MainActivity extends Activity {
             String raw = Rust.nativeStartServer(port);
             try {
                 if (new JSONObject(raw).optBoolean("ok")) {
-                    runOnUiThread(() -> startLocalService(port));
+                    runOnUiThread(() -> {
+                        startLocalService(port);
+                        requestBatteryExemption();
+                    });
                 }
             } catch (Exception ignored) {
             }
@@ -515,7 +521,13 @@ public final class MainActivity extends Activity {
             } catch (Exception ignored) {
                 actualPort = port;
             }
-            return tunnelEnvelope(current.start(mode, token, hostname, actualPort));
+            String result = tunnelEnvelope(current.start(mode, token, hostname, actualPort));
+            final int servicePort = actualPort;
+            if (servicePort > 0) {
+                // The tunnel and the server are both covered by ServerService.
+                runOnUiThread(() -> startLocalService(servicePort));
+            }
+            return result;
         }
 
         @JavascriptInterface
@@ -546,6 +558,19 @@ public final class MainActivity extends Activity {
             } catch (Exception e) {
                 return "{\"ok\":false,\"error\":{\"message\":\"tunnel status\"}}";
             }
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "Не удалось открыть настройки",
+                            Toast.LENGTH_SHORT).show();
+                }
+            });
         }
 
         @JavascriptInterface
@@ -881,6 +906,23 @@ public final class MainActivity extends Activity {
                 startService(intent);
             }
         } catch (Exception ignored) {
+        }
+    }
+
+    /** Ask once when the local API is enabled; the onboarding already asks too. */
+    private void requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+        try {
+            startActivity(new Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception ignored) {
+            }
         }
     }
 

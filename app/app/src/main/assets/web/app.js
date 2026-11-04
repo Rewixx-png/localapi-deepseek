@@ -1031,6 +1031,19 @@
     try { invoke("ensureService", S.server.port); } catch (e) { /* old bridge */ }
   }
 
+  // The Rust server dies with the process, so reopening the app must restore
+  // the user's "server enabled" setting and start ServerService again.
+  function maybeStartLocalServer() {
+    if (localStorage.getItem("serverEnabled") !== "1") return;
+    if (!S.status || !S.status.has_token || !S.online) return;
+    try {
+      S.server = invoke("startServer", 8787);
+    } catch (e) {
+      toast("Локальный API: " + e.message);
+    }
+    paintServer();
+  }
+
   function paintServer() {
     var web = isWebMode();
     var toggle = $("#server-toggle");
@@ -1221,9 +1234,11 @@
       try {
         if (on) {
           S.server = invoke("startServer", 8787);
+          localStorage.setItem("serverEnabled", "1");
         } else {
           stopCfTunnel();
           invoke("stopServer");
+          localStorage.setItem("serverEnabled", "0");
           S.server = { running: false, port: 0, key: "", base_url: "" };
         }
       } catch (e) {
@@ -1285,6 +1300,7 @@
           if (S.server.running) {
             try { invoke("stopServer"); } catch (e) { /* ignore */ }
           }
+          localStorage.setItem("serverEnabled", "0");
           S.server = { running: false, port: 0, key: "", base_url: "" };
         }
       } catch (e) {
@@ -2109,6 +2125,18 @@
       }
     });
     $("#settings-close").addEventListener("click", closeSettings);
+    var backgroundSettings = $("#background-settings");
+    if (backgroundSettings) {
+      backgroundSettings.addEventListener("click", function () {
+        if (window.Native && Native.openAppSettings) {
+          try { Native.openAppSettings(); } catch (e) {
+            toast("Не удалось открыть настройки");
+          }
+        } else {
+          toast("Доступно только в приложении");
+        }
+      });
+    }
     $$(".settings-cat[data-settings-pane]").forEach(function (button) {
       button.addEventListener("click", function () {
         openSettingsPane(button.getAttribute("data-settings-pane"));
@@ -2260,6 +2288,7 @@
         S.online = S.status.online !== false;
         detachStream();
         S.chat = null;
+        localStorage.setItem("serverEnabled", "0");
         S.server = { running: false, port: 0, key: "", base_url: "" };
         showTokenScreen();
         paintOnline();
@@ -2301,6 +2330,7 @@
         enterChat();
       }
     }
+    maybeStartLocalServer();
   }
 
   window.__nativeComposerReady = function () {
