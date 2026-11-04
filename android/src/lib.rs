@@ -171,15 +171,17 @@ pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeSend(
     thinking: jboolean,
     search: jboolean,
     images: JString,
+    system_prompt: JString,
 ) -> jstring {
     let chat_id = text(&mut env, &chat_id);
     let message = text(&mut env, &message);
     let model = text(&mut env, &model);
     let effort = text(&mut env, &effort);
     let images_json = text(&mut env, &images);
+    let system_prompt = text(&mut env, &system_prompt);
     let images: Vec<String> = serde_json::from_str(&images_json).unwrap_or_default();
     let payload = match with_engine(|e| {
-        e.send_opts(
+        e.send_opts_with_system(
             &chat_id,
             &message,
             &model,
@@ -187,6 +189,7 @@ pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeSend(
             search != 0,
             images,
             &effort,
+            Some(&system_prompt),
         )
     }) {
         Ok(start) => ok(start),

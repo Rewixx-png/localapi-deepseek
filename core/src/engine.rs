@@ -517,6 +517,25 @@ impl Engine {
         images: Vec<String>,
         effort: &str,
     ) -> Result<SendStart, Error> {
+        self.send_opts_with_system(
+            chat_id, text, model, thinking, search, images, effort, None,
+        )
+    }
+
+    /// Like [`Engine::send_opts`], but prepends an optional per-request system
+    /// instruction. It is only sent upstream and never written to the chat.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_opts_with_system(
+        &self,
+        chat_id: &str,
+        text: &str,
+        model: &str,
+        thinking: bool,
+        search: bool,
+        images: Vec<String>,
+        effort: &str,
+        system_prompt: Option<&str>,
+    ) -> Result<SendStart, Error> {
         if !self.online.load(Ordering::Relaxed) {
             return Err(Error::new(
                 ErrorKind::Network,
@@ -576,7 +595,20 @@ impl Engine {
 
         let mut conv = if chat_id.is_empty() { store.create() } else { store.get(chat_id)? };
         store.append_user(&mut conv, text, &images)?;
-        let history = conv.messages.clone();
+        let mut history = conv.messages.clone();
+        if let Some(system) = system_prompt.map(str::trim).filter(|s| !s.is_empty()) {
+            history.insert(
+                0,
+                Message {
+                    role: "system".to_string(),
+                    content: system.to_string(),
+                    reasoning: String::new(),
+                    sources: Vec::new(),
+                    images: Vec::new(),
+                    ts: 0,
+                },
+            );
+        }
         let prompt = text.to_string();
         let fallback = conv.clone();
 

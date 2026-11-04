@@ -990,6 +990,42 @@ fn offline_mode_blocks_network_and_persists() {
 }
 
 #[test]
+fn system_prompt_is_sent_first_and_not_persisted() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(API_TOKEN, "api").unwrap();
+
+    let chat = engine.new_chat().unwrap();
+    let start = engine
+        .send_opts_with_system(
+            &chat.id,
+            "Привет",
+            "deepseek-flash",
+            true,
+            false,
+            Vec::new(),
+            "high",
+            Some("Отвечай кратко"),
+        )
+        .unwrap();
+    let poll = wait_done(&engine, start.stream_id);
+    assert!(poll.error.is_none(), "stream error: {:?}", poll.error);
+
+    let body: Value = serde_json::from_str(&LAST_CHAT_BODY.lock().unwrap()).unwrap();
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][0]["content"], "Отвечай кратко");
+    assert_eq!(body["messages"][1]["role"], "user");
+    assert_eq!(body["thinking"], serde_json::json!({ "type": "enabled" }));
+    assert_eq!(body["reasoning_effort"], "high");
+
+    let stored = engine.get_chat(&chat.id).unwrap();
+    assert!(stored.messages.iter().all(|m| m.role != "system"));
+    assert_eq!(stored.messages.len(), 2);
+}
+
+#[test]
 fn search_injects_results_and_reports_sources() {
     let _guard = TEST_LOCK.lock().unwrap();
     let base = start_mock();
