@@ -1,7 +1,7 @@
 {
-  "versionCode": 22,
-  "versionName": "1.6.8",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.8/LocalApiDeepSeek.apk",
-  "sha256": "d1159a0199c0339cc3b224c43a31254ea49ddcb252415f208378bbd20e53ca42",
-  "notes": "Окно обновления с загрузкой и прогрессом, установка прямо из приложения, уведомления о новых версиях, ссылка на исходный код и тумблер «не напоминать»."
+  "versionCode": 23,
+  "versionName": "1.6.9",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.9/LocalApiDeepSeek.apk",
+  "sha256": "af74631badecb0efd5108965fb73f78290a6c79993b8ca4cf6c99aff1ea2978e",
+  "notes": "Исправлена потеря первого токена в web-SSE (строковые фрагменты, снапшоты THINK → RESPONSE, разрывы строк между TCP-чанками). Панель ввода анимируется покадрово вместе с клавиатурой, шторка больше не перекрывается панелью. Настройки — каталог с подменю, сменой токена и инструкцией."
 }
