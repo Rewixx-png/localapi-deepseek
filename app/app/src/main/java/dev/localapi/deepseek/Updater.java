@@ -18,6 +18,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.util.Log;
 import android.webkit.WebView;
 import android.widget.Toast;
 
@@ -72,12 +73,78 @@ final class Updater {
                 runJs("window.__updateStatus && window.__updateStatus('installed')");
                 return;
             }
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                // The system installer asks the app to show its confirmation
+                // UI. Treating this status as a failure is what produced the
+                // misleading "Установка отменена" message.
+                Intent confirm;
+                if (Build.VERSION.SDK_INT >= 33) {
+                    confirm = intent.getParcelableExtra(
+                            Intent.EXTRA_INTENT, Intent.class);
+                } else {
+                    //noinspection deprecation
+                    confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                }
+                if (confirm != null) {
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try {
+                        activity.startActivity(confirm);
+                        return;
+                    } catch (Exception e) {
+                        String failure = "Не удалось открыть окно установки: "
+                                + (e.getMessage() == null ? e.getClass().getSimpleName()
+                                : e.getMessage());
+                        Log.w("Updater", failure, e);
+                        runJs("window.__updateError && window.__updateError("
+                                + JSONObject.quote(failure) + ")");
+                        return;
+                    }
+                }
+            }
             String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-            if (message == null || message.isEmpty()) message = "Установка отменена";
+            String text = installErrorText(status, message);
+            Log.w("Updater", "install failed: " + text);
             runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote(message) + ")");
+                    + JSONObject.quote(text) + ")");
         }
     };
+
+    private static String installErrorText(int status, String message) {
+        String base;
+        switch (status) {
+            case PackageInstaller.STATUS_FAILURE_ABORTED:
+                base = "Установка отменена";
+                break;
+            case PackageInstaller.STATUS_FAILURE_BLOCKED:
+                base = "Установка заблокирована системой (разрешите неизвестные источники)";
+                break;
+            case PackageInstaller.STATUS_FAILURE_CONFLICT:
+                base = "Конфликт пакета: APK подписан другим ключом или конфликтует "
+                        + "с установленной версией";
+                break;
+            case PackageInstaller.STATUS_FAILURE_INCOMPATIBLE:
+                base = "APK несовместим с этим устройством";
+                break;
+            case PackageInstaller.STATUS_FAILURE_INVALID:
+                base = "APK повреждён или недействителен";
+                break;
+            case PackageInstaller.STATUS_FAILURE_STORAGE:
+                base = "Недостаточно места для установки";
+                break;
+            case PackageInstaller.STATUS_PENDING_USER_ACTION:
+                base = "Система запросила подтверждение установки, но окно не открылось";
+                break;
+            default:
+                base = "Ошибка установки";
+                break;
+        }
+        StringBuilder text = new StringBuilder(base)
+                .append(" (код ").append(status).append(")");
+        if (message != null && !message.trim().isEmpty()) {
+            text.append(": ").append(message.trim());
+        }
+        return text.toString();
+    }
 
     Updater(Activity activity, WebView web) {
         this.activity = activity;
