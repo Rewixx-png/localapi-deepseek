@@ -1366,10 +1366,21 @@
     $("#token-save").disabled = !S.online || input.value.trim().length < 8;
   }
 
+  function openTokenDocs() {
+    var url = SOURCE_URL + "/blob/main/docs/get-token.md";
+    if (window.Native && Native.openUrl) {
+      try { Native.openUrl(url); } catch (e) { toast("Не удалось открыть ссылку"); }
+    } else {
+      window.open(url, "_blank");
+    }
+  }
+
   function wireTokenScreen() {
     var input = $("#token-input");
     var save = $("#token-save");
     var error = $("#token-error");
+
+    $("#token-doc-link").addEventListener("click", openTokenDocs);
 
     $("#token-eye").addEventListener("click", function () {
       input.type = input.type === "password" ? "text" : "password";
@@ -2142,18 +2153,7 @@
         openSettingsPane(button.getAttribute("data-settings-pane"));
       });
     });
-    $("#token-howto").addEventListener("click", function () {
-      var url = SOURCE_URL + "/blob/main/docs/get-token.md";
-      if (window.Native && Native.openUrl) {
-        try {
-          Native.openUrl(url);
-        } catch (e) {
-          toast("Не удалось открыть ссылку");
-        }
-      } else {
-        window.open(url, "_blank");
-      }
-    });
+    $("#token-howto").addEventListener("click", openTokenDocs);
     $$("#settings-auth-mode button").forEach(function (button) {
       button.addEventListener("click", function () {
         applyAuthMode(button.getAttribute("data-settings-auth"), true);

@@ -81,6 +81,9 @@
 
     <button id="onboard-continue" class="btn filled wide">Далее</button>
     <p class="fine">Разрешения можно изменить в настройках Android.</p>
+    <p class="fine">Samsung/One UI: приложение → «Использование батареи» → «Разрешить
+      энергопотребление в фоновом режиме»; отключите «Приостанавливать работу приложения…».
+      Xiaomi/HyperOS: автозапуск и «Без ограничений».</p>
   </div>
 </section>
 
@@ -97,6 +100,9 @@
     </div>
 
     <p class="hint" id="token-hint">platform.deepseek.com → API keys → Create new key</p>
+    <p class="fine token-doc">
+      <button id="token-doc-link" class="text-btn" type="button">Как получить API-ключ или userToken</button>
+    </p>
 
     <label class="field-label" for="token-input" id="token-label">API-ключ</label>
     <div class="text-field">
@@ -390,8 +396,10 @@
             <div class="row-actions padded">
               <button id="background-settings" class="btn tonal small" type="button">Настройки фоновой работы</button>
             </div>
-            <p class="fine inset-bottom">Если прошивка замораживает сервер в фоне, разрешите приложению
-              работу в фоне и автозапуск.</p>
+            <p class="fine inset-bottom">Если прошивка замораживает сервер в фоне:
+              Samsung/One UI — «Использование батареи» → «Разрешить энергопотребление в фоновом
+              режиме» и выключите «Приостанавливать работу приложения…»; Xiaomi/HyperOS —
+              автозапуск и «Без ограничений».</p>
           </div>
         </div>
       </section>
