@@ -6,6 +6,7 @@
   "use strict";
 
   var NATIVE_COMPOSER = !!(window.Native && window.Native.setComposerVisible);
+  if (window.Native) window.Android = window.Native;
   if (NATIVE_COMPOSER) document.body.classList.add("native-composer");
 
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
@@ -328,6 +329,17 @@
   function openDrawer() {
     hideToast();
     refreshChats();
+    // Drop the keyboard before the drawer starts sliding: otherwise the
+    // viewport collapses mid-transition and the menu jumps.
+    if (document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
+    if (window.Native && Native.hideKeyboard) {
+      try { Native.hideKeyboard(); } catch (e) { /* old bridge */ }
+    }
+    if (window.Native && Native.hideComposer) {
+      try { Native.hideComposer(); } catch (e) { /* old bridge */ }
+    }
     if (drawerSyncTimer) {
       clearTimeout(drawerSyncTimer);
       drawerSyncTimer = null;
@@ -375,11 +387,11 @@
   }
 
   var SETTINGS_PANES = {
-    model: "Режим и модель",
-    token: "Токен и авторизация",
+    model: "Модель и ИИ",
+    token: "Авторизация и ключи",
     server: "Локальный API",
-    tunnel: "Туннель Cloudflare",
-    system: "Система и обновления",
+    tunnel: "Cloudflare Туннель",
+    system: "О приложении",
     ui: "Интерфейс"
   };
 
@@ -1567,6 +1579,14 @@
     return wrap;
   }
 
+  // The native composer floats above the keyboard via translationY; the chat
+  // scroll area gets the same bottom offset so the newest message stays visible.
+  window.__imeHeight = function (cssPx) {
+    var height = Math.max(0, parseInt(cssPx, 10) || 0);
+    document.documentElement.style.setProperty("--ime-offset", height + "px");
+    if (height > 0 && S.stick) scrollToBottom(true);
+  };
+
   function scrollToBottom(force) {
     var box = $("#messages");
     if (!box) return;
@@ -1842,9 +1862,14 @@
       changed = true;
     }
     if (content !== S.lastContent) {
-      S.streamContent.innerHTML = renderMarkdown(content);
-      S.lastContent = content;
-      changed = true;
+      var stalePrefix = S.lastContent
+        && content.length < S.lastContent.length
+        && S.lastContent.indexOf(content) === 0;
+      if (!stalePrefix) {
+        S.streamContent.innerHTML = renderMarkdown(content);
+        S.lastContent = content;
+        changed = true;
+      }
     }
     if (changed) {
       S.streamContent.classList.add("cursor");

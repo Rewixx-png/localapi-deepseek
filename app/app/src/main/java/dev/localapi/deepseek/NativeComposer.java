@@ -161,10 +161,8 @@ final class NativeComposer {
             bar.animate().cancel();
             bar.setVisibility(View.VISIBLE);
             bar.setAlpha(0f);
-            bar.setTranslationY(dp(16));
             bar.animate()
                     .alpha(1f)
-                    .translationY(0f)
                     .setDuration(160)
                     .setInterpolator(new DecelerateInterpolator())
                     .start();
@@ -188,19 +186,42 @@ final class NativeComposer {
         bar.setAlpha(bar.getAlpha() == 0f ? 1f : bar.getAlpha());
         bar.animate()
                 .alpha(0f)
-                .translationY(dp(16))
                 .setDuration(140)
                 .withEndAction(() -> {
                     if (this.visible) return;
                     bar.setVisibility(View.GONE);
                     bar.setAlpha(1f);
-                    bar.setTranslationY(0f);
                 })
                 .start();
         // Restore WebView focusability so HTML fields in settings still work;
         // the bar keeps its layout slot until the fade completes.
         web.setFocusable(true);
         web.setFocusableInTouchMode(true);
+    }
+
+    /**
+     * Hides the bar before a full-screen overlay (drawer) starts sliding:
+     * removing its layout slot synchronously keeps the overlay height stable.
+     */
+    void hideImmediately() {
+        input.clearFocus();
+        InputMethodManager imm = (InputMethodManager)
+                activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
+        }
+        visible = false;
+        bar.animate().cancel();
+        bar.setAlpha(1f);
+        bar.setVisibility(View.GONE);
+        bar.setTranslationY(0f);
+        web.setFocusable(true);
+        web.setFocusableInTouchMode(true);
+    }
+
+    /** Lifts the whole bar above the keyboard without a layout pass. */
+    void setImeOffset(int px) {
+        bar.setTranslationY(-Math.max(0, px));
     }
 
     void setState(boolean streaming, boolean online) {

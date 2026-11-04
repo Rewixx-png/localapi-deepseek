@@ -190,6 +190,8 @@ impl Api {
             .send()?;
 
         let resp = ensure_success(resp)?;
+        // BufReader::read_line keeps an unfinished `data:` line in its buffer
+        // when TCP splits it between chunks. Do not parse per-chunk bytes here.
         let mut reader = BufReader::new(resp);
         let mut line = String::new();
         let mut usage = None;
