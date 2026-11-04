@@ -1,7 +1,7 @@
 {
-  "versionCode": 31,
-  "versionName": "1.6.17",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.17/LocalApiDeepSeek.apk",
-  "sha256": "43bc1be626cd29a4be4f59975fd5dc659e3341e3ff122b2cba93b195850c218f",
-  "notes": "Локальный API в фоне: foreground-сервис dataSync|specialUse, PARTIAL_WAKE_LOCK и Wi-Fi high-perf lock, автозапуск сервиса при старте приложения если сервер был включён, запрос исключения из оптимизации батареи, кнопка «Настройки фоновой работы»."
+  "versionCode": 32,
+  "versionName": "1.6.18",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.18/LocalApiDeepSeek.apk",
+  "sha256": "da59361ae2f480dc5c59495dcb1d3a072a51fafef83b6baa692dffc721ae0bf6",
+  "notes": "Ссылка на docs/get-token.md на экране ввода токена. Инструкция по фоновой работе для Samsung/One UI и Xiaomi/HyperOS; кнопка «Настройки фоновой работы» открывает экран приложения."
 }
