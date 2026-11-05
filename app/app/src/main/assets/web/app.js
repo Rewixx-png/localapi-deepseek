@@ -63,6 +63,7 @@
     clearAgentWorkspace: function (chatId) { return Native.clearAgentWorkspace(chatId); },
     setComposerAgent: function (agent) { return Native.setComposerAgent(agent); },
     sandboxStatus: function () { return Native.sandboxStatus(); },
+    sandboxConfig: function (ramMb, cores) { return Native.sandboxConfig(ramMb, cores); },
     agentRootInfo: function () { return Native.agentRootInfo(); },
     ensureAgentFolder: function (chatId, title) { return Native.ensureAgentFolder(chatId, title); },
     useInternalAgentWorkspace: function () { return Native.useInternalAgentWorkspace(); },
@@ -1931,6 +1932,58 @@
     box.scrollTop = box.scrollHeight;
   }
 
+  function populateSandboxResources() {
+    var ram = $("#sandbox-ram");
+    var cores = $("#sandbox-cores");
+    if (!ram || !cores) return;
+    var maxRam = Math.max(512, Number(S.sandbox.maxRamMb) || 2048);
+    var maxCores = Math.max(1, Number(S.sandbox.maxCores) || 1);
+    var ramOptions = [512, 1024, 1536, 2048, 3072, 4096, 5120, 6144];
+    var coreOptions = [1, 2, 3, 4, 6, 8];
+    if (!ram.options.length) {
+      ramOptions.forEach(function (mb) {
+        if (mb > maxRam) return;
+        var option = document.createElement("option");
+        option.value = String(mb);
+        option.textContent = (mb >= 1024 ? (mb / 1024).toFixed(mb % 1024 ? 1 : 0) + " ГБ"
+          : mb + " МБ");
+        ram.appendChild(option);
+      });
+    }
+    if (!cores.options.length) {
+      coreOptions.forEach(function (count) {
+        if (count > maxCores) return;
+        var option = document.createElement("option");
+        option.value = String(count);
+        option.textContent = String(count);
+        cores.appendChild(option);
+      });
+    }
+    ram.value = String(Math.min(maxRam, Number(S.sandbox.ramMb) || 2048));
+    cores.value = String(Math.min(maxCores, Number(S.sandbox.cores) || 1));
+    var note = $("#sandbox-resource-note");
+    if (note) {
+      note.textContent = "Доступно: до " + (maxRam >= 1024
+        ? (maxRam / 1024).toFixed(maxRam % 1024 ? 1 : 0) + " ГБ"
+        : maxRam + " МБ") + " RAM и " + maxCores + " ядер";
+    }
+  }
+
+  function saveSandboxResources() {
+    var ram = $("#sandbox-ram");
+    var cores = $("#sandbox-cores");
+    if (!ram || !cores) return;
+    try {
+      S.sandbox = invoke("sandboxConfig", Number(ram.value), Number(cores.value)) || S.sandbox;
+      refreshSandbox();
+      toast(S.sandbox.running
+        ? "Параметры сохранены; перезапустите песочницу"
+        : "Параметры песочницы сохранены");
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
   function refreshSandbox() {
     try {
       S.sandbox = invoke("sandboxStatus") || {};
@@ -1939,6 +1992,7 @@
     }
     var installed = !!S.sandbox.installed;
     var running = !!S.sandbox.running;
+    populateSandboxResources();
     var download = $("#sandbox-download");
     var start = $("#sandbox-start");
     var stop = $("#sandbox-stop");
@@ -2728,6 +2782,8 @@
       }
     });
     $("#sandbox-start").addEventListener("click", startSandbox);
+    $("#sandbox-ram").addEventListener("change", saveSandboxResources);
+    $("#sandbox-cores").addEventListener("change", saveSandboxResources);
     $("#sandbox-terminal").addEventListener("click", openTerminal);
     $("#tools-terminal").addEventListener("click", function () {
       closeTools();
