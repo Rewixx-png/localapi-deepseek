@@ -349,6 +349,7 @@ a { color: var(--primary); text-decoration: none; }
 }
 .agent-files::-webkit-scrollbar { display: none; }
 .agent-file {
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -368,6 +369,9 @@ a { color: var(--primary); text-decoration: none; }
   white-space: nowrap;
   color: var(--on-surface);
 }
+.agent-file.selected { border-color: var(--primary); }
+.agent-file:not(.selected) { opacity: .5; }
+.agent-file.selected .af-name::before { content: "✓ "; color: var(--primary); }
 .agent-file .af-size { opacity: .7; }
 .agent-file button {
   border: 0; background: transparent; color: var(--on-surface-variant);

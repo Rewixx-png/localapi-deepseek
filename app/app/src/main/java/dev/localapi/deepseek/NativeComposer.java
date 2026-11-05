@@ -63,6 +63,7 @@ final class NativeComposer {
     private boolean streaming;
     private boolean online = true;
     private boolean light;
+    private boolean agentMode;
     private boolean visible;
 
     NativeComposer(Activity activity, WebView web) {
@@ -103,7 +104,16 @@ final class NativeComposer {
         attach.setBackgroundColor(Color.TRANSPARENT);
         attach.setPadding(dp(12), dp(12), dp(12), dp(12));
         attach.setContentDescription("Прикрепить фото");
-        attach.setOnClickListener(v -> pickImage());
+        attach.setOnClickListener(v -> {
+            if (agentMode) {
+                // Agent mode uses a ZIP workspace; ask the web layer for the
+                // active agent chat id and the native ZIP picker.
+                web.evaluateJavascript(
+                        "window.__nativeAgentZip && window.__nativeAgentZip()", null);
+            } else {
+                pickImage();
+            }
+        });
         row.addView(attach, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         inputWrap = new LinearLayout(activity);
@@ -248,6 +258,11 @@ final class NativeComposer {
         this.online = online;
         attach.setEnabled(online);
         updateSendButton();
+    }
+
+    void setAgentMode(boolean agentMode) {
+        this.agentMode = agentMode;
+        attach.setContentDescription(agentMode ? "Прикрепить ZIP" : "Прикрепить фото");
     }
 
     void setTheme(boolean light) {
