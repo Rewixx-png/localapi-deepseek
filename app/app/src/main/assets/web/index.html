@@ -229,6 +229,11 @@
         <svg class="icon"><use href="#i-bolt"></use></svg>
         <span id="model-chip-label">Flash 1017</span>
       </button>
+      <button id="reasoning-chip" class="chip reasoning-chip" type="button"
+              aria-label="Рассуждения" aria-pressed="false">
+        <svg class="icon"><use href="#i-bolt"></use></svg>
+        <span id="reasoning-chip-label">Рассуждения выкл</span>
+      </button>
       <button id="search-chip" class="chip" type="button">
         <svg class="icon"><use href="#i-search"></use></svg>
         <span>Поиск</span>
@@ -324,33 +329,10 @@
         </button>
       </div>
       <p class="fine">Shell-команды выполняются в QEMU Ubuntu внутри /workspace.
-        Python/Java/Node отдельно в APK не встроены: установите их в песочнице
-        или подключите рантаймы позже.</p>
-      <div class="card tools-list">
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
-          <div class="texts"><div class="primary">Python</div><div class="supporting">CPython · не установлен</div></div>
-          <span class="pill">скоро</span>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-play"></use></svg></span>
-          <div class="texts"><div class="primary">Java</div><div class="supporting">JVM · не установлен</div></div>
-          <span class="pill">скоро</span>
-        </div>
-        <div class="divider"></div>
-        <div class="list-item">
-          <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
-          <div class="texts"><div class="primary">Node.js</div><div class="supporting">JavaScript · не установлен</div></div>
-          <span class="pill">скоро</span>
-        </div>
-      </div>
+        Python, Java или Node агент установит сам — попросите его в чате.</p>
       <button id="tools-journal" class="btn tonal wide" type="button">Журнал агента</button>
-      <button id="tools-sandbox" class="btn tonal wide" type="button">Песочница Ubuntu (QEMU)</button>
       <button id="tools-terminal" class="btn tonal wide" type="button">Терминал Ubuntu</button>
-      <div class="dialog-actions">
-        <button id="tools-done" class="btn filled" type="button">Понятно</button>
-      </div>
+      <button id="tools-done" class="btn filled wide" type="button">Понятно</button>
     </div>
   </div>
 
@@ -371,16 +353,6 @@
                   <button type="button" data-model="deepseek-v4-pro">V4 Pro</button>
                 </div>
               </div>
-              <div class="divider"></div>
-              <div class="list-item">
-                <span class="list-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
-                <div class="texts">
-                  <div class="primary">Рассуждения</div>
-                  <div class="supporting" id="reasoning-note">DeepThink</div>
-                </div>
-                <label class="switch"><input type="checkbox" id="reasoning-toggle"><span></span></label>
-              </div>
-              <div class="divider"></div>
               <div class="list-item">
                 <span class="list-icon"><svg class="icon"><use href="#i-search"></use></svg></span>
                 <div class="texts">

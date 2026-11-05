@@ -972,6 +972,12 @@
     return S.model === "deepseek-v4-pro" ? "V4 Pro" : "Flash 1017";
   }
 
+  function toggleReasoning() {
+    S.thinking = !S.thinking;
+    try { localStorage.setItem("thinking", S.thinking ? "1" : "0"); } catch (e) { /* ignore */ }
+    paintModel();
+  }
+
   function paintModel() {
     var web = isWebMode();
     var flash = web ? "Стандарт" : "Flash 1017";
@@ -982,8 +988,15 @@
       b.textContent = isPro ? pro : flash;
       b.classList.toggle("active", b.getAttribute("data-model") === S.model);
     });
-    $("#reasoning-toggle").checked = !!S.thinking;
-    $("#reasoning-note").textContent = S.thinking ? "DeepThink" : "Выключены";
+    var reasoningChip = $("#reasoning-chip");
+    if (reasoningChip) {
+      reasoningChip.classList.toggle("active", !!S.thinking);
+      reasoningChip.setAttribute("aria-pressed", S.thinking ? "true" : "false");
+    }
+    var reasoningChipLabel = $("#reasoning-chip-label");
+    if (reasoningChipLabel) {
+      reasoningChipLabel.textContent = S.thinking ? "Рассуждения вкл" : "Рассуждения выкл";
+    }
     var apiReasoning = $("#api-reasoning-toggle");
     if (apiReasoning) apiReasoning.checked = !!S.thinking;
     var apiReasoningNote = $("#api-reasoning-note");
@@ -1010,6 +1023,8 @@
       (S.model === "deepseek-v4-pro" ? pro : flash) + (S.thinking ? " · reasoning" : "");
     var chip = $("#model-chip-label");
     if (chip) chip.textContent = modelShortName();
+    var modelChip = $("#model-chip");
+    if (modelChip) modelChip.classList.toggle("hidden", web);
 
     var empty = $("#messages .empty");
     if (empty && (!S.chat || !S.chat.messages || !S.chat.messages.length)) {
@@ -1339,12 +1354,6 @@
         localStorage.setItem("model", S.model);
         paintModel();
       });
-    });
-
-    $("#reasoning-toggle").addEventListener("change", function () {
-      S.thinking = this.checked;
-      localStorage.setItem("thinking", S.thinking ? "1" : "0");
-      paintModel();
     });
 
     $("#api-reasoning-toggle").addEventListener("change", function () {
@@ -2725,6 +2734,7 @@
     var form = $("#composer");
     var input = $("#input");
     $("#model-chip").addEventListener("click", openModelSheet);
+    $("#reasoning-chip").addEventListener("click", toggleReasoning);
     $("#model-close").addEventListener("click", closeModelSheet);
     $("#model-done").addEventListener("click", closeModelSheet);
     $("#model-scrim").addEventListener("click", function (e) {
@@ -2741,10 +2751,6 @@
     $("#tools-close").addEventListener("click", closeTools);
     $("#tools-done").addEventListener("click", closeTools);
     $("#tools-journal").addEventListener("click", openAgentJournal);
-    $("#tools-sandbox").addEventListener("click", function () {
-      closeTools();
-      openSandbox();
-    });
     $("#sandbox-close").addEventListener("click", closeSandbox);
     $("#sandbox-close2").addEventListener("click", closeSandbox);
     $("#sandbox-scrim").addEventListener("click", function (e) {
