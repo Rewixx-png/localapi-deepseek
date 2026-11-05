@@ -1,7 +1,7 @@
 {
-  "versionCode": 43,
-  "versionName": "1.6.29",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.29/LocalApiDeepSeek.apk",
-  "sha256": "753576568ae73324ddd4602b8a2942e2f0e50c5edc29f9df9a9aab3058668aba",
-  "notes": "ZIP/SAF: проверка записи при выборе папки workspace, кнопка «Сменить папку» при ошибке, понятные сообщения для read-only/Google Drive, поддержка путей ./ и подробные ошибки распаковки."
+  "versionCode": 44,
+  "versionName": "1.6.30",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.30/LocalApiDeepSeek.apk",
+  "sha256": "624c0f37cb294b786f694d261127f5e2ed5d53103e18fcdf345f3070fe150215",
+  "notes": "Agent workspace по умолчанию — папка приложения (приватно); диалог «Папка» позволяет переключиться на SAF и обратно. Если SAF-папка недоступна, «Папка приложения» сразу возвращает рабочий workspace. ZIP — через скрепку; проверка записи и смена папки из 1.6.29."
 }

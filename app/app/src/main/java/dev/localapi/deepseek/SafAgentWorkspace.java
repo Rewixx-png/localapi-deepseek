@@ -86,6 +86,10 @@ final class SafAgentWorkspace {
         prefs(context).edit().putString(KEY_ROOT, uri.toString()).apply();
     }
 
+    static void clearRoot(Context context) {
+        prefs(context).edit().remove(KEY_ROOT).apply();
+    }
+
     static JSONObject info(Context context) throws JSONException {
         Uri uri = rootUri(context);
         DocumentFile root = uri == null ? null : DocumentFile.fromTreeUri(context, uri);
