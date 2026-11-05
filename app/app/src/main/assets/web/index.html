@@ -251,6 +251,22 @@
     </button>
   </aside>
 
+  <div id="journal-scrim" class="dialog-scrim hidden">
+    <div class="dialog journal-dialog" role="dialog" aria-modal="true" aria-labelledby="journal-title">
+      <div class="model-head">
+        <h2 id="journal-title">Журнал агента</h2>
+        <button id="journal-close" class="icon-btn" aria-label="Закрыть" type="button">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <pre id="journal-text" class="journal-text"></pre>
+      <div class="dialog-actions">
+        <button id="journal-clear" class="btn text danger" type="button">Очистить</button>
+        <button id="journal-copy" class="btn filled" type="button">Скопировать</button>
+      </div>
+    </div>
+  </div>
+
   <div id="workspace-scrim" class="dialog-scrim hidden">
     <div class="dialog workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
       <div class="model-head">
@@ -301,6 +317,7 @@
         </div>
       </div>
       <button id="tools-workspace" class="btn tonal wide" type="button">Сменить папку workspace</button>
+      <button id="tools-journal" class="btn tonal wide" type="button">Журнал агента</button>
       <div class="dialog-actions">
         <button id="tools-done" class="btn filled" type="button">Понятно</button>
       </div>
