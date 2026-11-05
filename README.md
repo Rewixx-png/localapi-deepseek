@@ -58,7 +58,8 @@ PoW, потоковый SSE с рассуждениями и локальная 
   (нет токена, ошибка сети, остановленный поток) текст возвращается в поле, а
   набранное во время отправки не затирается. Нативная обработка IME-inset
   на API 30+ покадрово через `WindowInsetsAnimation.Callback` (`adjustResize` под
-  edge-to-edge не работает); панель едет чуть впереди клавиатуры.
+  edge-to-edge не работает): панель и нижний отступ ленты двигаются на каждом
+  кадре анимации клавиатуры, а не прыжком после её окончания.
 - Параметры — в правом меню: чип рассуждений включает/выключает DeepThink,
   чип поиска — веб-поиск; в API-режиме рядом остаётся выбор Flash/V4 Pro
   (в веб-режиме кнопка «DeepSeek» скрыта). Усилие — в шторке модели. Переключатель «Режим рассуждения» также
@@ -236,7 +237,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.6.39-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.7.0-debug.apk`.
 
 ## Обновления
 
@@ -258,9 +259,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 53,
-  "versionName": "1.6.39",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.39/LocalApiDeepSeek.apk",
+  "versionCode": 54,
+  "versionName": "1.7.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.7.0/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }

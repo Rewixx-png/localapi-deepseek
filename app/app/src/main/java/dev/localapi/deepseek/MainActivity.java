@@ -169,7 +169,11 @@ public final class MainActivity extends Activity {
                     if ((animation.getTypeMask() & WindowInsets.Type.ime()) == 0) return;
                     animating[0] = true;
                     root.removeCallbacks(finishAnimation);
-                    root.postDelayed(finishAnimation, 1200);
+                    // Fallback for API 30 builds that occasionally drop the
+                    // final animation callback. Do not wait a full second:
+                    // the keyboard animation is normally ~300 ms.
+                    long fallbackMs = Math.max(400L, animation.getDurationMillis() + 100L);
+                    root.postDelayed(finishAnimation, fallbackMs);
                 }
 
                 @Override
@@ -179,7 +183,11 @@ public final class MainActivity extends Activity {
                     imeBottom[0] = ime.bottom;
                     // Translation is a render-thread property: no layout pass
                     // per frame, so the bar cannot lag behind the keyboard.
+                    // The WebView spacer must advance on the same frames;
+                    // updating it only in onEnd makes the chat jump when the
+                    // keyboard finishes opening/closing.
                     applyIme.run();
+                    notifyIme.run();
                     return insets;
                 }
 
