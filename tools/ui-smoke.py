@@ -198,7 +198,7 @@ MOCK = r"""
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.6.38', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.39', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -549,9 +549,9 @@ with sync_playwright() as p:
     assert page.locator(".tools-list").count() == 0
     assert "Песочница Ubuntu" not in page.inner_text("#tools-scrim")
     assert "Инструменты агента" in page.inner_text("#tools-scrim")
-    assert "wide" in (page.get_attribute("#tools-done", "class") or "")
+    assert page.locator("#tools-done").count() == 0
     page.screenshot(path=f"{SHOTS}/17-agent-tools.png")
-    page.click("#tools-done")
+    page.click("#tools-close")
     assert page.is_hidden("#tools-scrim")
     page.evaluate("document.querySelector('#right-drawer-close').click()")
     page.wait_for_timeout(380)
@@ -567,6 +567,37 @@ with sync_playwright() as p:
     page.wait_for_timeout(400)
     assert page.is_hidden("#agent-bar")
     assert page.inner_text("#agent-mode-label") == "Режим агента"
+
+    # Reopening a saved agent session must restore command/result blocks, not
+    # leave empty assistant bubbles where [[EXEC]] directives were stripped.
+    page.evaluate("""() => {
+      const m = JSON.parse(localStorage.getItem('__mock'));
+      m.chats.unshift({
+        id: 'ctoolhistory', kind: 'agent', title: 'Tool history',
+        created_at: Date.now() - 1000, updated_at: Date.now() + 1000,
+        messages: [
+          { role: 'user', content: 'Проверь папку', ts: 1, images: [] },
+          { role: 'assistant', content: '[[EXEC: ls -la /workspace]]', reasoning: 'Проверяю папку', sources: [], ts: 2 },
+          { role: 'user', content: '[TOOL_RESULT]\\nexit code: 0\\nREADME.md\\n\\nПродолжай. Если нужна ещё команда — ответь строкой [[EXEC: ...]].', ts: 3, images: [] },
+          { role: 'assistant', content: 'Готово', reasoning: 'Файл найден', sources: [], ts: 4 }
+        ]
+      });
+      localStorage.setItem('__mock', JSON.stringify(m));
+    }""")
+    page.reload()
+    page.wait_for_timeout(700)
+    page.click("#menu-btn")
+    page.wait_for_timeout(300)
+    page.click("#agent-mode")
+    page.wait_for_selector(".msg.tool", timeout=3000)
+    assert page.locator(".msg.tool").count() == 2
+    tool_texts = page.locator(".msg.tool").all_inner_texts()
+    assert any("ls -la /workspace" in text for text in tool_texts), tool_texts
+    assert any("README.md" in text for text in tool_texts), tool_texts
+    assert page.locator(".msg.assistant .bubble .content").count() >= 1
+    page.evaluate("document.querySelector('#drawer-close').click()")
+    page.wait_for_timeout(380)
+    page.screenshot(path=f"{SHOTS}/18-agent-history.png")
 
     browser.close()
 

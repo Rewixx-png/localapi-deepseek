@@ -1,7 +1,7 @@
 {
-  "versionCode": 52,
-  "versionName": "1.6.38",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.38/LocalApiDeepSeek.apk",
-  "sha256": "2e93ccc31b764495d4383c8a68855b9d96435b982423960d696d0d17f830ea96",
-  "notes": "Рассуждения — отдельная плашка вкл/выкл в правом меню вместо кнопки DeepSeek в веб-режиме; убраны строки Python/Java/Node и кнопка «Песочница Ubuntu» из инструментов; «Понятно» на всю ширину."
+  "versionCode": 53,
+  "versionName": "1.6.39",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.39/LocalApiDeepSeek.apk",
+  "sha256": "7175ed26fdfe50dccdb2e6bb5e0f67ae13b7b43c62b38fa4f06afd5b0379acff",
+  "notes": "Кнопка отправки скрыта при пустом поле и появляется/уходит с пружинной анимацией; история команд и результатов агента восстанавливается после перезахода; «Понятно» убрана — меню закрывается крестиком."
 }
