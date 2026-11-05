@@ -1083,7 +1083,8 @@
     var model = !$("#model-scrim").classList.contains("hidden");
     var tools = !$("#tools-scrim").classList.contains("hidden");
     var workspace = !$("#workspace-scrim").classList.contains("hidden");
-    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools && !workspace);
+    var journal = !$("#journal-scrim").classList.contains("hidden");
+    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools && !workspace && !journal);
   }
 
   function openImageViewer(src) {
@@ -1960,6 +1961,7 @@
   function useInternalWorkspace() {
     try {
       invoke("useInternalAgentWorkspace");
+      journalLine("workspace", "Переключено на папку приложения");
       refreshAgentRoot();
       refreshAgentFiles();
       toast("Используем папку приложения");
@@ -1974,8 +1976,10 @@
       return;
     }
     try {
+      journalLine("workspace", "Открыт системный выбор папки");
       Native.chooseAgentRoot();
     } catch (e) {
+      journalLine("error", "Выбор папки: " + e.message);
       toast("Не удалось открыть выбор папки");
     }
   }
@@ -2076,6 +2080,51 @@
     return (size / (1024 * 1024)).toFixed(1).replace(".", ",") + " МБ";
   }
 
+  function loadAgentJournal() {
+    try {
+      var raw = localStorage.getItem("agentJournal");
+      var list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveAgentJournal(list) {
+    try {
+      localStorage.setItem("agentJournal", JSON.stringify(list.slice(0, 200)));
+    } catch (e) { /* ignore */ }
+  }
+
+  function journalLine(kind, message) {
+    var stamp = new Date().toLocaleTimeString("ru-RU");
+    var text = String(message == null ? "" : message);
+    var list = loadAgentJournal();
+    list.unshift(stamp + " [" + kind + "] " + text);
+    saveAgentJournal(list);
+    if (!$("#journal-scrim").classList.contains("hidden")) renderAgentJournal();
+  }
+
+  function renderAgentJournal() {
+    var box = $("#journal-text");
+    if (!box) return;
+    var list = loadAgentJournal();
+    box.textContent = list.length ? list.join("\n") : "Журнал пуст.";
+  }
+
+  function openAgentJournal() {
+    closeTools();
+    closeWorkspaceDialog();
+    renderAgentJournal();
+    $("#journal-scrim").classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeAgentJournal() {
+    $("#journal-scrim").classList.add("hidden");
+    syncNativeComposer();
+  }
+
   function refreshAgentFiles() {
     var box = $("#agent-files");
     refreshContextMeter();
@@ -2109,6 +2158,7 @@
       var error = document.createElement("div");
       error.className = "agent-empty";
       error.textContent = "Workspace недоступен" + (e.message ? ": " + e.message : "");
+      journalLine("workspace", e.message || "Workspace недоступен");
       box.appendChild(error);
       var change = document.createElement("button");
       change.type = "button";
@@ -2234,6 +2284,7 @@
       return;
     }
     detachStream();
+    journalLine("mode", agent ? "Включён Agent mode" : "Выключен Agent mode");
     S.agentMode = agent;
     S.chat = null;
     S.titleRequested = "";
@@ -2511,6 +2562,18 @@
     $("#tools-workspace").addEventListener("click", function () {
       closeTools();
       openWorkspaceDialog();
+    });
+    $("#tools-journal").addEventListener("click", openAgentJournal);
+    $("#journal-close").addEventListener("click", closeAgentJournal);
+    $("#journal-scrim").addEventListener("click", function (e) {
+      if (e.target === this) closeAgentJournal();
+    });
+    $("#journal-copy").addEventListener("click", function () {
+      copyText(loadAgentJournal().join("\n") || "Журнал пуст.");
+    });
+    $("#journal-clear").addEventListener("click", function () {
+      saveAgentJournal([]);
+      renderAgentJournal();
     });
     $("#tools-scrim").addEventListener("click", function (e) {
       if (e.target === this) closeTools();
@@ -2851,6 +2914,10 @@
     setStreaming(false);
   }
 
+  window.addEventListener("error", function (event) {
+    try { journalLine("js", event.message || "JavaScript error"); } catch (e) { /* ignore */ }
+  });
+
   // ── boot ─────────────────────────────────────────────────────────────
   function boot() {
     try {
@@ -3148,18 +3215,21 @@
   };
 
   window.__agentRootUpdated = function () {
+    journalLine("workspace", "Папка устройства выбрана");
     refreshAgentRoot();
     if (S.agentMode) refreshAgentFiles();
     toast("Папка workspace выбрана");
   };
 
   window.__agentFilesUpdated = function (chatId) {
+    journalLine("zip", "ZIP обработан");
     if (S.chat && S.chat.id === chatId) {
       refreshAgentFiles();
     }
   };
 
   window.__agentError = function (chatId, message) {
+    journalLine("error", message || "Ошибка workspace");
     toast(message || "Ошибка workspace");
   };
 
@@ -3174,6 +3244,7 @@
   };
 
   window.__onAndroidBack = function () {
+    if (!$("#journal-scrim").classList.contains("hidden")) { closeAgentJournal(); return true; }
     if (!$("#workspace-scrim").classList.contains("hidden")) { closeWorkspaceDialog(); return true; }
     if (!$("#tools-scrim").classList.contains("hidden")) { closeTools(); return true; }
     if (!$("#model-scrim").classList.contains("hidden")) { closeModelSheet(); return true; }

@@ -1,7 +1,7 @@
 {
-  "versionCode": 44,
-  "versionName": "1.6.30",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.30/LocalApiDeepSeek.apk",
-  "sha256": "624c0f37cb294b786f694d261127f5e2ed5d53103e18fcdf345f3070fe150215",
-  "notes": "Agent workspace по умолчанию — папка приложения (приватно); диалог «Папка» позволяет переключиться на SAF и обратно. Если SAF-папка недоступна, «Папка приложения» сразу возвращает рабочий workspace. ZIP — через скрепку; проверка записи и смена папки из 1.6.29."
+  "versionCode": 45,
+  "versionName": "1.6.31",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.31/LocalApiDeepSeek.apk",
+  "sha256": "0d39b706a4ccc587f43dfe43bc0643106a72e53a08f1680057ae6a2a15c4209a",
+  "notes": "Agent mode: журнал workspace/ZIP/JS-ошибок с копированием (Инструменты → Журнал агента). Удобно присылать точный лог; QEMU-песочница будет следующим этапом."
 }

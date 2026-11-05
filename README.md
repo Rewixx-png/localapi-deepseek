@@ -28,6 +28,7 @@ PoW, потоковый SSE с рассуждениями и локальная 
   чата (2–5 слов); оно сохраняется и показывается в истории вместо первого
   сообщения. Это дополнительный расход токенов.
 - **Agent mode:** отдельная история в левом меню, ZIP-workspace на чат,
+  журнал workspace/ZIP/JS-ошибок с копированием (для диагностики),
   список/удаление/очистка файлов и **чтение выбранных текстовых файлов**.
   ZIP загружается **скрепкой в поле ввода** (в агентском режиме она выбирает
   ZIP, в обычном — фото). По умолчанию используется **папка приложения**
@@ -230,7 +231,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.6.30-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.6.31-debug.apk`.
 
 ## Обновления
 
@@ -252,9 +253,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 44,
-  "versionName": "1.6.30",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.30/LocalApiDeepSeek.apk",
+  "versionCode": 45,
+  "versionName": "1.6.31",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.31/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }
