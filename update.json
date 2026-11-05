@@ -1,7 +1,7 @@
 {
-  "versionCode": 40,
-  "versionName": "1.6.26",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.26/LocalApiDeepSeek.apk",
-  "sha256": "94f12c16159d4ec73db77a3c6ffd4fb5ac2bee362133bbee9deaee0badd78131",
-  "notes": "Agent workspace: публичная SAF-папка (например Documents/LocalApiDeepSeek), папка проекта на каждую сессию, видна в системном файловом менеджере; выбор папки при первом входе, кнопка «Открыть папку», миграция старых файлов. ZIP — через скрепку, файлы читаются в контекст; выполнение кода пока отключено."
+  "versionCode": 41,
+  "versionName": "1.6.27",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.27/LocalApiDeepSeek.apk",
+  "sha256": "0ffa672d1532f4f4716d6e2c21096a9cf1c6e4a5a46162e47e10ff0237c3099e",
+  "notes": "Проверка обновлений теперь берёт update.json через GitHub Contents API (raw CDN отдавал старую версию). Agent workspace: публичная SAF-папка, папка проекта на сессию, ZIP через скрепку, чтение файлов в контекст."
 }
