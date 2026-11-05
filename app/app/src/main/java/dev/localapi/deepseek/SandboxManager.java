@@ -42,6 +42,9 @@ final class SandboxManager {
     private volatile Process process;
     private volatile boolean installing;
     private volatile boolean running;
+    private final Object serialLock = new Object();
+    private final StringBuilder serial = new StringBuilder();
+    private final Object execLock = new Object();
 
     SandboxManager(Activity activity, WebView web) {
         this.activity = activity;
@@ -154,6 +157,9 @@ final class SandboxManager {
             pb.environment().put("TMPDIR", activity.getCacheDir().getAbsolutePath());
             process = pb.start();
             running = true;
+            synchronized (serialLock) {
+                serial.setLength(0);
+            }
             log("sandbox start " + VERSION + " chat=" + chatId);
             runJs("window.__sandboxStarted && window.__sandboxStarted()");
             new Thread(() -> {
@@ -166,6 +172,13 @@ final class SandboxManager {
                         out.write(buffer, 0, read);
                         out.flush();
                         String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                        synchronized (serialLock) {
+                            serial.append(text);
+                            if (serial.length() > 400000) {
+                                serial.delete(0, serial.length() - 300000);
+                            }
+                            serialLock.notifyAll();
+                        }
                         runJs("window.__sandboxOutput && window.__sandboxOutput("
                                 + JSONObject.quote(text) + ")");
                     }
@@ -188,6 +201,77 @@ final class SandboxManager {
             runJs("window.__sandboxError && window.__sandboxError("
                     + JSONObject.quote(message) + ")");
         }
+    }
+
+    void exec(String id, String command) {
+        if (!running || process == null) {
+            runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                    + JSONObject.quote(id) + "," + JSONObject.quote(
+                    "Песочница не запущена") + ",-1)");
+            return;
+        }
+        new Thread(() -> {
+            synchronized (execLock) {
+                String begin = "__LOCALAPI_BEGIN_" + id + "__";
+                String end = "__LOCALAPI_END_" + id + "__";
+                synchronized (serialLock) {
+                    serial.setLength(0);
+                }
+                try {
+                    String script = "printf '\\n" + begin + "\\n'; " + command
+                            + "\n__rc=$?; printf '\\n" + end + "%s\\n' \"$__rc\"\n";
+                    process.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
+                    process.getOutputStream().flush();
+                    long deadline = System.currentTimeMillis() + 120_000;
+                    int endAt = -1;
+                    int code = -1;
+                    while (System.currentTimeMillis() < deadline) {
+                        synchronized (serialLock) {
+                            String buffer = serial.toString();
+                            endAt = buffer.indexOf(end);
+                            if (endAt >= 0) {
+                                int nl = buffer.indexOf('\n', endAt);
+                                String codeText = buffer.substring(endAt + end.length(),
+                                        nl >= 0 ? nl : buffer.length()).trim();
+                                try {
+                                    code = Integer.parseInt(codeText);
+                                } catch (Exception ignored) {
+                                }
+                                break;
+                            }
+                            serialLock.wait(200);
+                        }
+                    }
+                    String buffer;
+                    synchronized (serialLock) {
+                        buffer = serial.toString();
+                    }
+                    String output;
+                    if (endAt >= 0) {
+                        int beginAt = buffer.indexOf(begin);
+                        int from = beginAt >= 0 ? beginAt + begin.length() : 0;
+                        output = buffer.substring(from, endAt);
+                    } else {
+                        output = buffer;
+                        if (output.length() > 12000) {
+                            output = output.substring(output.length() - 12000);
+                        }
+                    }
+                    output = output.replace(begin, "").replace(end, "").trim();
+                    if (output.length() > 16000) {
+                        output = output.substring(0, 16000) + "\n[вывод обрезан]";
+                    }
+                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                            + JSONObject.quote(id) + "," + JSONObject.quote(output)
+                            + "," + code + ")");
+                } catch (Exception e) {
+                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                            + JSONObject.quote(id) + "," + JSONObject.quote(
+                            e.getMessage() == null ? "exec error" : e.getMessage())
+                            + ",-1)");
+                }
+            }
+        }, "sandbox-exec").start();
     }
 
     void stop() {

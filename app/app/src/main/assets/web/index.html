@@ -268,6 +268,7 @@
         <button id="sandbox-send" class="btn tonal small" type="button">Отправить</button>
       </div>
       <div class="dialog-actions">
+        <button id="sandbox-terminal" class="btn tonal hidden" type="button">Терминал</button>
         <button id="sandbox-download" class="btn filled" type="button">Скачать</button>
         <button id="sandbox-start" class="btn filled hidden" type="button">Запустить</button>
         <button id="sandbox-stop" class="btn text danger hidden" type="button">Остановить</button>
@@ -344,6 +345,7 @@
       <button id="tools-workspace" class="btn tonal wide" type="button">Сменить папку workspace</button>
       <button id="tools-journal" class="btn tonal wide" type="button">Журнал агента</button>
       <button id="tools-sandbox" class="btn tonal wide" type="button">Песочница Ubuntu (QEMU)</button>
+      <button id="tools-terminal" class="btn tonal wide" type="button">Терминал Ubuntu</button>
       <div class="dialog-actions">
         <button id="tools-done" class="btn filled" type="button">Понятно</button>
       </div>
@@ -400,6 +402,25 @@
       </div>
     </div>
   </div>
+</section>
+
+<section id="screen-terminal" class="screen terminal-screen">
+  <header class="app-bar terminal-bar">
+    <button id="terminal-back" class="icon-btn" aria-label="Назад" type="button">
+      <svg class="icon"><use href="#i-back"></use></svg>
+    </button>
+    <div class="app-bar-title"><h1>Ubuntu</h1></div>
+    <button id="terminal-stop" class="icon-btn" aria-label="Остановить песочницу" type="button">
+      <svg class="icon"><use href="#i-stop"></use></svg>
+    </button>
+  </header>
+  <pre id="terminal-output" class="terminal-output"></pre>
+  <form id="terminal-form" class="terminal-input-row">
+    <span class="terminal-prompt">$</span>
+    <input id="terminal-input" type="text" autocomplete="off" autocapitalize="none"
+           spellcheck="false" placeholder="Команда">
+    <button class="btn tonal small" type="submit">↵</button>
+  </form>
 </section>
 
 <section id="screen-settings" class="screen">

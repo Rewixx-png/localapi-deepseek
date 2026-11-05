@@ -381,6 +381,31 @@ a { color: var(--primary); text-decoration: none; }
 .agent-file button:active { background: var(--surface-container-high); }
 .agent-empty { color: var(--on-surface-variant); font-size: 11.5px; padding: 2px 0; }
 .tools-dialog, .workspace-dialog, .journal-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.terminal-screen {
+  background: #050607;
+  color: #d7d7d7;
+}
+.terminal-bar { background: #0b0d10; border-bottom: 1px solid #1f2328; }
+.terminal-output {
+  flex: 1; min-height: 0; overflow-y: auto;
+  margin: 0; padding: 12px 12px 16px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12px/1.45 ui-monospace, "Roboto Mono", monospace;
+  color: #d7d7d7;
+}
+.terminal-input-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #1f2328; background: #0b0d10;
+}
+.terminal-prompt { color: #7bd88f; font-family: monospace; }
+.terminal-input-row input {
+  flex: 1; min-width: 0; background: transparent; border: 0;
+  color: #f0f0f0; font: 13px ui-monospace, "Roboto Mono", monospace;
+  outline: none; padding: 8px 0;
+}
+.terminal-input-row .btn { border: 1px solid #2c3138; color: #d7d7d7; background: #151a1f; }
+
 .sandbox-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
 .sandbox-log { min-height: 140px; max-height: 40dvh; }
 .sandbox-command { display: flex; gap: 8px; margin: 8px 0; }
@@ -692,6 +717,30 @@ a { color: var(--primary); text-decoration: none; }
 :root[data-theme="light"] .hljs-type,
 :root[data-theme="light"] .hljs-tag { color: #0e7490; }
 .content pre.code { margin: 0; }
+
+.msg.tool { margin-bottom: 10px; }
+.msg.tool .bubble {
+  background: #0f1419;
+  border: 1px solid #242a31;
+  color: #c9d1d9;
+  font-family: ui-monospace, "Roboto Mono", monospace;
+}
+.tool-label {
+  color: #7bd88f;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  margin-bottom: 5px;
+}
+.tool-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11.5px/1.45 ui-monospace, "Roboto Mono", monospace;
+  color: #c9d1d9;
+  max-height: 280px;
+  overflow-y: auto;
+}
 
 .msg-meta {
   display: flex; align-items: center; gap: 14px;

@@ -570,6 +570,11 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void sandboxExec(String id, String command) {
+            sandbox.exec(id, command);
+        }
+
+        @JavascriptInterface
         public void sandboxWrite(String text) {
             sandbox.write(text);
         }
