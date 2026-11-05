@@ -35,13 +35,13 @@ import java.util.zip.ZipInputStream;
  * WebView journal; the first milestone is a bootable terminal guest.
  */
 final class SandboxManager {
-    static final String VERSION = "ubuntu-2";
+    static final String VERSION = "ubuntu-disk-1";
     static final String ASSET_URL =
             "https://github.com/Rewixx-png/localapi-deepseek/releases/download/"
-                    + "sandbox-ubuntu-2/ubuntu-sandbox.zip";
+                    + "sandbox-ubuntu-disk-1/ubuntu-sandbox.zip";
     static final String ASSET_SHA =
-            "ab2d5073b5eff5b607e023abba65cb6f80244c79550f2bb803e09697638c7cd8";
-    static final long ASSET_SIZE = 52260768L;
+            "22d2c6d4feba7d514e1406ce3ad394daa61b98fcd72e47fee01650c16f0775b6";
+    static final long ASSET_SIZE = 132758428L;
 
     private final Activity activity;
     private final WebView web;
@@ -116,7 +116,7 @@ final class SandboxManager {
     static boolean installed(Context context) {
         File dir = dir(context);
         return new File(dir, "vmlinuz").isFile()
-                && new File(dir, "initramfs.cpio.gz").isFile()
+                && new File(dir, "rootfs.img").isFile()
                 && new File(dir, "qemu-data/efi-virtio.rom").isFile();
     }
 
@@ -194,9 +194,11 @@ final class SandboxManager {
             }
             File workspace = AgentWorkspace.root(activity, chatId);
             String cmd = "/system/bin/linker64";
-            ProcessBuilder pb = new ProcessBuilder(
-                    cmd,
-                    qemu.getAbsolutePath(),
+            File rootfs = new File(dir, "rootfs.img");
+            java.util.List<String> args = new java.util.ArrayList<>();
+            args.add(cmd);
+            args.add(qemu.getAbsolutePath());
+            java.util.Collections.addAll(args,
                     "-M", "virt",
                     "-cpu", "max",
                     "-m", String.valueOf(ramMb),
@@ -204,14 +206,25 @@ final class SandboxManager {
                     "-nographic",
                     "-no-reboot",
                     "-L", new File(dir, "qemu-data").getAbsolutePath(),
-                    "-kernel", new File(dir, "vmlinuz").getAbsolutePath(),
-                    "-initrd", new File(dir, "initramfs.cpio.gz").getAbsolutePath(),
-                    "-append", "console=ttyAMA0 rdinit=/init loglevel=7",
+                    "-kernel", new File(dir, "vmlinuz").getAbsolutePath());
+            if (rootfs.isFile()) {
+                args.add("-drive");
+                args.add("file=" + rootfs.getAbsolutePath()
+                        + ",if=virtio,format=raw,cache=writeback");
+                args.add("-append");
+                args.add("root=/dev/vda rw console=ttyAMA0 init=/init loglevel=7");
+            } else {
+                args.add("-initrd");
+                args.add(new File(dir, "initramfs.cpio.gz").getAbsolutePath());
+                args.add("-append");
+                args.add("console=ttyAMA0 rdinit=/init loglevel=7");
+            }
+            java.util.Collections.addAll(args,
                     "-virtfs", "local,path=" + workspace.getAbsolutePath()
                             + ",mount_tag=workspace,security_model=none",
                     "-netdev", "user,id=net0",
-                    "-device", "virtio-net-device,netdev=net0"
-            );
+                    "-device", "virtio-net-device,netdev=net0");
+            ProcessBuilder pb = new ProcessBuilder(args);
             pb.redirectErrorStream(true);
             pb.directory(activity.getCacheDir());
             pb.environment().put("LD_LIBRARY_PATH", libs);
@@ -476,6 +489,8 @@ final class SandboxManager {
                     target = new File(dir, "vmlinuz");
                 } else if (name.endsWith("ubuntu-initramfs.cpio.gz")) {
                     target = new File(dir, "initramfs.cpio.gz");
+                } else if (name.endsWith("rootfs.img")) {
+                    target = new File(dir, "rootfs.img");
                 } else if (name.startsWith("roms/")) {
                     File qemuData = new File(dir, "qemu-data");
                     if (!qemuData.isDirectory() && !qemuData.mkdirs()) {
@@ -493,9 +508,9 @@ final class SandboxManager {
             }
         }
         if (!new File(dir, "vmlinuz").isFile()
-                || !new File(dir, "initramfs.cpio.gz").isFile()
+                || !new File(dir, "rootfs.img").isFile()
                 || !new File(dir, "qemu-data/efi-virtio.rom").isFile()) {
-            throw new IOException("В архиве нет vmlinuz/initramfs/ROM");
+            throw new IOException("В архиве нет vmlinuz/rootfs/ROM");
         }
     }
 
