@@ -3523,7 +3523,15 @@
     refreshSandbox();
   };
 
+  function cleanSandboxOutput(text) {
+    return String(text || "").split("\n").filter(function (line) {
+      return !/__LOCALAPI_(BEGIN|END)_/.test(line)
+        && !/^# printf '.*__LOCALAPI_/.test(line);
+    }).join("\n");
+  }
+
   window.__sandboxOutput = function (text) {
+    text = cleanSandboxOutput(text);
     var box = $("#sandbox-log");
     if (box) {
       box.textContent += text;

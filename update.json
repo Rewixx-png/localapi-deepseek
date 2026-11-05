@@ -1,7 +1,7 @@
 {
-  "versionCode": 48,
-  "versionName": "1.6.34",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.34/LocalApiDeepSeek.apk",
-  "sha256": "f8d0df5c756a029cca351f33278094c25f79fdfd59a805887b47b2319ff070fb",
-  "notes": "Agent tool-loop: модель может выполнять shell-команды в Ubuntu sandbox через [[EXEC:...]], результаты возвращаются в модель (до 6 команд). Отдельный полноэкранный терминал Ubuntu с вводом команд, отдельно от чата. Песочница Ubuntu revision 2 с ROM."
+  "versionCode": 49,
+  "versionName": "1.6.35",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.35/LocalApiDeepSeek.apk",
+  "sha256": "2e925de5ac024794b0bcbdde229f3ffb2020e559d1fe17b10602ec03926189d8",
+  "notes": "Исправлен агентский exec: маркеры команд больше не парсятся из эха shell; QEMU возвращает реальный stdout и exit code. Маркеры вычищены из терминала. Полноэкранный терминал и tool-loop из 1.6.34."
 }

@@ -228,17 +228,25 @@ final class SandboxManager {
                     while (System.currentTimeMillis() < deadline) {
                         synchronized (serialLock) {
                             String buffer = serial.toString();
-                            endAt = buffer.indexOf(end);
-                            if (endAt >= 0) {
-                                int nl = buffer.indexOf('\n', endAt);
-                                String codeText = buffer.substring(endAt + end.length(),
+                            // The interactive shell echoes the command, including
+                            // the marker text. Pick an END occurrence followed by a
+                            // numeric exit code; the echoed "%s" is ignored.
+                            for (int pos = buffer.indexOf(end); pos >= 0;
+                                 pos = buffer.indexOf(end, pos + 1)) {
+                                int codeStart = pos + end.length();
+                                int nl = buffer.indexOf('\n', codeStart);
+                                String codeText = buffer.substring(codeStart,
                                         nl >= 0 ? nl : buffer.length()).trim();
-                                try {
-                                    code = Integer.parseInt(codeText);
-                                } catch (Exception ignored) {
+                                if (codeText.matches("\\d+")) {
+                                    endAt = pos;
+                                    try {
+                                        code = Integer.parseInt(codeText);
+                                    } catch (Exception ignored) {
+                                    }
+                                    break;
                                 }
-                                break;
                             }
+                            if (endAt >= 0) break;
                             serialLock.wait(200);
                         }
                     }
@@ -248,7 +256,7 @@ final class SandboxManager {
                     }
                     String output;
                     if (endAt >= 0) {
-                        int beginAt = buffer.indexOf(begin);
+                        int beginAt = buffer.lastIndexOf(begin, endAt);
                         int from = beginAt >= 0 ? beginAt + begin.length() : 0;
                         output = buffer.substring(from, endAt);
                     } else {
