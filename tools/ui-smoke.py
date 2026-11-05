@@ -198,7 +198,7 @@ MOCK = r"""
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.6.37', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.38', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -340,20 +340,30 @@ with sync_playwright() as p:
     page.click("#system-btn")
     page.wait_for_selector("#right-drawer.open")
     page.wait_for_timeout(500)
+    assert page.is_visible("#reasoning-chip")
+    if "active" in (page.get_attribute("#reasoning-chip", "class") or ""):
+        page.click("#reasoning-chip", force=True)
+        page.wait_for_timeout(150)
+    assert "active" not in (page.get_attribute("#reasoning-chip", "class") or "")
+    assert "выкл" in page.inner_text("#reasoning-chip-label")
     page.click("#model-chip", force=True)
     page.wait_for_selector("#model-scrim:not(.hidden)")
     page.click('#model-select button[data-model="deepseek-v4-pro"]')
     assert "V4 Pro" in (page.text_content("#sheet-model") or "")
     assert page.is_checked("#search-toggle")
-    page.uncheck("#reasoning-toggle")
     assert page.is_hidden("#effort-setting")
-    assert page.inner_text("#reasoning-note") == "Выключены"
-    page.check("#reasoning-toggle")
-    assert page.is_visible("#effort-setting")
     page.wait_for_timeout(340)
     page.screenshot(path=f"{SHOTS}/10a-model-sheet.png")
     page.click("#model-done")
     assert "V4 Pro" in page.inner_text("#model-chip-label")
+    page.click("#reasoning-chip", force=True)
+    page.wait_for_timeout(150)
+    assert "active" in (page.get_attribute("#reasoning-chip", "class") or "")
+    assert "вкл" in page.inner_text("#reasoning-chip-label")
+    page.click("#model-chip", force=True)
+    page.wait_for_selector("#model-scrim:not(.hidden)")
+    assert page.is_visible("#effort-setting")
+    page.click("#model-done")
 
     # System instruction is a right-side drawer and travels with the next send.
     page.wait_for_selector("#right-drawer.open")
@@ -473,10 +483,14 @@ with sync_playwright() as p:
     page.click("#system-btn")
     page.wait_for_selector("#right-drawer.open")
     page.wait_for_timeout(500)
-    page.click("#model-chip", force=True)
-    page.wait_for_selector("#model-scrim:not(.hidden)")
-    assert page.is_hidden("#model-block")
-    page.click("#model-done")
+    assert page.is_hidden("#model-chip")
+    assert page.is_visible("#reasoning-chip")
+    before = "active" in (page.get_attribute("#reasoning-chip", "class") or "")
+    page.click("#reasoning-chip", force=True)
+    page.wait_for_timeout(150)
+    after = "active" in (page.get_attribute("#reasoning-chip", "class") or "")
+    assert after != before
+    assert ("вкл" in page.inner_text("#reasoning-chip-label")) == after
     page.click("#right-drawer-close")
     page.wait_for_timeout(380)
     page.fill("#input", "Проверка веб-режима")
@@ -531,8 +545,11 @@ with sync_playwright() as p:
     page.click("#right-agent-tools")
     page.wait_for_selector("#tools-scrim:not(.hidden)")
     page.wait_for_timeout(350)
-    assert "Python" in page.inner_text("#tools-scrim")
-    assert "Java" in page.inner_text("#tools-scrim")
+    assert page.locator("#tools-sandbox").count() == 0
+    assert page.locator(".tools-list").count() == 0
+    assert "Песочница Ubuntu" not in page.inner_text("#tools-scrim")
+    assert "Инструменты агента" in page.inner_text("#tools-scrim")
+    assert "wide" in (page.get_attribute("#tools-done", "class") or "")
     page.screenshot(path=f"{SHOTS}/17-agent-tools.png")
     page.click("#tools-done")
     assert page.is_hidden("#tools-scrim")
