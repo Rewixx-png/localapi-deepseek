@@ -94,6 +94,11 @@ MOCK = r"""
       return c ? ok(c) : bad('not_found', 'Чат не найден');
     },
     agentRootInfo: () => ok({ configured: true, name: 'LocalApiDeepSeek', uri: 'content://mock/tree' }),
+    sandboxStatus: () => ok({ installed: true, installing: false, running: false, version: 'mock', log: '' }),
+    installSandbox: () => {},
+    startSandbox: () => {},
+    stopSandbox: () => {},
+    sandboxWrite: () => {},
     chooseAgentRoot: () => {},
     ensureAgentFolder: () => ok({ name: 'AI-заголовок' }),
     openAgentFolder: () => {},
@@ -192,7 +197,7 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
-    appInfo: () => JSON.stringify({ version: '1.6.31', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.32', package: 'dev.localapi.deepseek' })
   };
 })();
 """

@@ -1,0 +1,315 @@
+package dev.localapi.deepseek;
+
+import android.app.Activity;
+import android.content.Context;
+import android.webkit.WebView;
+
+import org.json.JSONObject;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+/**
+ * Downloads the Ubuntu Base/QEMU guest assets and launches QEMU with the
+ * app-private agent workspace shared over 9p.
+ *
+ * QEMU itself is packaged in jniLibs (arm64-v8a). There is no KVM on Android,
+ * so the guest runs under TCG and is slow. All output is forwarded to the
+ * WebView journal; the first milestone is a bootable terminal guest.
+ */
+final class SandboxManager {
+    static final String VERSION = "ubuntu-1";
+    static final String ASSET_URL =
+            "https://github.com/Rewixx-png/localapi-deepseek/releases/download/"
+                    + "sandbox-ubuntu-1/ubuntu-sandbox.zip";
+    static final String ASSET_SHA =
+            "3d93a5c19e615a42a53249f29f9d7d87f94de44ea2a2fc08932011b5b8c77078";
+    static final long ASSET_SIZE = 50536774L;
+
+    private final Activity activity;
+    private final WebView web;
+    private volatile Process process;
+    private volatile boolean installing;
+    private volatile boolean running;
+
+    SandboxManager(Activity activity, WebView web) {
+        this.activity = activity;
+        this.web = web;
+    }
+
+    private static File dir(Context context) {
+        File dir = new File(context.getFilesDir(), "sandbox");
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            throw new IllegalStateException("Не удалось создать папку песочницы");
+        }
+        return dir;
+    }
+
+    static boolean installed(Context context) {
+        File dir = dir(context);
+        return new File(dir, "vmlinuz").isFile()
+                && new File(dir, "initramfs.cpio.gz").isFile();
+    }
+
+    JSONObject status() throws Exception {
+        JSONObject out = new JSONObject();
+        out.put("installed", installed(activity));
+        out.put("installing", installing);
+        out.put("running", running);
+        out.put("version", VERSION);
+        out.put("size", ASSET_SIZE);
+        out.put("abi", android.os.Build.SUPPORTED_ABIS.length > 0
+                ? android.os.Build.SUPPORTED_ABIS[0] : "");
+        File log = new File(activity.getCacheDir(), "sandbox.log");
+        out.put("log", tail(log, 64 * 1024));
+        return out;
+    }
+
+    void install() {
+        if (installing) return;
+        if (installed(activity)) {
+            runJs("window.__sandboxInstalled && window.__sandboxInstalled()");
+            return;
+        }
+        installing = true;
+        new Thread(() -> {
+            File zip = new File(activity.getCacheDir(), "sandbox-assets.zip");
+            try {
+                download(zip);
+                String actual = sha256(zip);
+                if (!ASSET_SHA.equalsIgnoreCase(actual)) {
+                    throw new IOException("Контрольная сумма песочницы не совпала");
+                }
+                unzip(zip, dir(activity));
+                installing = false;
+                runJs("window.__sandboxInstalled && window.__sandboxInstalled()");
+                log("sandbox installed " + VERSION);
+            } catch (Exception e) {
+                installing = false;
+                String message = e.getMessage() == null
+                        ? "Не удалось установить песочницу"
+                        : e.getMessage();
+                log("sandbox install error: " + message);
+                runJs("window.__sandboxError && window.__sandboxError("
+                        + JSONObject.quote(message) + ")");
+            } finally {
+                //noinspection ResultOfMethodCallIgnored
+                zip.delete();
+            }
+        }, "sandbox-install").start();
+    }
+
+    void start(String chatId) {
+        if (!installed(activity)) {
+            runJs("window.__sandboxError && window.__sandboxError("
+                    + JSONObject.quote("Сначала скачайте песочницу") + ")");
+            return;
+        }
+        if (running) {
+            runJs("window.__sandboxOutput && window.__sandboxOutput("
+                    + JSONObject.quote("[sandbox уже запущена]") + ")");
+            return;
+        }
+        try {
+            File dir = dir(activity);
+            String libs = activity.getApplicationInfo().nativeLibraryDir;
+            File qemu = new File(libs, "libqemu-system-aarch64.so");
+            if (!qemu.isFile()) {
+                throw new IOException("QEMU не упакован в APK для этой ABI");
+            }
+            File workspace = AgentWorkspace.root(activity, chatId);
+            String cmd = "/system/bin/linker64";
+            ProcessBuilder pb = new ProcessBuilder(
+                    cmd,
+                    qemu.getAbsolutePath(),
+                    "-M", "virt",
+                    "-cpu", "max",
+                    "-m", "1024",
+                    "-smp", "2",
+                    "-nographic",
+                    "-no-reboot",
+                    "-kernel", new File(dir, "vmlinuz").getAbsolutePath(),
+                    "-initrd", new File(dir, "initramfs.cpio.gz").getAbsolutePath(),
+                    "-append", "console=ttyAMA0 rdinit=/init loglevel=7",
+                    "-virtfs", "local,path=" + workspace.getAbsolutePath()
+                            + ",mount_tag=workspace,security_model=none"
+            );
+            pb.redirectErrorStream(true);
+            pb.directory(activity.getCacheDir());
+            pb.environment().put("LD_LIBRARY_PATH", libs);
+            pb.environment().put("HOME", dir.getAbsolutePath());
+            pb.environment().put("TMPDIR", activity.getCacheDir().getAbsolutePath());
+            process = pb.start();
+            running = true;
+            log("sandbox start " + VERSION + " chat=" + chatId);
+            runJs("window.__sandboxStarted && window.__sandboxStarted()");
+            new Thread(() -> {
+                File logFile = new File(activity.getCacheDir(), "sandbox.log");
+                try (InputStream in = process.getInputStream();
+                     OutputStream out = new FileOutputStream(logFile, true)) {
+                    byte[] buffer = new byte[4096];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) {
+                        out.write(buffer, 0, read);
+                        out.flush();
+                        String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                        runJs("window.__sandboxOutput && window.__sandboxOutput("
+                                + JSONObject.quote(text) + ")");
+                    }
+                } catch (Exception e) {
+                    log("sandbox output error: " + e.getMessage());
+                }
+                int code = -1;
+                try {
+                    code = process.waitFor();
+                } catch (Exception ignored) {
+                }
+                running = false;
+                log("sandbox exit code=" + code);
+                runJs("window.__sandboxExit && window.__sandboxExit(" + code + ")");
+            }, "sandbox-output").start();
+        } catch (Exception e) {
+            running = false;
+            String message = e.getMessage() == null ? "QEMU не запустился" : e.getMessage();
+            log("sandbox start error: " + message);
+            runJs("window.__sandboxError && window.__sandboxError("
+                    + JSONObject.quote(message) + ")");
+        }
+    }
+
+    void stop() {
+        Process p = process;
+        process = null;
+        running = false;
+        if (p != null) p.destroy();
+        log("sandbox stop");
+    }
+
+    void write(String text) {
+        Process p = process;
+        if (p == null) return;
+        try {
+            p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
+            p.getOutputStream().flush();
+        } catch (Exception e) {
+            log("sandbox stdin error: " + e.getMessage());
+        }
+    }
+
+    private void download(File target) throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) new URL(ASSET_URL).openConnection();
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(60_000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", "LocalApiDeepSeek");
+        connection.setUseCaches(false);
+        int code = connection.getResponseCode();
+        if (code != HttpURLConnection.HTTP_OK) {
+            throw new IOException("HTTP " + code);
+        }
+        long total = connection.getContentLengthLong();
+        try (InputStream in = new BufferedInputStream(connection.getInputStream());
+             OutputStream out = new FileOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            long readTotal = 0;
+            int read;
+            int lastPercent = -1;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+                readTotal += read;
+                if (total > 0) {
+                    int percent = (int) (readTotal * 100 / total);
+                    if (percent != lastPercent) {
+                        lastPercent = percent;
+                        runJs("window.__sandboxProgress && window.__sandboxProgress("
+                                + percent + ")");
+                    }
+                }
+            }
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private static void unzip(File zip, File dir) throws IOException {
+        try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(
+                new FileInputStream(zip)))) {
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                if (entry.isDirectory()) continue;
+                String name = entry.getName();
+                File target;
+                if (name.endsWith("vmlinuz-6.11.0-17-generic")
+                        || name.equals("vmlinuz")) {
+                    target = new File(dir, "vmlinuz");
+                } else if (name.endsWith("ubuntu-initramfs.cpio.gz")) {
+                    target = new File(dir, "initramfs.cpio.gz");
+                } else {
+                    continue;
+                }
+                try (OutputStream out = new FileOutputStream(target)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int read;
+                    while ((read = zin.read(buffer)) > 0) out.write(buffer, 0, read);
+                }
+            }
+        }
+        if (!new File(dir, "vmlinuz").isFile()
+                || !new File(dir, "initramfs.cpio.gz").isFile()) {
+            throw new IOException("В архиве нет vmlinuz/initramfs");
+        }
+    }
+
+    private static String sha256(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream in = new FileInputStream(file)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buffer)) > 0) digest.update(buffer, 0, read);
+        }
+        StringBuilder out = new StringBuilder();
+        for (byte b : digest.digest()) out.append(String.format("%02x", b & 0xff));
+        return out.toString();
+    }
+
+    private static String tail(File file, int max) {
+        if (!file.isFile()) return "";
+        try (FileInputStream in = new FileInputStream(file)) {
+            long length = file.length();
+            long skip = Math.max(0, length - max);
+            long skipped = 0;
+            while (skipped < skip && in.skip(skip - skipped) > 0) skipped++;
+            byte[] data = new byte[(int) Math.min(max, length)];
+            int read = in.read(data);
+            return read > 0 ? new String(data, 0, read, StandardCharsets.UTF_8) : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void log(String message) {
+        try (OutputStream out = new FileOutputStream(
+                new File(activity.getCacheDir(), "sandbox.log"), true)) {
+            out.write((System.currentTimeMillis() + " " + message + "\n")
+                    .getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void runJs(String js) {
+        activity.runOnUiThread(() -> {
+            if (web != null) web.evaluateJavascript(js, null);
+        });
+    }
+}

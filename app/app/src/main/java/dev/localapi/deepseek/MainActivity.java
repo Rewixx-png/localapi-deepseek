@@ -65,6 +65,7 @@ public final class MainActivity extends Activity {
     private NativeComposer composer;
     private Updater updater;
     private CloudflareTunnel tunnel;
+    private SandboxManager sandbox;
     private volatile boolean foreground = false;
     private boolean pageReady;
     private String pendingInstallError;
@@ -95,6 +96,7 @@ public final class MainActivity extends Activity {
 
         web.setWebViewClient(new AssetsClient());
         web.addJavascriptInterface(new Bridge(), "Native");
+        sandbox = new SandboxManager(this, web);
         tunnel = CloudflareTunnel.get(this);
         tunnel.attachWebView(web);
 
@@ -541,6 +543,35 @@ public final class MainActivity extends Activity {
         public String useInternalAgentWorkspace() {
             SafAgentWorkspace.clearRoot(MainActivity.this);
             return agentOk("ok");
+        }
+
+        @JavascriptInterface
+        public String sandboxStatus() {
+            try {
+                return agentOk(sandbox.status());
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
+        public void installSandbox() {
+            sandbox.install();
+        }
+
+        @JavascriptInterface
+        public void startSandbox(String chatId) {
+            sandbox.start(chatId);
+        }
+
+        @JavascriptInterface
+        public void stopSandbox() {
+            sandbox.stop();
+        }
+
+        @JavascriptInterface
+        public void sandboxWrite(String text) {
+            sandbox.write(text);
         }
 
         @JavascriptInterface

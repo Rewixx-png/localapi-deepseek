@@ -62,6 +62,7 @@
     deleteAgentFile: function (chatId, name) { return Native.deleteAgentFile(chatId, name); },
     clearAgentWorkspace: function (chatId) { return Native.clearAgentWorkspace(chatId); },
     setComposerAgent: function (agent) { return Native.setComposerAgent(agent); },
+    sandboxStatus: function () { return Native.sandboxStatus(); },
     agentRootInfo: function () { return Native.agentRootInfo(); },
     ensureAgentFolder: function (chatId, title) { return Native.ensureAgentFolder(chatId, title); },
     useInternalAgentWorkspace: function () { return Native.useInternalAgentWorkspace(); },
@@ -1084,7 +1085,8 @@
     var tools = !$("#tools-scrim").classList.contains("hidden");
     var workspace = !$("#workspace-scrim").classList.contains("hidden");
     var journal = !$("#journal-scrim").classList.contains("hidden");
-    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools && !workspace && !journal);
+    var sandbox = !$("#sandbox-scrim").classList.contains("hidden");
+    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools && !workspace && !journal && !sandbox);
   }
 
   function openImageViewer(src) {
@@ -1922,6 +1924,67 @@
     });
   }
 
+  function sandboxSetLog(text) {
+    var box = $("#sandbox-log");
+    if (!box) return;
+    box.textContent = text || "";
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function refreshSandbox() {
+    try {
+      S.sandbox = invoke("sandboxStatus") || {};
+    } catch (e) {
+      S.sandbox = { installed: false, installing: false, running: false };
+    }
+    var installed = !!S.sandbox.installed;
+    var running = !!S.sandbox.running;
+    var download = $("#sandbox-download");
+    var start = $("#sandbox-start");
+    var stop = $("#sandbox-stop");
+    if (download) download.classList.toggle("hidden", installed);
+    if (start) start.classList.toggle("hidden", !installed || running);
+    if (stop) stop.classList.toggle("hidden", !running);
+    var row = $("#sandbox-command-row");
+    if (row) row.classList.toggle("hidden", !running);
+    if (S.sandbox.log) sandboxSetLog(S.sandbox.log);
+    return S.sandbox;
+  }
+
+  function openSandbox() {
+    closeTools();
+    closeWorkspaceDialog();
+    closeAgentJournal();
+    refreshSandbox();
+    $("#sandbox-scrim").classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeSandbox() {
+    $("#sandbox-scrim").classList.add("hidden");
+    syncNativeComposer();
+  }
+
+  function maybePromptSandbox() {
+    if (!S.agentMode || S.sandboxPrompted) return;
+    S.sandboxPrompted = true;
+    refreshSandbox();
+    if (!S.sandbox.installed) setTimeout(openSandbox, 350);
+  }
+
+  function startSandbox() {
+    if (!S.chat || !S.chat.id) {
+      toast("Сначала создайте чат агента");
+      return;
+    }
+    journalLine("sandbox", "Запуск QEMU");
+    try {
+      Native.startSandbox(S.chat.id);
+    } catch (e) {
+      toast("Не удалось запустить песочницу");
+    }
+  }
+
   function refreshAgentRoot() {
     try {
       S.agentRoot = invoke("agentRootInfo") || { configured: false, name: "" };
@@ -2302,6 +2365,7 @@
       renderMessages();
     }
     refreshContextMeter();
+    setTimeout(maybePromptSandbox, 250);
   }
 
   function openTools() {
@@ -2564,6 +2628,37 @@
       openWorkspaceDialog();
     });
     $("#tools-journal").addEventListener("click", openAgentJournal);
+    $("#tools-sandbox").addEventListener("click", function () {
+      closeTools();
+      openSandbox();
+    });
+    $("#sandbox-close").addEventListener("click", closeSandbox);
+    $("#sandbox-close2").addEventListener("click", closeSandbox);
+    $("#sandbox-scrim").addEventListener("click", function (e) {
+      if (e.target === this) closeSandbox();
+    });
+    $("#sandbox-download").addEventListener("click", function () {
+      try {
+        journalLine("sandbox", "Начата загрузка Ubuntu");
+        Native.installSandbox();
+      } catch (e) {
+        toast("Не удалось начать загрузку");
+      }
+    });
+    $("#sandbox-start").addEventListener("click", startSandbox);
+    $("#sandbox-stop").addEventListener("click", function () {
+      try { Native.stopSandbox(); } catch (e) { /* ignore */ }
+    });
+    $("#sandbox-send").addEventListener("click", function () {
+      var input = $("#sandbox-command");
+      if (!input || !input.value) return;
+      try {
+        Native.sandboxWrite(input.value + "\n");
+        input.value = "";
+      } catch (e) {
+        toast("Не удалось отправить команду");
+      }
+    });
     $("#journal-close").addEventListener("click", closeAgentJournal);
     $("#journal-scrim").addEventListener("click", function (e) {
       if (e.target === this) closeAgentJournal();
@@ -3214,6 +3309,46 @@
     pickAgentZip();
   };
 
+  window.__sandboxProgress = function (percent) {
+    var el = $("#sandbox-progress");
+    if (el) el.textContent = "Загрузка: " + percent + "%";
+    journalLine("sandbox", "Загрузка " + percent + "%");
+  };
+
+  window.__sandboxInstalled = function () {
+    journalLine("sandbox", "Песочница установлена");
+    refreshSandbox();
+    toast("Песочница установлена");
+  };
+
+  window.__sandboxError = function (message) {
+    journalLine("sandbox", "Ошибка: " + (message || "unknown"));
+    toast(message || "Ошибка песочницы");
+    var el = $("#sandbox-progress");
+    if (el) el.textContent = message || "Ошибка";
+  };
+
+  window.__sandboxStarted = function () {
+    journalLine("sandbox", "QEMU запущен");
+    refreshSandbox();
+  };
+
+  window.__sandboxOutput = function (text) {
+    var box = $("#sandbox-log");
+    if (box) {
+      box.textContent += text;
+      if (box.textContent.length > 200000) {
+        box.textContent = box.textContent.slice(-200000);
+      }
+      box.scrollTop = box.scrollHeight;
+    }
+  };
+
+  window.__sandboxExit = function (code) {
+    journalLine("sandbox", "QEMU завершился, код " + code);
+    refreshSandbox();
+  };
+
   window.__agentRootUpdated = function () {
     journalLine("workspace", "Папка устройства выбрана");
     refreshAgentRoot();
@@ -3244,6 +3379,7 @@
   };
 
   window.__onAndroidBack = function () {
+    if (!$("#sandbox-scrim").classList.contains("hidden")) { closeSandbox(); return true; }
     if (!$("#journal-scrim").classList.contains("hidden")) { closeAgentJournal(); return true; }
     if (!$("#workspace-scrim").classList.contains("hidden")) { closeWorkspaceDialog(); return true; }
     if (!$("#tools-scrim").classList.contains("hidden")) { closeTools(); return true; }

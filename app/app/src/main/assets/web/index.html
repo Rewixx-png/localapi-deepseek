@@ -251,6 +251,31 @@
     </button>
   </aside>
 
+  <div id="sandbox-scrim" class="dialog-scrim hidden">
+    <div class="dialog sandbox-dialog" role="dialog" aria-modal="true" aria-labelledby="sandbox-title">
+      <div class="model-head">
+        <h2 id="sandbox-title">Песочница Ubuntu</h2>
+        <button id="sandbox-close" class="icon-btn" aria-label="Закрыть" type="button">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <p class="fine">QEMU + Ubuntu Base (arm64), без GUI. Загрузка ~50 МБ; QEMU уже в APK.
+        TCG без KVM — первый запуск медленный.</p>
+      <div id="sandbox-progress" class="update-percent"></div>
+      <pre id="sandbox-log" class="journal-text sandbox-log"></pre>
+      <div class="sandbox-command hidden" id="sandbox-command-row">
+        <input id="sandbox-command" class="text-field-input" placeholder="Команда в Ubuntu" autocomplete="off">
+        <button id="sandbox-send" class="btn tonal small" type="button">Отправить</button>
+      </div>
+      <div class="dialog-actions">
+        <button id="sandbox-download" class="btn filled" type="button">Скачать</button>
+        <button id="sandbox-start" class="btn filled hidden" type="button">Запустить</button>
+        <button id="sandbox-stop" class="btn text danger hidden" type="button">Остановить</button>
+        <button id="sandbox-close2" class="btn text" type="button">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
   <div id="journal-scrim" class="dialog-scrim hidden">
     <div class="dialog journal-dialog" role="dialog" aria-modal="true" aria-labelledby="journal-title">
       <div class="model-head">
@@ -318,6 +343,7 @@
       </div>
       <button id="tools-workspace" class="btn tonal wide" type="button">Сменить папку workspace</button>
       <button id="tools-journal" class="btn tonal wide" type="button">Журнал агента</button>
+      <button id="tools-sandbox" class="btn tonal wide" type="button">Песочница Ubuntu (QEMU)</button>
       <div class="dialog-actions">
         <button id="tools-done" class="btn filled" type="button">Понятно</button>
       </div>

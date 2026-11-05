@@ -1,7 +1,7 @@
 {
-  "versionCode": 45,
-  "versionName": "1.6.31",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.31/LocalApiDeepSeek.apk",
-  "sha256": "0d39b706a4ccc587f43dfe43bc0643106a72e53a08f1680057ae6a2a15c4209a",
-  "notes": "Agent mode: журнал workspace/ZIP/JS-ошибок с копированием (Инструменты → Журнал агента). Удобно присылать точный лог; QEMU-песочница будет следующим этапом."
+  "versionCode": 46,
+  "versionName": "1.6.32",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.32/LocalApiDeepSeek.apk",
+  "sha256": "bba7b563c7b30f735314bebca5cf90c0c021fba9e616aeafd39a9ec4b81dc22b",
+  "notes": "Первый QEMU-вариант: установщик Ubuntu Base (arm64) ~50 МБ, QEMU в APK, serial-лог и командная строка, journal. TCG без KVM — медленно; требуется тест на устройстве."
 }
