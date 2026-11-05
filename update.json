@@ -1,7 +1,7 @@
 {
-  "versionCode": 46,
-  "versionName": "1.6.32",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.32/LocalApiDeepSeek.apk",
-  "sha256": "bba7b563c7b30f735314bebca5cf90c0c021fba9e616aeafd39a9ec4b81dc22b",
-  "notes": "Первый QEMU-вариант: установщик Ubuntu Base (arm64) ~50 МБ, QEMU в APK, serial-лог и командная строка, journal. TCG без KVM — медленно; требуется тест на устройстве."
+  "versionCode": 47,
+  "versionName": "1.6.33",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.33/LocalApiDeepSeek.apk",
+  "sha256": "68d10ca5cc534033f39714c70952416e4892e7a6aa5473d93d9db44d8b19bd0e",
+  "notes": "QEMU sandbox fix: Ubuntu asset revision 2 with efi-virtio.rom and QEMU ROM data, -L qemu-data, unpatched libc++ (GNU property warning), installed check requires ROM. Переустанови песочницу: старый bundle без ROM не запустится."
 }
