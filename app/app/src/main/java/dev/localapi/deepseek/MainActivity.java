@@ -474,6 +474,27 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void generateTitle(String chatId, String text) {
+            new Thread(() -> {
+                String raw = Rust.nativeGenerateTitle(chatId, text);
+                try {
+                    JSONObject root = new JSONObject(raw);
+                    if (!root.optBoolean("ok")) return;
+                    JSONObject data = root.optJSONObject("data");
+                    if (data == null) return;
+                    String title = data.optString("title");
+                    if (title.isEmpty()) return;
+                    runOnUiThread(() -> web.evaluateJavascript(
+                            "window.__titleUpdated && window.__titleUpdated("
+                                    + JSONObject.quote(chatId) + ","
+                                    + JSONObject.quote(title) + ")",
+                            null));
+                } catch (Exception ignored) {
+                }
+            }, "chat-title").start();
+        }
+
+        @JavascriptInterface
         public String startServer(int port) {
             String raw = Rust.nativeStartServer(port);
             try {

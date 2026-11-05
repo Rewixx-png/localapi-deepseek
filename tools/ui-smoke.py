@@ -86,6 +86,16 @@ MOCK = r"""
       const c = st.chats.find(x => x.id === id);
       return c ? ok(c) : bad('not_found', 'Чат не найден');
     },
+    generateTitle: (chatId, text) => {
+      const c = st.chats.find(x => x.id === chatId);
+      if (!c) return ok(null);
+      c.title = 'AI-заголовок';
+      persist();
+      setTimeout(() => {
+        try { window.__titleUpdated(chatId, c.title); } catch (e) {}
+      }, 0);
+      return ok(null);
+    },
     deleteChat: id => { st.chats = st.chats.filter(x => x.id !== id); persist(); return ok(null); },
     send: function (chatId, text, model, effort, thinking, search, images, systemPrompt) {
       if (arguments.length !== 8) throw new Error('send bridge args=' + arguments.length);
@@ -147,7 +157,7 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
-    appInfo: () => JSON.stringify({ version: '1.6.20', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.21', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -204,6 +214,16 @@ with sync_playwright() as p:
     page.wait_for_timeout(2400)
     assert page.locator(".reasoning").count() == 1
     assert page.locator(".reasoning .reasoning-toggle svg").count() == 1
+    page.wait_for_function("document.querySelector('#chat-title').textContent.includes('AI-заголовок')", timeout=3000)
+    assert "Размышления ·" in page.inner_text(".reasoning-toggle")
+    assert "tok/s" in page.inner_text(".msg-meta")
+    assert "ответ" in page.inner_text(".msg-meta")
+    assert page.locator(".msg.user .msg-author").first.text_content() == "User"
+    assert page.locator(".msg.assistant .msg-author").first.text_content() == "Model"
+    assert "Контекст ≈" in page.inner_text("#context-meter")
+    page.evaluate("document.querySelector('#messages').scrollTop = 0")
+    page.wait_for_timeout(200)
+    page.screenshot(path=f"{SHOTS}/08b-chat-top.png")
     page.locator(".reasoning-toggle").first.click()
     page.wait_for_timeout(380)
     assert "open" in (page.get_attribute(".reasoning", "class") or "")
@@ -253,6 +273,7 @@ with sync_playwright() as p:
     page.click("#menu-btn")
     page.wait_for_selector("#drawer.open")
     page.wait_for_timeout(350)
+    assert page.locator("#chat-list .ci-title").first.inner_text() == "AI-заголовок"
     page.screenshot(path=f"{SHOTS}/09-drawer.png")
     page.click("#drawer-close")
 

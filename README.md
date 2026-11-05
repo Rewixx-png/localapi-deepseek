@@ -20,7 +20,13 @@ PoW, потоковый SSE с рассуждениями и локальная 
   стандартную/экспертную модель. Рассуждения можно выключить, усилие — `low/high/max` (API).
 - Стриминг ответа и `reasoning_content` / `THINK`-фрагментов, отмена генерации.
   Текст появляется мягким затуханием, лента не выдёргивается вниз, если
-  пользователь прокрутил её вверх.
+  пользователь прокрутил её вверх. После ответа видно время ответа, `tok/s`
+  (точно по usage в API, оценка в web) и время размышлений в их блоке.
+- В шапке чата — оценка занятого контекста (`Контекст ≈ N токенов`) с учётом
+  system-инструкции, истории, черновика и грубой оценки изображений.
+- После первого ответа отдельный короткий запрос к модели предлагает название
+  чата (2–5 слов); оно сохраняется и показывается в истории вместо первого
+  сообщения. Это дополнительный расход токенов.
 - Markdown в ответах: заголовки `#`…`######`, списки, цитаты, ссылки,
   `**жирный**`, `*курсив*`, `~~зачёркнутый~~`, блоки кода с копированием,
   GFM-таблицы с выравниванием и горизонтальной прокруткой.
@@ -212,7 +218,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.6.20-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.6.21-debug.apk`.
 
 ## Обновления
 
@@ -234,9 +240,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 34,
-  "versionName": "1.6.20",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.20/LocalApiDeepSeek.apk",
+  "versionCode": 35,
+  "versionName": "1.6.21",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.21/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }
@@ -248,7 +254,7 @@ SHA-256 из манифеста проверяется до установки.
 ## Проверка
 
 ```bash
-cargo test -p deepseek-core        # 18 e2e/unit-тестов
+cargo test -p deepseek-core        # 19 e2e/unit-тестов
 python3 tools/ui-smoke.py          # UI-потоки в headless Chromium (playwright)
 ```
 

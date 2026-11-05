@@ -312,6 +312,30 @@ a { color: var(--primary); text-decoration: none; }
 .banner .icon { width: 20px; height: 20px; }
 .banner .btn { margin-left: auto; color: inherit; }
 
+.context-meter {
+  padding: 0 16px 4px;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .2px;
+}
+
+.msg-author {
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .55px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  opacity: .8;
+}
+.msg.user .msg-author {
+  color: var(--on-primary-container);
+  opacity: .72;
+  text-align: right;
+}
+
 .chips {
   display: flex; gap: 8px; align-items: center;
   padding: 0 16px 8px; overflow-x: auto; overflow-y: hidden;

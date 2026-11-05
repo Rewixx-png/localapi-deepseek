@@ -138,13 +138,20 @@ fn handle(mut conn: TcpStream, state: Arc<MockState>) {
             return;
         }
         let slow = body.contains("SLOW");
-        let events = [
-            r#"{"choices":[{"delta":{"reasoning_content":"Сначала "}}]}"#,
-            r#"{"choices":[{"delta":{"reasoning_content":"подумаю."}}]}"#,
-            r#"{"choices":[{"delta":{"content":"Привет"}}]}"#,
-            r#"{"choices":[{"delta":{"content":", мир"}}]}"#,
-            r#"{"choices":[{"delta":{"content":"!"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#,
-        ];
+        let title_request = body.contains("Придумай короткое название");
+        let events: Vec<&str> = if title_request {
+            vec![
+                r#"{"choices":[{"delta":{"content":"«Короткое название». "}}],"usage":{"prompt_tokens":20,"completion_tokens":3,"total_tokens":23}}"#,
+            ]
+        } else {
+            vec![
+                r#"{"choices":[{"delta":{"reasoning_content":"Сначала "}}]}"#,
+                r#"{"choices":[{"delta":{"reasoning_content":"подумаю."}}]}"#,
+                r#"{"choices":[{"delta":{"content":"Привет"}}]}"#,
+                r#"{"choices":[{"delta":{"content":", мир"}}]}"#,
+                r#"{"choices":[{"delta":{"content":"!"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#,
+            ]
+        };
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
         conn.write_all(head.as_bytes()).unwrap();
         for (index, event) in events.iter().enumerate() {
@@ -987,6 +994,34 @@ fn offline_mode_blocks_network_and_persists() {
     let reopened = Engine::with_base(&dir, &base).unwrap();
     assert!(!reopened.status().online);
     assert!(reopened.set_online(true).unwrap().online);
+}
+
+#[test]
+fn chat_title_is_generated_by_the_model() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(API_TOKEN, "api").unwrap();
+
+    let chat = engine.new_chat().unwrap();
+    let start = engine
+        .send_opts(
+            &chat.id,
+            "Привет, как дела?",
+            "deepseek-flash",
+            true,
+            false,
+            Vec::new(),
+            "high",
+        )
+        .unwrap();
+    let poll = wait_done(&engine, start.stream_id);
+    assert!(poll.error.is_none(), "stream error: {:?}", poll.error);
+    let title = engine.generate_title(&chat.id, "Привет, как дела?").unwrap();
+    assert_eq!(title, "Короткое название");
+    assert_eq!(engine.get_chat(&chat.id).unwrap().title, title);
+    assert_eq!(engine.list_chats().unwrap()[0].title, title);
 }
 
 #[test]

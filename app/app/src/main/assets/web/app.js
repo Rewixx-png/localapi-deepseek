@@ -1133,6 +1133,7 @@
     S.systemPrompt = field ? field.value.trim() : "";
     try { localStorage.setItem("systemPrompt", S.systemPrompt); } catch (e) { /* ignore */ }
     closeSystemDrawer();
+    refreshContextMeter();
     toast(S.systemPrompt ? "Системная инструкция сохранена" : "Системная инструкция очищена");
   }
 
@@ -1706,6 +1707,10 @@
 
     var bubble = document.createElement("div");
     bubble.className = "bubble";
+    var author = document.createElement("div");
+    author.className = "msg-author";
+    author.textContent = m.role === "user" ? "User" : "Model";
+    bubble.appendChild(author);
 
     if (m.role === "user") {
       if (m.images && m.images.length) {
@@ -1802,17 +1807,88 @@
     document.body.removeChild(ta);
   }
 
+  function estimateTokens(text) {
+    var value = String(text == null ? "" : text);
+    var cyr = 0;
+    var latin = 0;
+    var other = 0;
+    for (var i = 0; i < value.length; i++) {
+      var code = value.charCodeAt(i);
+      if (code >= 0x0400 && code <= 0x04ff) cyr++;
+      else if (code <= 0x7f) latin++;
+      else other++;
+    }
+    return Math.ceil(cyr / 2.6 + latin / 4 + other / 3);
+  }
+
+  function formatNumber(value) {
+    return String(Math.max(0, Math.round(value))).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  function formatDuration(ms) {
+    var seconds = Math.max(0, Number(ms) || 0) / 1000;
+    if (seconds < 10) return seconds.toFixed(1).replace(".", ",") + " с";
+    if (seconds < 60) return Math.round(seconds) + " с";
+    var minutes = Math.floor(seconds / 60);
+    var rest = Math.round(seconds % 60);
+    return minutes + " мин " + rest + " с";
+  }
+
+  function formatTps(value) {
+    var number = Math.max(0, Number(value) || 0);
+    if (number >= 100) return String(Math.round(number));
+    if (number >= 10) return number.toFixed(1).replace(".", ",");
+    return number.toFixed(2).replace(".", ",");
+  }
+
+  function contextTokenEstimate() {
+    var total = estimateTokens(S.systemPrompt || "");
+    var messages = S.chat && S.chat.messages ? S.chat.messages : [];
+    messages.forEach(function (m) {
+      total += 4 + estimateTokens(m.content || "");
+      if (m.images && m.images.length) total += m.images.length * 256;
+    });
+    var input = $("#input");
+    if (input) total += estimateTokens(input.value || "");
+    return total;
+  }
+
+  function refreshContextMeter() {
+    var meter = $("#context-meter");
+    if (!meter) return;
+    meter.textContent = "Контекст ≈ " + formatNumber(contextTokenEstimate()) + " токенов";
+  }
+
+  function setReasoningDuration(box, ms) {
+    if (!box || !ms) return;
+    var label = box.querySelector(".reasoning-toggle span");
+    if (label) label.textContent = "Размышления · " + formatDuration(ms);
+  }
+
+  function requestChatTitle() {
+    if (!S.chat || !S.chat.id || !window.Native || !Native.generateTitle) return;
+    if (S.titleRequested === S.chat.id) return;
+    var users = (S.chat.messages || []).filter(function (m) { return m.role === "user"; });
+    if (users.length !== 1) return;
+    S.titleRequested = S.chat.id;
+    try {
+      Native.generateTitle(S.chat.id, users[0].content || "Опиши изображение.");
+    } catch (e) { /* title is best-effort */ }
+  }
+
   function renderMessages() {
     var box = $("#messages");
     box.innerHTML = "";
     var messages = S.chat && S.chat.messages ? S.chat.messages : [];
     if (!messages.length) {
       box.appendChild(emptyState());
+      refreshContextMeter();
       return;
     }
     messages.forEach(function (m) {
       box.appendChild(messageEl(m, { openReasoning: false }));
     });
+    refreshContextMeter();
     scrollToBottom(true);
   }
 
@@ -1993,7 +2069,10 @@
     $("#right-drawer-close").addEventListener("click", closeSystemDrawer);
     $("#right-backdrop").addEventListener("click", closeSystemDrawer);
     $("#system-save").addEventListener("click", saveSystemPrompt);
-    input.addEventListener("input", refreshSendButton);
+    input.addEventListener("input", function () {
+      refreshSendButton();
+      refreshContextMeter();
+    });
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
@@ -2049,6 +2128,12 @@
     if (empty) empty.remove();
     $("#messages").appendChild(messageEl(optimistic));
     scrollToBottom(true);
+    refreshContextMeter();
+
+    S.streamStartedAt = performance.now();
+    S.firstTokenAt = 0;
+    S.reasoningStartedAt = 0;
+    S.reasoningEndedAt = 0;
 
     var start;
     try {
@@ -2072,7 +2157,12 @@
       } else if (text && window.Native && Native.restoreComposerText) {
         Native.restoreComposerText(text);
       }
+      S.streamStartedAt = 0;
+      S.firstTokenAt = 0;
+      S.reasoningStartedAt = 0;
+      S.reasoningEndedAt = 0;
       refreshSendButton();
+      refreshContextMeter();
       toast(e.message);
       return;
     }
@@ -2085,6 +2175,7 @@
     $("#chat-title").textContent = S.chat.title || "Чат";
     S.stream = start.stream_id;
     setStreaming(true);
+    refreshContextMeter();
 
     S.lastContent = "";
     S.lastReasoning = "";
@@ -2145,6 +2236,11 @@
         changed = true;
       }
     }
+    if (reasoning || content) {
+      if (!S.firstTokenAt) S.firstTokenAt = performance.now();
+      if (reasoning && !S.reasoningStartedAt) S.reasoningStartedAt = performance.now();
+      if (content && S.reasoningStartedAt && !S.reasoningEndedAt) S.reasoningEndedAt = performance.now();
+    }
     if (changed) {
       S.streamContent.classList.add("cursor");
       if (S.streamContent.animate) {
@@ -2163,6 +2259,18 @@
   function finishStream(p) {
     clearTimeout(S.timer);
     S.timer = null;
+    var finishedAt = performance.now();
+    var elapsedMs = S.streamStartedAt ? finishedAt - S.streamStartedAt : 0;
+    var generationMs = S.firstTokenAt ? finishedAt - S.firstTokenAt : elapsedMs;
+    var completion = p.usage && p.usage.completion_tokens
+      ? p.usage.completion_tokens
+      : estimateTokens((p.content || "") + (p.reasoning || ""));
+    var tokensPerSecond = completion > 0 && generationMs > 0
+      ? completion / (generationMs / 1000)
+      : 0;
+    var reasoningMs = S.reasoningStartedAt
+      ? (S.reasoningEndedAt || finishedAt) - S.reasoningStartedAt
+      : 0;
     if (S.streamEl) {
       if (S.streamStage) {
         S.streamStage.classList.add("hidden");
@@ -2174,6 +2282,7 @@
         S.streamAnim = null;
       }
       if (S.streamReasoning) {
+        setReasoningDuration(S.streamReasoning, reasoningMs);
         S.streamReasoning._text.textContent = p.reasoning || "";
         if (!p.reasoning) {
           S.streamReasoning.classList.add("hidden");
@@ -2207,6 +2316,17 @@
         t.textContent = p.usage.total_tokens + " токенов";
         meta.appendChild(t);
       }
+      if (elapsedMs > 0) {
+        var timing = document.createElement("span");
+        timing.textContent = formatDuration(elapsedMs) + " ответ";
+        meta.appendChild(timing);
+      }
+      if (tokensPerSecond > 0) {
+        var speed = document.createElement("span");
+        speed.textContent = (p.usage && p.usage.completion_tokens ? "" : "≈ ")
+          + formatTps(tokensPerSecond) + " tok/s";
+        meta.appendChild(speed);
+      }
       if (p.chat_id) {
         var copy = document.createElement("button");
         copy.type = "button";
@@ -2234,7 +2354,13 @@
       } catch (e) { /* keep optimistic state */ }
       $("#chat-title").textContent = (S.chat && S.chat.title) || "Чат";
     }
+    refreshContextMeter();
     refreshChats();
+    requestChatTitle();
+    S.streamStartedAt = 0;
+    S.firstTokenAt = 0;
+    S.reasoningStartedAt = 0;
+    S.reasoningEndedAt = 0;
     scrollToBottom(false);
   }
 
@@ -2254,6 +2380,10 @@
     S.streamContent = null;
     S.streamReasoning = null;
     S.streamStage = null;
+    S.streamStartedAt = 0;
+    S.firstTokenAt = 0;
+    S.reasoningStartedAt = 0;
+    S.reasoningEndedAt = 0;
     setStreaming(false);
   }
 
@@ -2524,6 +2654,15 @@
       ? payload.images
       : (payload.image ? [payload.image] : []);
     sendMessage(payload.text || "", images, true);
+  };
+
+  window.__titleUpdated = function (chatId, title) {
+    if (!chatId || !title) return;
+    if (S.chat && S.chat.id === chatId) {
+      S.chat.title = title;
+      $("#chat-title").textContent = title;
+    }
+    refreshChats();
   };
 
   window.__tunnelStatus = function (raw) {

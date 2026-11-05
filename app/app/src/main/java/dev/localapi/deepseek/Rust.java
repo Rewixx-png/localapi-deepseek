@@ -18,6 +18,7 @@ public final class Rust {
     public static native String nativeGetChat(String id);
     public static native String nativeDeleteChat(String id);
     public static native String nativeSend(String chatId, String message, String model, String effort, boolean thinking, boolean search, String imagesJson, String systemPrompt);
+    public static native String nativeGenerateTitle(String chatId, String text);
     public static native String nativePoll(long streamId);
     public static native String nativeCancel(long streamId);
     public static native String nativeStartServer(int port);
