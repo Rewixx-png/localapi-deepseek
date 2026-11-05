@@ -22,3 +22,19 @@
 - Source: https://curl.se/ca/cacert.pem
 - License: Mozilla Public License 2.0 (as distributed by curl.se)
 - Bundled as `app/src/main/assets/cacert.pem`
+
+
+## QEMU
+
+- Component: QEMU system emulation (`qemu-system-aarch64`, arm64)
+- Source: https://www.qemu.org
+- License: GNU GPL v2
+- Bundled as Android native libs (`libqemu-system-aarch64.so`, dependencies)
+- Modification: SONAMEs and dependency names were prefixed to avoid Android package collisions; binaries are otherwise from Termux packages.
+
+## Ubuntu Base sandbox assets
+
+- Component: Ubuntu Base 24.04 arm64 rootfs, Ubuntu 6.11 kernel/initramfs
+- Source: https://cdimage.ubuntu.com/ubuntu-base/ and https://ports.ubuntu.com/
+- License: Ubuntu/GPL and component licenses
+- Downloaded by the app at runtime; not bundled in the APK.

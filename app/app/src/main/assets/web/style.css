@@ -381,6 +381,10 @@ a { color: var(--primary); text-decoration: none; }
 .agent-file button:active { background: var(--surface-container-high); }
 .agent-empty { color: var(--on-surface-variant); font-size: 11.5px; padding: 2px 0; }
 .tools-dialog, .workspace-dialog, .journal-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.sandbox-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.sandbox-log { min-height: 140px; max-height: 40dvh; }
+.sandbox-command { display: flex; gap: 8px; margin: 8px 0; }
+.sandbox-command input { flex: 1; min-width: 0; background: var(--surface-container-lowest); color: var(--on-surface); border: 1px solid var(--outline-variant); border-radius: 10px; padding: 8px 10px; font: inherit; }
 .journal-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 48dvh; overflow-y: auto; background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 10px; font: 11.5px/1.45 ui-monospace, "Roboto Mono", monospace; color: var(--on-surface-variant); }
 .workspace-options { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 16px; }
 .tools-list { background: var(--surface-container-low); }
