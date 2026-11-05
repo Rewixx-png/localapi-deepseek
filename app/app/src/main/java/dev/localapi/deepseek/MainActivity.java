@@ -539,7 +539,7 @@ public final class MainActivity extends Activity {
         public String readAgentFile(String chatId, String name) {
             try {
                 return agentOk(AgentWorkspace.read(
-                        MainActivity.this, chatId, name, 64 * 1024));
+                        MainActivity.this, chatId, name, 128 * 1024));
             } catch (Exception e) {
                 return agentFail(e);
             }
