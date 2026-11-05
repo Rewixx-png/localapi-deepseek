@@ -2071,8 +2071,14 @@
       S.agentFiles = [];
       var error = document.createElement("div");
       error.className = "agent-empty";
-      error.textContent = "Workspace недоступен";
+      error.textContent = "Workspace недоступен" + (e.message ? ": " + e.message : "");
       box.appendChild(error);
+      var change = document.createElement("button");
+      change.type = "button";
+      change.className = "btn text small danger";
+      change.textContent = "Сменить папку";
+      change.addEventListener("click", chooseAgentRoot);
+      box.appendChild(change);
       return;
     }
     if (!S.agentFiles.length) {
@@ -2466,6 +2472,10 @@
     });
     $("#tools-close").addEventListener("click", closeTools);
     $("#tools-done").addEventListener("click", closeTools);
+    $("#tools-workspace").addEventListener("click", function () {
+      closeTools();
+      chooseAgentRoot();
+    });
     $("#tools-scrim").addEventListener("click", function (e) {
       if (e.target === this) closeTools();
     });

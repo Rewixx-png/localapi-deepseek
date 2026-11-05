@@ -1,7 +1,7 @@
 {
-  "versionCode": 42,
-  "versionName": "1.6.28",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.28/LocalApiDeepSeek.apk",
-  "sha256": "07e8fa660522ea409f48e6c4a4e4906596e24082eb9705db432297b281d26a0e",
-  "notes": "ZIP: поддержка путей ./ в архивах, проверка writable-папки (Google Drive/read-only теперь даёт понятную ошибку), подробный текст ошибки, fallback режима записи SAF. Обновления — через GitHub Contents API."
+  "versionCode": 43,
+  "versionName": "1.6.29",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.29/LocalApiDeepSeek.apk",
+  "sha256": "753576568ae73324ddd4602b8a2942e2f0e50c5edc29f9df9a9aab3058668aba",
+  "notes": "ZIP/SAF: проверка записи при выборе папки workspace, кнопка «Сменить папку» при ошибке, понятные сообщения для read-only/Google Drive, поддержка путей ./ и подробные ошибки распаковки."
 }

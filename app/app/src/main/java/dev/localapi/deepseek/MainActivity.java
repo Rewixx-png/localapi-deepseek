@@ -256,8 +256,11 @@ public final class MainActivity extends Activity {
                                 null);
                     }
                 } catch (Exception e) {
-                    Toast.makeText(MainActivity.this,
-                            "Не удалось сохранить папку workspace",
+                    String message = e.getMessage();
+                    if (message == null || message.trim().isEmpty()) {
+                        message = "Не удалось сохранить папку workspace";
+                    }
+                    Toast.makeText(MainActivity.this, message,
                             Toast.LENGTH_LONG).show();
                 }
             }
@@ -289,7 +292,11 @@ public final class MainActivity extends Activity {
                         });
                     } catch (Exception e) {
                         String message = e.getMessage();
-                        if (message == null || message.trim().isEmpty()) {
+                        if (e instanceof UnsupportedOperationException) {
+                            message = "Выбранная папка workspace не поддерживает "
+                                    + "создание файлов. Выберите папку в памяти "
+                                    + "устройства (например, Documents)";
+                        } else if (message == null || message.trim().isEmpty()) {
                             message = "Не удалось распаковать ZIP ("
                                     + e.getClass().getSimpleName() + ")";
                         }
