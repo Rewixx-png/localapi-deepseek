@@ -29,13 +29,13 @@ import java.util.zip.ZipInputStream;
  * WebView journal; the first milestone is a bootable terminal guest.
  */
 final class SandboxManager {
-    static final String VERSION = "ubuntu-1";
+    static final String VERSION = "ubuntu-2";
     static final String ASSET_URL =
             "https://github.com/Rewixx-png/localapi-deepseek/releases/download/"
-                    + "sandbox-ubuntu-1/ubuntu-sandbox.zip";
+                    + "sandbox-ubuntu-2/ubuntu-sandbox.zip";
     static final String ASSET_SHA =
-            "3d93a5c19e615a42a53249f29f9d7d87f94de44ea2a2fc08932011b5b8c77078";
-    static final long ASSET_SIZE = 50536774L;
+            "ab2d5073b5eff5b607e023abba65cb6f80244c79550f2bb803e09697638c7cd8";
+    static final long ASSET_SIZE = 52260768L;
 
     private final Activity activity;
     private final WebView web;
@@ -59,7 +59,8 @@ final class SandboxManager {
     static boolean installed(Context context) {
         File dir = dir(context);
         return new File(dir, "vmlinuz").isFile()
-                && new File(dir, "initramfs.cpio.gz").isFile();
+                && new File(dir, "initramfs.cpio.gz").isFile()
+                && new File(dir, "qemu-data/efi-virtio.rom").isFile();
     }
 
     JSONObject status() throws Exception {
@@ -139,6 +140,7 @@ final class SandboxManager {
                     "-smp", "2",
                     "-nographic",
                     "-no-reboot",
+                    "-L", new File(dir, "qemu-data").getAbsolutePath(),
                     "-kernel", new File(dir, "vmlinuz").getAbsolutePath(),
                     "-initrd", new File(dir, "initramfs.cpio.gz").getAbsolutePath(),
                     "-append", "console=ttyAMA0 rdinit=/init loglevel=7",
@@ -255,6 +257,12 @@ final class SandboxManager {
                     target = new File(dir, "vmlinuz");
                 } else if (name.endsWith("ubuntu-initramfs.cpio.gz")) {
                     target = new File(dir, "initramfs.cpio.gz");
+                } else if (name.startsWith("roms/")) {
+                    File qemuData = new File(dir, "qemu-data");
+                    if (!qemuData.isDirectory() && !qemuData.mkdirs()) {
+                        throw new IOException("Не удалось создать qemu-data");
+                    }
+                    target = new File(qemuData, new File(name).getName());
                 } else {
                     continue;
                 }
@@ -266,8 +274,9 @@ final class SandboxManager {
             }
         }
         if (!new File(dir, "vmlinuz").isFile()
-                || !new File(dir, "initramfs.cpio.gz").isFile()) {
-            throw new IOException("В архиве нет vmlinuz/initramfs");
+                || !new File(dir, "initramfs.cpio.gz").isFile()
+                || !new File(dir, "qemu-data/efi-virtio.rom").isFile()) {
+            throw new IOException("В архиве нет vmlinuz/initramfs/ROM");
         }
     }
 
