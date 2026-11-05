@@ -2186,8 +2186,8 @@
     var suffix;
     if (S.sandbox && S.sandbox.running) {
       suffix = "Ты в агентском режиме приложения. У тебя есть Linux-песочница Ubuntu "
-        + "(root, рабочая папка /workspace). Чтобы выполнить shell-команду, ответь "
-        + "РОВНО одной строкой в формате [[EXEC: команда]] и без другого текста. "
+        + "(root, рабочая папка /workspace). Для shell-команды ответь директивой "
+        + "[[EXEC: команда]] (можно вместе с коротким текстом). "
         + "После результата приложение продолжит диалог автоматически. Не запускай "
         + "интерактивные команды; таймаут 120 секунд. Не утверждай, что что-то "
         + "выполнил, пока не получил вывод. В /workspace могут быть ZIP-архивы: "
@@ -2311,11 +2311,14 @@
         video.src = src;
         wrap.appendChild(video);
       } else {
+        // Never hand arbitrary agent-controlled data back to the WebView as
+        // text/html (or SVG). Media is allow-listed above; everything else is
+        // a download with a neutral binary MIME.
         var file = document.createElement("a");
         file.className = "agent-file-link";
-        file.href = src;
+        file.href = "data:application/octet-stream;base64," + item.data;
         file.download = item.name || name;
-        file.textContent = "Файл: " + (item.name || name);
+        file.textContent = "Скачать файл: " + (item.name || name);
         wrap.appendChild(file);
       }
       bubble.appendChild(wrap);

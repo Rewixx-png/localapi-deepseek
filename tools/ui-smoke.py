@@ -203,7 +203,7 @@ MOCK = r"""
     readClipboard: () => 'sk-test-token-1234567890',
     openUrl: url => { window.__openedUrl = url; return '{}'; },
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.8.0', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.8.1', package: 'dev.localapi.deepseek' })
   };
 })();
 """
