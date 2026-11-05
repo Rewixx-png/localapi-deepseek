@@ -198,7 +198,7 @@ MOCK = r"""
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.6.39', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.7.0', package: 'dev.localapi.deepseek' })
   };
 })();
 """
