@@ -1,7 +1,7 @@
 {
-  "versionCode": 34,
-  "versionName": "1.6.20",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.20/LocalApiDeepSeek.apk",
-  "sha256": "e738a8ea8e5ad7a9618918b3e5a33c2697d52dcf89639c919e10451db2822f6f",
-  "notes": "Возвращён переключатель режима рассуждения в настройках API; таблицы Markdown; плавное появление стриминга; мультивыбор фото; неактивная кнопка отправки без текста и вложений. Параметры модели — в чате, системная инструкция — в правом меню."
+  "versionCode": 35,
+  "versionName": "1.6.21",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.21/LocalApiDeepSeek.apk",
+  "sha256": "8e0017b871304f65ca2c03558d62a32559c92be756b58be21cb37a672781bcc4",
+  "notes": "Название чата генерирует модель после первого ответа; в шапке — оценка контекста; подписи User/Model; время ответа, tok/s и время размышлений. Markdown-таблицы, плавный стриминг, мультивыбор фото и системная инструкция из 1.6.20."
 }

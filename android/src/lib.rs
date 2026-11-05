@@ -199,6 +199,22 @@ pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeSend(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeGenerateTitle(
+    mut env: JNIEnv,
+    _class: JClass,
+    chat_id: JString,
+    first_text: JString,
+) -> jstring {
+    let chat_id = text(&mut env, &chat_id);
+    let prompt = text(&mut env, &first_text);
+    let payload = match with_engine(|e| e.generate_title(&chat_id, &prompt)) {
+        Ok(title) => ok(json!({ "title": title })),
+        Err(e) => fail(e),
+    };
+    reply(&mut env, payload)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativePoll(
     mut env: JNIEnv,
     _class: JClass,

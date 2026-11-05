@@ -10,7 +10,8 @@ use crate::server::{Backend, LocalServer};
 use crate::store::Store;
 use crate::types::{
     AuthMode, Balance, ChatSummary, Conversation, Error, ErrorKind, Message, Poll,
-    SendStart, Source, Usage, DEFAULT_BASE_URL, MODEL_ID, MODEL_LABEL, MODEL_VERSION,
+    truncate_title, SendStart, Source, Usage, DEFAULT_BASE_URL, MODEL_ID, MODEL_LABEL,
+    MODEL_VERSION,
 };
 use crate::web::{self, WebApi, WebDelta, WEB_BASE_URL};
 
@@ -128,6 +129,29 @@ fn search_context(query: &str, hits: &[WebHit]) -> String {
         ));
     }
     out
+}
+
+fn clean_title(raw: &str) -> String {
+    let line = raw
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    let mut title = line
+        .trim_matches(|c: char| {
+            c.is_whitespace() || matches!(c, '"' | '\'' | '«' | '»' | '`' | '*' | '#')
+        })
+        .to_string();
+    for prefix in ["Название чата:", "Название:", "Заголовок:", "Title:"] {
+        if let Some(rest) = title.strip_prefix(prefix) {
+            title = rest.trim().to_string();
+        }
+    }
+    let title = title.trim_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(c, '"' | '\'' | '«' | '»' | '`' | '*' | '.' | ',' | ':')
+    });
+    truncate_title(title)
 }
 
 fn push_text(stream: &Stream, text: &str, reasoning: bool) -> Result<(), Error> {
@@ -505,6 +529,120 @@ impl Engine {
 
     pub fn send(&self, chat_id: &str, text: &str, effort: &str) -> Result<SendStart, Error> {
         self.send_opts(chat_id, text, MODEL_ID, true, false, Vec::new(), effort)
+    }
+
+    /// Asks the configured backend for a short human title for a chat. The
+    /// title request is deliberately cheap: flash model, no thinking, no
+    /// search, and it is not appended to the conversation.
+    pub fn generate_title(&self, chat_id: &str, first_text: &str) -> Result<String, Error> {
+        if !self.online.load(Ordering::Relaxed) {
+            return Err(Error::new(
+                ErrorKind::Network,
+                "Доступ к интернету выключен",
+            ));
+        }
+        let first_text = first_text.trim();
+        let first_text = if first_text.is_empty() {
+            "Сообщение с изображением"
+        } else {
+            first_text
+        };
+        // A title only needs the topic; do not resend a huge first prompt.
+        let title_source: String = first_text.chars().take(600).collect();
+        let (mode, api, web, store) = {
+            let inner = lock(&self.inner);
+            let mode = inner.mode.ok_or_else(|| {
+                Error::new(ErrorKind::Unauthorized, "Сначала добавьте токен DeepSeek")
+            })?;
+            if inner.api.is_none() && inner.web.is_none() {
+                return Err(Error::new(
+                    ErrorKind::Unauthorized,
+                    "Сначала добавьте токен DeepSeek",
+                ));
+            }
+            (
+                mode,
+                inner.api.clone(),
+                inner.web.clone(),
+                Arc::clone(&inner.store),
+            )
+        };
+
+        let instruction = "Придумай короткое название для чата по первому сообщению \
+пользователя. Ответь только названием: 2–5 слов, без кавычек, точки и пояснений.";
+        let mut raw = String::new();
+        match mode {
+            AuthMode::Api => {
+                let api = api.ok_or_else(|| {
+                    Error::new(ErrorKind::Unauthorized, "Сначала добавьте токен DeepSeek")
+                })?;
+                let history = vec![
+                    Message {
+                        role: "system".into(),
+                        content: instruction.to_string(),
+                        reasoning: String::new(),
+                        sources: Vec::new(),
+                        images: Vec::new(),
+                        ts: 0,
+                    },
+                    Message::user(title_source.clone()),
+                ];
+                let cancel = AtomicBool::new(false);
+                api.stream_chat(
+                    &history,
+                    MODEL_ID,
+                    false,
+                    "low",
+                    &cancel,
+                    &mut |delta| {
+                        if let Delta::Content(text) = delta {
+                            raw.push_str(&text);
+                        }
+                        Ok(())
+                    },
+                )?;
+            }
+            AuthMode::Web => {
+                let web = web.ok_or_else(|| {
+                    Error::new(ErrorKind::Unauthorized, "Сначала добавьте веб-токен DeepSeek")
+                })?;
+                let prompt = format!("{instruction}\n\nПервое сообщение пользователя:\n{title_source}");
+                let session = web.create_session()?;
+                let cancel = AtomicBool::new(false);
+                let result = web.stream_completion(
+                    &session,
+                    None,
+                    &prompt,
+                    Some("default"),
+                    false,
+                    false,
+                    &[],
+                    &cancel,
+                    &mut |delta| {
+                        if let WebDelta::Answer(text) = delta {
+                            raw.push_str(&text);
+                        }
+                        Ok(())
+                    },
+                );
+                let _ = web.delete_session(&session);
+                result?;
+            }
+        }
+
+        let title = clean_title(&raw);
+        if title.is_empty() {
+            return Err(Error::new(ErrorKind::Api, "Модель не вернула название чата"));
+        }
+        let mut conv = store.get(chat_id)?;
+        // Never overwrite a title that is no longer the automatic first-message
+        // fallback (for example if another title request already finished).
+        if conv.title.is_empty() || conv.title == truncate_title(first_text) {
+            conv.title = title.clone();
+            conv.updated_at = crate::types::now_ms();
+            store.save(&conv)?;
+        }
+        Ok(title)
     }
 
     pub fn send_opts(
