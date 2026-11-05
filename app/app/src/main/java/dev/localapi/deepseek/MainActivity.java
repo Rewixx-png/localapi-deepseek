@@ -515,8 +515,9 @@ public final class MainActivity extends Activity {
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             runOnUiThread(() -> {
                 try {
-                    startActivityForResult(Intent.createChooser(intent, "ZIP-архив"),
-                            REQ_AGENT_ZIP);
+                    // Open the system document picker directly, like the
+                    // official app: no chooser list with Drive/Files apps.
+                    startActivityForResult(intent, REQ_AGENT_ZIP);
                 } catch (Exception e) {
                     pendingAgentChatId = null;
                     Toast.makeText(MainActivity.this,
