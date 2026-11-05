@@ -320,6 +320,7 @@ final class SandboxManager {
                         }
                     }
                     output = output.replace(begin, "").replace(end, "").trim();
+                    output = cleanShellOutput(output, command);
                     if (output.length() > 16000) {
                         output = output.substring(0, 16000) + "\n[вывод обрезан]";
                     }
@@ -334,6 +335,25 @@ final class SandboxManager {
                 }
             }
         }, "sandbox-exec").start();
+    }
+
+    private static String cleanShellOutput(String output, String command) {
+        String echoed = command == null ? "" : command.trim();
+        StringBuilder cleaned = new StringBuilder(output.length());
+        boolean first = true;
+        for (String line : output.split("\n", -1)) {
+            String trimmed = line.trim();
+            // Interactive QEMU console prints its root prompt into the serial
+            // capture. It is not command output and confuses the model.
+            if (line.equals("#") || line.equals("# ")) continue;
+            if (first && line.startsWith("# ")) line = line.substring(2);
+            // The shell can echo the command line back on the serial console.
+            if (!echoed.isEmpty() && trimmed.equals(echoed)) continue;
+            if (trimmed.startsWith("__rc=$?;")) continue;
+            cleaned.append(line).append('\n');
+            if (!trimmed.isEmpty()) first = false;
+        }
+        return cleaned.toString().trim();
     }
 
     void stop() {
