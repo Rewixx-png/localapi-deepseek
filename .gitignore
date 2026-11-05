@@ -5,3 +5,6 @@ app/build/
 app/app/build/
 app/app/src/main/jniLibs/
 app/local.properties
+
+__pycache__/
+*.pyc
