@@ -19,6 +19,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -47,6 +51,8 @@ final class SandboxManager {
     private final Object serialLock = new Object();
     private final StringBuilder serial = new StringBuilder();
     private final Object execLock = new Object();
+    private final Object writeLock = new Object();
+    private volatile boolean networkConfigured;
     private static final String PREFS = "sandbox_config";
     private static final String KEY_RAM = "ram_mb";
     private static final String KEY_CORES = "cores";
@@ -202,7 +208,9 @@ final class SandboxManager {
                     "-initrd", new File(dir, "initramfs.cpio.gz").getAbsolutePath(),
                     "-append", "console=ttyAMA0 rdinit=/init loglevel=7",
                     "-virtfs", "local,path=" + workspace.getAbsolutePath()
-                            + ",mount_tag=workspace,security_model=none"
+                            + ",mount_tag=workspace,security_model=none",
+                    "-netdev", "user,id=net0",
+                    "-device", "virtio-net-device,netdev=net0"
             );
             pb.redirectErrorStream(true);
             pb.directory(activity.getCacheDir());
@@ -211,6 +219,7 @@ final class SandboxManager {
             pb.environment().put("TMPDIR", activity.getCacheDir().getAbsolutePath());
             process = pb.start();
             running = true;
+            networkConfigured = false;
             synchronized (serialLock) {
                 serial.setLength(0);
             }
@@ -233,6 +242,7 @@ final class SandboxManager {
                             }
                             serialLock.notifyAll();
                         }
+                        maybeConfigureNetwork();
                         runJs("window.__sandboxOutput && window.__sandboxOutput("
                                 + JSONObject.quote(text) + ")");
                     }
@@ -274,8 +284,10 @@ final class SandboxManager {
                 try {
                     String script = "printf '\\n" + begin + "\\n'; " + command
                             + "\n__rc=$?; printf '\\n" + end + "%s\\n' \"$__rc\"\n";
-                    process.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
-                    process.getOutputStream().flush();
+                    synchronized (writeLock) {
+                        process.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
+                        process.getOutputStream().flush();
+                    }
                     long deadline = System.currentTimeMillis() + 120_000;
                     int endAt = -1;
                     int code = -1;
@@ -356,6 +368,38 @@ final class SandboxManager {
         return cleaned.toString().trim();
     }
 
+    private void maybeConfigureNetwork() {
+        if (networkConfigured) return;
+        synchronized (serialLock) {
+            String tail = serial.length() > 8
+                    ? serial.substring(serial.length() - 8) : serial.toString();
+            if (!tail.endsWith("# ") && !tail.endsWith("#")) return;
+        }
+        networkConfigured = true;
+        Process p = process;
+        if (p == null) return;
+        // QEMU user-mode (slirp) provides this fixed network. Configure it once
+        // when the guest init shell is ready; the workspace shell is interactive.
+        SimpleDateFormat utc = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+        utc.setTimeZone(TimeZone.getTimeZone("UTC"));
+        String date = utc.format(new Date());
+        String setup = "/bin/busybox ifconfig lo up 2>/dev/null\n"
+                + "/bin/busybox ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
+                + "/bin/busybox route add default gw 10.0.2.2 eth0 2>/dev/null\n"
+                + "printf 'nameserver 10.0.2.3\\n' > /etc/resolv.conf\n"
+                + "date -u -s \"" + date + "\" 2>/dev/null\n"
+                + "echo __LOCALAPI_NET_READY__\n";
+        try {
+            synchronized (writeLock) {
+                p.getOutputStream().write(setup.getBytes(StandardCharsets.UTF_8));
+                p.getOutputStream().flush();
+            }
+            log("sandbox network configured (slirp 10.0.2.15)");
+        } catch (Exception e) {
+            log("sandbox network setup error: " + e.getMessage());
+        }
+    }
+
     void stop() {
         Process p = process;
         process = null;
@@ -368,8 +412,10 @@ final class SandboxManager {
         Process p = process;
         if (p == null) return;
         try {
-            p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
-            p.getOutputStream().flush();
+            synchronized (writeLock) {
+                p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
+                p.getOutputStream().flush();
+            }
         } catch (Exception e) {
             log("sandbox stdin error: " + e.getMessage());
         }

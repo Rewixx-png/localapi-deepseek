@@ -1,7 +1,7 @@
 {
-  "versionCode": 58,
-  "versionName": "1.9.1",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.9.1/LocalApiDeepSeek.apk",
-  "sha256": "799614698b7a0cdd6c761b5fa98bdbd128bc8598024448ab59be4e87ef66fd5d",
-  "notes": "Агент: убран root-prompt # из вывода терминала, добавлена защита от выдуманного «фильтра тегов»; HTML/SPA через встроенный BROWSER. Сохранены браузер с сессией, скриншоты в зрение Flash, медиа, единый блок команд и IME-анимация."
+  "versionCode": 59,
+  "versionName": "1.10.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.10.0/LocalApiDeepSeek.apk",
+  "sha256": "acd1d58c8b102b3e114d721e32e8c618a9f815b4343e427df71a2cfdfbf02c28",
+  "notes": "Песочница QEMU получила сеть slirp: eth0 10.0.2.15, шлюз/DNS 10.0.2.2/10.0.2.3, автоматическая установка UTC-времени при старте. После установки пакетов работают apt, curl и HTTPS. Плюс браузер агента и остальные возможности 1.9.x."
 }
