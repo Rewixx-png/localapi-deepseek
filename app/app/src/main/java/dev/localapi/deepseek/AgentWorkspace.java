@@ -2,6 +2,7 @@ package dev.localapi.deepseek;
 
 import android.content.Context;
 import android.net.Uri;
+import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -15,6 +16,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -240,6 +242,52 @@ final class AgentWorkspace {
         item.put("binary", binary);
         item.put("text", binary ? "" : new String(bytes, StandardCharsets.UTF_8));
         return item;
+    }
+
+    static JSONObject readMedia(Context context, String chatId, String name, int maxBytes)
+            throws IOException, JSONException {
+        if (!safeRelative(name)) throw new IOException("Некорректный путь файла");
+        File root = root(context, chatId);
+        File target = new File(root, name);
+        String rootPath = root.getCanonicalPath();
+        String targetPath = target.getCanonicalPath();
+        if (!targetPath.startsWith(rootPath + File.separator) || !target.isFile()) {
+            throw new IOException("Файл не найден");
+        }
+        int limit = Math.max(1, Math.min(maxBytes, 16 * 1024 * 1024));
+        long size = target.length();
+        if (size > limit) throw new IOException("Файл больше " + (limit / (1024 * 1024)) + " МБ");
+        ByteArrayOutputStream out = new ByteArrayOutputStream((int) Math.max(32, size));
+        try (InputStream in = new FileInputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+        }
+        byte[] bytes = out.toByteArray();
+        String mime = URLConnection.guessContentTypeFromName(name);
+        if (mime == null) mime = mimeFromExtension(name);
+        JSONObject item = new JSONObject();
+        item.put("name", name);
+        item.put("size", size);
+        item.put("mime", mime);
+        item.put("data", Base64.encodeToString(bytes, Base64.NO_WRAP));
+        return item;
+    }
+
+    private static String mimeFromExtension(String name) {
+        String lower = name.toLowerCase();
+        if (lower.endsWith(".mp3")) return "audio/mpeg";
+        if (lower.endsWith(".wav")) return "audio/wav";
+        if (lower.endsWith(".m4a")) return "audio/mp4";
+        if (lower.endsWith(".ogg") || lower.endsWith(".opus")) return "audio/ogg";
+        if (lower.endsWith(".mp4")) return "video/mp4";
+        if (lower.endsWith(".webm")) return "video/webm";
+        if (lower.endsWith(".mkv")) return "video/x-matroska";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".gif")) return "image/gif";
+        return "application/octet-stream";
     }
 
     private static boolean isBinary(byte[] bytes) {

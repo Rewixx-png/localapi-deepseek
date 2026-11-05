@@ -129,6 +129,10 @@ MOCK = r"""
       const text = name.endsWith('.py') ? "print('hello')\n" : "# Readme\nProject notes\n";
       return ok({ name: name, text: text, truncated: false, binary: false, size: text.length });
     },
+    readAgentMedia: (chatId, name) => ok({
+      name: name, size: 68, mime: 'image/png',
+      data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII='
+    }),
     deleteAgentFile: (chatId, name) => {
       st.agentFiles[chatId] = (st.agentFiles[chatId] || []).filter(f => f.name !== name);
       persist(); return ok('deleted');
@@ -197,8 +201,9 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
+    openUrl: url => { window.__openedUrl = url; return '{}'; },
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.7.0', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.8.0', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -579,7 +584,7 @@ with sync_playwright() as p:
           { role: 'user', content: 'Проверь папку', ts: 1, images: [] },
           { role: 'assistant', content: '[[EXEC: ls -la /workspace]]', reasoning: 'Проверяю папку', sources: [], ts: 2 },
           { role: 'user', content: '[TOOL_RESULT]\\nexit code: 0\\nREADME.md\\n\\nПродолжай. Если нужна ещё команда — ответь строкой [[EXEC: ...]].', ts: 3, images: [] },
-          { role: 'assistant', content: 'Готово', reasoning: 'Файл найден', sources: [], ts: 4 }
+          { role: 'assistant', content: 'Готово [[SEND: /workspace/pic.png]] [[BROWSE: test query]]', reasoning: 'Файл найден', sources: [], ts: 4 }
         ]
       });
       localStorage.setItem('__mock', JSON.stringify(m));
@@ -590,11 +595,16 @@ with sync_playwright() as p:
     page.wait_for_timeout(300)
     page.click("#agent-mode")
     page.wait_for_selector(".msg.tool", timeout=3000)
-    assert page.locator(".msg.tool").count() == 2
-    tool_texts = page.locator(".msg.tool").all_inner_texts()
-    assert any("ls -la /workspace" in text for text in tool_texts), tool_texts
-    assert any("README.md" in text for text in tool_texts), tool_texts
-    assert page.locator(".msg.assistant .bubble .content").count() >= 1
+    assert page.locator(".msg.tool").count() == 1
+    assert page.locator(".tool-body").is_hidden()
+    page.click(".tool-toggle")
+    assert page.locator(".tool-body").is_visible()
+    tool_text = page.inner_text(".msg.tool")
+    assert "ls -la /workspace" in tool_text, tool_text
+    assert "README.md" in tool_text, tool_text
+    assert "exit 0" in page.inner_text(".tool-status")
+    assert page.locator(".agent-media img").count() == 1
+    assert "test query" in page.inner_text(".agent-browser-link")
     page.evaluate("document.querySelector('#drawer-close').click()")
     page.wait_for_timeout(380)
     page.screenshot(path=f"{SHOTS}/18-agent-history.png")
