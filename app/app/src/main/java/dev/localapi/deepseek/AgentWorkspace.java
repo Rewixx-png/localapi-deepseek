@@ -51,6 +51,59 @@ final class AgentWorkspace {
         return root;
     }
 
+    static String copyZip(Context context, String chatId, Uri uri) throws IOException {
+        File root = root(context, chatId);
+        String name = "project.zip";
+        try (android.database.Cursor cursor = context.getContentResolver().query(
+                uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME},
+                null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    String candidate = cursor.getString(index);
+                    if (candidate != null && !candidate.trim().isEmpty()) {
+                        name = candidate.trim();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        name = name.replace('/', '_').replace('\\', '_').replace('\0', '_');
+        if (name.length() > 96) name = name.substring(name.length() - 96);
+        if (!name.toLowerCase().endsWith(".zip")) name += ".zip";
+        File target = new File(root, name);
+        String rootPath = root.getCanonicalPath();
+        String targetPath = target.getCanonicalPath();
+        if (!targetPath.startsWith(rootPath + File.separator)) {
+            throw new IOException("Некорректное имя ZIP");
+        }
+        InputStream in = context.getContentResolver().openInputStream(uri);
+        if (in == null) throw new IOException("Не удалось открыть ZIP");
+        long total = 0;
+        boolean copied = false;
+        try (InputStream source = in; OutputStream out = new FileOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = source.read(buffer)) > 0) {
+                total += read;
+                if (total > MAX_ZIP_BYTES) throw new IOException("ZIP больше 40 МБ");
+                out.write(buffer, 0, read);
+            }
+            copied = true;
+        } finally {
+            if (!copied) target.delete();
+        }
+        try (InputStream check = new FileInputStream(target)) {
+            byte[] signature = new byte[4];
+            int count = check.read(signature);
+            if (count < 2 || signature[0] != 'P' || signature[1] != 'K') {
+                target.delete();
+                throw new IOException("Выбранный файл не является ZIP");
+            }
+        }
+        return name;
+    }
+
     static JSONArray list(Context context, String chatId) {
         File root = root(context, chatId);
         JSONArray out = new JSONArray();

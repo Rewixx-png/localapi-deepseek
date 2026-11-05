@@ -278,10 +278,9 @@ public final class MainActivity extends Activity {
                 Uri uri = data.getData();
                 new Thread(() -> {
                     try {
-                        String summary = SafAgentWorkspace.hasRoot(MainActivity.this)
-                                ? SafAgentWorkspace.importZip(
-                                        MainActivity.this, chatId, title == null ? "" : title, uri)
-                                : AgentWorkspace.importZip(MainActivity.this, chatId, uri);
+                        String name = AgentWorkspace.copyZip(
+                                MainActivity.this, chatId, uri);
+                        String summary = "ZIP добавлен в /workspace: " + name;
                         runOnUiThread(() -> {
                             Toast.makeText(MainActivity.this, summary,
                                     Toast.LENGTH_SHORT).show();
@@ -690,9 +689,6 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String listAgentFiles(String chatId) {
             try {
-                if (SafAgentWorkspace.hasRoot(MainActivity.this)) {
-                    return agentOk(SafAgentWorkspace.list(MainActivity.this, chatId, ""));
-                }
                 return agentOk(AgentWorkspace.list(MainActivity.this, chatId));
             } catch (Exception e) {
                 return agentFail(e);
@@ -702,10 +698,6 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String readAgentFile(String chatId, String name) {
             try {
-                if (SafAgentWorkspace.hasRoot(MainActivity.this)) {
-                    return agentOk(SafAgentWorkspace.read(
-                            MainActivity.this, chatId, "", name, 128 * 1024));
-                }
                 return agentOk(AgentWorkspace.read(
                         MainActivity.this, chatId, name, 128 * 1024));
             } catch (Exception e) {
@@ -716,9 +708,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String deleteAgentFile(String chatId, String name) {
             try {
-                boolean deleted = SafAgentWorkspace.hasRoot(MainActivity.this)
-                        ? SafAgentWorkspace.delete(MainActivity.this, chatId, "", name)
-                        : AgentWorkspace.delete(MainActivity.this, chatId, name);
+                boolean deleted = AgentWorkspace.delete(MainActivity.this, chatId, name);
                 if (!deleted) throw new IOException("Не удалось удалить файл");
                 return agentOk("Файл удалён");
             } catch (Exception e) {
@@ -729,11 +719,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String clearAgentWorkspace(String chatId) {
             try {
-                if (SafAgentWorkspace.hasRoot(MainActivity.this)) {
-                    SafAgentWorkspace.clear(MainActivity.this, chatId, "");
-                } else {
-                    AgentWorkspace.clear(MainActivity.this, chatId);
-                }
+                AgentWorkspace.clear(MainActivity.this, chatId);
                 return agentOk("Workspace очищен");
             } catch (Exception e) {
                 return agentFail(e);
