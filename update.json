@@ -1,7 +1,7 @@
 {
-  "versionCode": 47,
-  "versionName": "1.6.33",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.33/LocalApiDeepSeek.apk",
-  "sha256": "68d10ca5cc534033f39714c70952416e4892e7a6aa5473d93d9db44d8b19bd0e",
-  "notes": "QEMU sandbox fix: Ubuntu asset revision 2 with efi-virtio.rom and QEMU ROM data, -L qemu-data, unpatched libc++ (GNU property warning), installed check requires ROM. Переустанови песочницу: старый bundle без ROM не запустится."
+  "versionCode": 48,
+  "versionName": "1.6.34",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.34/LocalApiDeepSeek.apk",
+  "sha256": "f8d0df5c756a029cca351f33278094c25f79fdfd59a805887b47b2319ff070fb",
+  "notes": "Agent tool-loop: модель может выполнять shell-команды в Ubuntu sandbox через [[EXEC:...]], результаты возвращаются в модель (до 6 команд). Отдельный полноэкранный терминал Ubuntu с вводом команд, отдельно от чата. Песочница Ubuntu revision 2 с ROM."
 }
