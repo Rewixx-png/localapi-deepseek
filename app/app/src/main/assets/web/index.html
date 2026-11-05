@@ -251,6 +251,26 @@
     </button>
   </aside>
 
+  <div id="workspace-scrim" class="dialog-scrim hidden">
+    <div class="dialog workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+      <div class="model-head">
+        <h2 id="workspace-title">Workspace</h2>
+        <button id="workspace-close" class="icon-btn" aria-label="Закрыть" type="button">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <p class="fine" id="workspace-current">Папка приложения</p>
+      <div class="workspace-options">
+        <button id="workspace-internal" class="btn filled wide" type="button">Папка приложения</button>
+        <button id="workspace-open" class="btn tonal wide hidden" type="button">Открыть папку на устройстве</button>
+        <button id="workspace-saf" class="btn tonal wide" type="button">Выбрать папку на устройстве</button>
+      </div>
+      <div class="dialog-actions">
+        <button id="workspace-done" class="btn filled" type="button">Готово</button>
+      </div>
+    </div>
+  </div>
+
   <div id="tools-scrim" class="dialog-scrim hidden">
     <div class="dialog tools-dialog" role="dialog" aria-modal="true" aria-labelledby="tools-title">
       <div class="model-head">

@@ -98,6 +98,7 @@ MOCK = r"""
     ensureAgentFolder: () => ok({ name: 'AI-заголовок' }),
     openAgentFolder: () => {},
     renameAgentFolder: () => ok(true),
+    useInternalAgentWorkspace: () => ok('ok'),
     generateTitle: (chatId, text) => {
       const c = st.chats.find(x => x.id === chatId);
       if (!c) return ok(null);
@@ -191,7 +192,7 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
-    appInfo: () => JSON.stringify({ version: '1.6.29', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.30', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -497,7 +498,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(400)
     assert page.is_visible("#agent-bar")
     assert page.inner_text("#agent-mode-label") == "Обычные чаты"
-    assert "Открыть папку" in page.inner_text("#agent-folder")
+    assert "Папка" in page.inner_text("#agent-folder")
     page.evaluate("window.__nativeAgentZip && window.__nativeAgentZip()")
     page.wait_for_selector(".agent-file", timeout=3000)
     assert page.locator(".agent-file").count() == 2

@@ -64,6 +64,7 @@
     setComposerAgent: function (agent) { return Native.setComposerAgent(agent); },
     agentRootInfo: function () { return Native.agentRootInfo(); },
     ensureAgentFolder: function (chatId, title) { return Native.ensureAgentFolder(chatId, title); },
+    useInternalAgentWorkspace: function () { return Native.useInternalAgentWorkspace(); },
     getChat: function (id) { return Native.getChat(id); },
     deleteChat: function (id) { return Native.deleteChat(id); },
     send: function (chatId, text, model, effort, thinking, search, imagesJson, systemPrompt) {
@@ -1081,7 +1082,8 @@
     var right = $("#right-drawer").classList.contains("open");
     var model = !$("#model-scrim").classList.contains("hidden");
     var tools = !$("#tools-scrim").classList.contains("hidden");
-    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools);
+    var workspace = !$("#workspace-scrim").classList.contains("hidden");
+    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools && !workspace);
   }
 
   function openImageViewer(src) {
@@ -1926,8 +1928,43 @@
       S.agentRoot = { configured: false, name: "" };
     }
     var button = $("#agent-folder");
-    if (button) {
-      button.textContent = S.agentRoot.configured ? "Открыть папку" : "Выбрать папку";
+    if (button) button.textContent = "Папка";
+    var current = $("#workspace-current");
+    if (current) {
+      current.textContent = S.agentRoot.configured
+        ? "Папка на устройстве: " + (S.agentRoot.name || "выбрана")
+        : "Папка приложения (приватно)";
+    }
+    var open = $("#workspace-open");
+    if (open) open.classList.toggle("hidden", !S.agentRoot.configured);
+  }
+
+  function openWorkspaceDialog() {
+    closeTools();
+    closeModelSheet();
+    if ($("#right-drawer").classList.contains("open")) closeSystemDrawer();
+    refreshAgentRoot();
+    var scrim = $("#workspace-scrim");
+    if (!scrim) return;
+    scrim.classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeWorkspaceDialog() {
+    var scrim = $("#workspace-scrim");
+    if (!scrim) return;
+    scrim.classList.add("hidden");
+    syncNativeComposer();
+  }
+
+  function useInternalWorkspace() {
+    try {
+      invoke("useInternalAgentWorkspace");
+      refreshAgentRoot();
+      refreshAgentFiles();
+      toast("Используем папку приложения");
+    } catch (e) {
+      toast(e.message);
     }
   }
 
@@ -2077,7 +2114,7 @@
       change.type = "button";
       change.className = "btn text small danger";
       change.textContent = "Сменить папку";
-      change.addEventListener("click", chooseAgentRoot);
+      change.addEventListener("click", openWorkspaceDialog);
       box.appendChild(change);
       return;
     }
@@ -2214,7 +2251,6 @@
       renderMessages();
     }
     refreshContextMeter();
-    maybePromptAgentRoot();
   }
 
   function openTools() {
@@ -2453,7 +2489,7 @@
     $("#agent-mode").addEventListener("click", function () {
       setAgentMode(!S.agentMode);
     });
-    $("#agent-folder").addEventListener("click", openAgentWorkspaceFolder);
+    $("#agent-folder").addEventListener("click", openWorkspaceDialog);
     $("#agent-tools").addEventListener("click", openTools);
     $("#right-agent-tools").addEventListener("click", openTools);
     $("#agent-clear").addEventListener("click", function () {
@@ -2474,10 +2510,21 @@
     $("#tools-done").addEventListener("click", closeTools);
     $("#tools-workspace").addEventListener("click", function () {
       closeTools();
-      chooseAgentRoot();
+      openWorkspaceDialog();
     });
     $("#tools-scrim").addEventListener("click", function (e) {
       if (e.target === this) closeTools();
+    });
+    $("#workspace-close").addEventListener("click", closeWorkspaceDialog);
+    $("#workspace-done").addEventListener("click", closeWorkspaceDialog);
+    $("#workspace-scrim").addEventListener("click", function (e) {
+      if (e.target === this) closeWorkspaceDialog();
+    });
+    $("#workspace-internal").addEventListener("click", useInternalWorkspace);
+    $("#workspace-open").addEventListener("click", openAgentWorkspaceFolder);
+    $("#workspace-saf").addEventListener("click", function () {
+      closeWorkspaceDialog();
+      chooseAgentRoot();
     });
     input.addEventListener("input", function () {
       refreshSendButton();
@@ -3127,6 +3174,7 @@
   };
 
   window.__onAndroidBack = function () {
+    if (!$("#workspace-scrim").classList.contains("hidden")) { closeWorkspaceDialog(); return true; }
     if (!$("#tools-scrim").classList.contains("hidden")) { closeTools(); return true; }
     if (!$("#model-scrim").classList.contains("hidden")) { closeModelSheet(); return true; }
     if ($("#right-drawer").classList.contains("open")) { closeSystemDrawer(); return true; }

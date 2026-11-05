@@ -538,6 +538,12 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String useInternalAgentWorkspace() {
+            SafAgentWorkspace.clearRoot(MainActivity.this);
+            return agentOk("ok");
+        }
+
+        @JavascriptInterface
         public void chooseAgentRoot() {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
