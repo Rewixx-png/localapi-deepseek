@@ -1,7 +1,7 @@
 {
-  "versionCode": 57,
-  "versionName": "1.9.0",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.9.0/LocalApiDeepSeek.apk",
-  "sha256": "9b12d4e6c08c33afe04f55690f2b055ae7595f3af89962d4a72325ef8171bf0f",
-  "notes": "Встроенный браузер агента с сессией: open/click/type/scroll/extract/screenshot/back/forward/reload. Скриншоты передаются модели (Flash) для мультимодального зрения. Медиа из /workspace через [[SEND]], команда+вывод одним сворачиваемым блоком."
+  "versionCode": 58,
+  "versionName": "1.9.1",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.9.1/LocalApiDeepSeek.apk",
+  "sha256": "799614698b7a0cdd6c761b5fa98bdbd128bc8598024448ab59be4e87ef66fd5d",
+  "notes": "Агент: убран root-prompt # из вывода терминала, добавлена защита от выдуманного «фильтра тегов»; HTML/SPA через встроенный BROWSER. Сохранены браузер с сессией, скриншоты в зрение Flash, медиа, единый блок команд и IME-анимация."
 }

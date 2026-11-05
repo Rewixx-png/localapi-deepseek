@@ -10,8 +10,8 @@ android {
         applicationId 'dev.localapi.deepseek'
         minSdk 26
         targetSdk 35
-        versionCode 57
-        versionName '1.9.0'
+        versionCode 58
+        versionName '1.9.1'
     }
 
     buildTypes {
