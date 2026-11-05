@@ -197,7 +197,8 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
-    appInfo: () => JSON.stringify({ version: '1.6.36', package: 'dev.localapi.deepseek' })
+    restoreComposerText: text => { window.__restored = text; },
+    appInfo: () => JSON.stringify({ version: '1.6.37', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -226,6 +227,9 @@ with sync_playwright() as p:
 
     page.click("#onboard-continue")
     page.wait_for_selector("#screen-token.active")
+    page.wait_for_timeout(300)
+    page.evaluate("window.__restored = ''; window.__nativeSend(JSON.stringify({text: 'черновик', images: []}))")
+    assert page.evaluate("window.__restored") == "черновик"
     page.screenshot(path=f"{SHOTS}/03-token.png")
 
     page.fill("#token-input", "sk-invalid-token")
@@ -245,8 +249,13 @@ with sync_playwright() as p:
     page.wait_for_selector(".empty h2")
     page.screenshot(path=f"{SHOTS}/06-chat-empty.png")
 
-    page.click("#search-chip")
+    page.click("#system-btn")
+    page.wait_for_selector("#right-drawer.open")
+    page.wait_for_timeout(500)
+    page.click("#search-chip", force=True)
     assert "active" in (page.get_attribute("#search-chip", "class") or "")
+    page.click("#right-drawer-close")
+    page.wait_for_timeout(380)
     page.fill("#input", "Объясни разницу между процессами и потоками")
     page.click("#send-btn")
     page.wait_for_timeout(260)
@@ -328,7 +337,10 @@ with sync_playwright() as p:
     # device/server/account groups.
     page.click("#settings-close")
     page.wait_for_timeout(300)
-    page.click("#model-chip")
+    page.click("#system-btn")
+    page.wait_for_selector("#right-drawer.open")
+    page.wait_for_timeout(500)
+    page.click("#model-chip", force=True)
     page.wait_for_selector("#model-scrim:not(.hidden)")
     page.click('#model-select button[data-model="deepseek-v4-pro"]')
     assert "V4 Pro" in (page.text_content("#sheet-model") or "")
@@ -344,7 +356,6 @@ with sync_playwright() as p:
     assert "V4 Pro" in page.inner_text("#model-chip-label")
 
     # System instruction is a right-side drawer and travels with the next send.
-    page.click("#system-btn")
     page.wait_for_selector("#right-drawer.open")
     page.wait_for_timeout(380)
     page.fill("#system-prompt", "Отвечай кратко")
@@ -459,10 +470,15 @@ with sync_playwright() as p:
     assert "веб-сессия" in page.inner_text("#result-mode")
     page.click("#token-open")
     page.wait_for_selector("#screen-chat.active")
-    page.click("#model-chip")
+    page.click("#system-btn")
+    page.wait_for_selector("#right-drawer.open")
+    page.wait_for_timeout(500)
+    page.click("#model-chip", force=True)
     page.wait_for_selector("#model-scrim:not(.hidden)")
     assert page.is_hidden("#model-block")
     page.click("#model-done")
+    page.click("#right-drawer-close")
+    page.wait_for_timeout(380)
     page.fill("#input", "Проверка веб-режима")
     page.click("#send-btn")
     page.wait_for_timeout(1900)
@@ -503,14 +519,16 @@ with sync_playwright() as p:
     page.wait_for_timeout(400)
     assert page.is_visible("#agent-bar")
     assert page.inner_text("#agent-mode-label") == "Обычные чаты"
-    assert "Папка" in page.inner_text("#agent-folder")
     page.evaluate("window.__nativeAgentZip && window.__nativeAgentZip()")
     page.wait_for_selector(".agent-file", timeout=3000)
     assert page.locator(".agent-file").count() == 2
     page.locator(".agent-file button").first.click()
     page.wait_for_timeout(250)
     assert page.locator(".agent-file").count() == 1
-    page.click("#agent-tools")
+    page.click("#system-btn")
+    page.wait_for_selector("#right-drawer.open")
+    page.wait_for_timeout(500)
+    page.click("#right-agent-tools")
     page.wait_for_selector("#tools-scrim:not(.hidden)")
     page.wait_for_timeout(350)
     assert "Python" in page.inner_text("#tools-scrim")
@@ -518,6 +536,8 @@ with sync_playwright() as p:
     page.screenshot(path=f"{SHOTS}/17-agent-tools.png")
     page.click("#tools-done")
     assert page.is_hidden("#tools-scrim")
+    page.evaluate("document.querySelector('#right-drawer-close').click()")
+    page.wait_for_timeout(380)
     page.screenshot(path=f"{SHOTS}/17-agent.png")
     page.fill("#input", "Что в файлах?")
     page.click("#send-btn")

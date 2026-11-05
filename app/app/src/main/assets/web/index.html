@@ -156,26 +156,9 @@
 
   <div id="agent-bar" class="agent-bar hidden">
     <div class="agent-bar-text"><b>Агент</b><span>workspace · ZIP через скрепку</span></div>
-    <button id="agent-folder" class="btn tonal small" type="button">Выбрать папку</button>
-    <button id="agent-tools" class="btn tonal small" type="button">Инструменты</button>
-    <button id="agent-clear" class="btn text small danger" type="button">Очистить</button>
   </div>
   <div id="agent-files" class="agent-files hidden" aria-live="polite"></div>
 
-  <div class="chips" id="chips">
-    <button id="model-chip" class="chip model-chip" type="button" aria-label="Модель и параметры">
-      <svg class="icon"><use href="#i-bolt"></use></svg>
-      <span id="model-chip-label">Flash 1017</span>
-    </button>
-    <button id="reasoning-chip" class="chip" type="button">
-      <svg class="icon"><use href="#i-bolt"></use></svg>
-      <span>DeepThink</span>
-    </button>
-    <button id="search-chip" class="chip" type="button">
-      <svg class="icon"><use href="#i-search"></use></svg>
-      <span>Поиск</span>
-    </button>
-  </div>
 
   <div id="offline-banner" class="banner hidden">
     <svg class="icon"><use href="#i-wifi-off"></use></svg>
@@ -230,25 +213,35 @@
   </aside>
 
   <div id="right-backdrop" class="scrim hidden"></div>
-  <aside id="right-drawer" class="drawer right" aria-label="Системная инструкция">
+  <aside id="right-drawer" class="drawer right" aria-label="Меню">
     <div class="drawer-head">
       <div class="drawer-brand">
         <span class="brand-badge"><svg class="brand-icon"><use href="#i-tune"></use></svg></span>
-        <span>Системная инструкция</span>
+        <span>Меню</span>
       </div>
       <button id="right-drawer-close" class="icon-btn" aria-label="Закрыть" type="button">
         <svg class="icon"><use href="#i-close"></use></svg>
       </button>
     </div>
-    <p class="drawer-help">Инструкция применяется ко всем сообщениям на этом устройстве.
-      Хранится только на устройстве.</p>
+    <div class="drawer-label">Чат</div>
+    <div class="chips drawer-chips" id="chips">
+      <button id="model-chip" class="chip model-chip" type="button" aria-label="Модель и параметры">
+        <svg class="icon"><use href="#i-bolt"></use></svg>
+        <span id="model-chip-label">Flash 1017</span>
+      </button>
+      <button id="search-chip" class="chip" type="button">
+        <svg class="icon"><use href="#i-search"></use></svg>
+        <span>Поиск</span>
+      </button>
+    </div>
+    <button id="right-agent-tools" class="btn tonal wide hidden" type="button">
+      Инструменты агента
+    </button>
+    <div class="drawer-label">Системная инструкция</div>
     <textarea id="system-prompt" class="system-prompt" rows="8"
               placeholder="Например: отвечай кратко, по делу и с примерами кода"></textarea>
     <p class="fine drawer-fine">Можно очистить поле и сохранить, чтобы отключить инструкцию.</p>
     <button id="system-save" class="btn filled wide" type="button">Сохранить</button>
-    <button id="right-agent-tools" class="btn tonal wide hidden" type="button">
-      Инструменты агента
-    </button>
   </aside>
 
   <div id="sandbox-scrim" class="dialog-scrim hidden">
@@ -330,8 +323,9 @@
           <svg class="icon"><use href="#i-close"></use></svg>
         </button>
       </div>
-      <p class="fine">Выполнение кода в этой версии отключено: Agent mode хранит ZIP и файлы
-        workspace, но не запускает их. Рантаймы подключим следующим этапом.</p>
+      <p class="fine">Shell-команды выполняются в QEMU Ubuntu внутри /workspace.
+        Python/Java/Node отдельно в APK не встроены: установите их в песочнице
+        или подключите рантаймы позже.</p>
       <div class="card tools-list">
         <div class="list-item">
           <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
@@ -351,7 +345,6 @@
           <span class="pill">скоро</span>
         </div>
       </div>
-      <button id="tools-workspace" class="btn tonal wide" type="button">Сменить папку workspace</button>
       <button id="tools-journal" class="btn tonal wide" type="button">Журнал агента</button>
       <button id="tools-sandbox" class="btn tonal wide" type="button">Песочница Ubuntu (QEMU)</button>
       <button id="tools-terminal" class="btn tonal wide" type="button">Терминал Ubuntu</button>

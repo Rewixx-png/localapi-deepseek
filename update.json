@@ -1,7 +1,7 @@
 {
-  "versionCode": 50,
-  "versionName": "1.6.36",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.36/LocalApiDeepSeek.apk",
-  "sha256": "d4f13ed2831911681915930064512565114667577460cccef8cb2438262eb5bc",
-  "notes": "Песочница: выбор RAM и числа ядер с ограничением по устройству (не больше доступного). Нужен перезапуск песочницы. Tool-loop и полноэкранный терминал из 1.6.34/1.6.35."
+  "versionCode": 51,
+  "versionName": "1.6.37",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.37/LocalApiDeepSeek.apk",
+  "sha256": "1eb3004e9dc750e1a1dffb975c24d24db9c904bf8a45082f8cd794c3783a6fff",
+  "notes": "ZIP в агентском режиме копируется в /workspace и распаковывается агентом в песочнице; правый бургер-меню с чипами модели/поиска и инструментами; убраны Папка/Очистить и синяя кнопка DeepThink; черновик не теряется при отклонённой отправке."
 }
