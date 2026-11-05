@@ -1,7 +1,7 @@
 {
-  "versionCode": 54,
-  "versionName": "1.7.0",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.7.0/LocalApiDeepSeek.apk",
-  "sha256": "ca79409f930b1fb215bb8f4a5cba2237967e55c6206918f58544b702b99e7d82",
-  "notes": "IME-анимация: панель ввода и нижний отступ ленты обновляются на каждом кадре открытия/закрытия клавиатуры, без отложенного прыжка. Плюс кнопка отправки с пружинной анимацией, восстановление истории tool-loop и чистые инструменты."
+  "versionCode": 55,
+  "versionName": "1.8.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.8.0/LocalApiDeepSeek.apk",
+  "sha256": "bc8fdff42312c9956a09f88a2495341d10c1d88cf93b10829cf551a48b6f6fcc",
+  "notes": "Агент: браузер/поиск через [[BROWSE]], отправка медиа из /workspace (фото, аудио, видео до 12 МБ) через [[SEND]]; команда и вывод в одном сворачиваемом блоке. Плюс синхронная IME-анимация, пружинная кнопка отправки и восстановление истории tool-loop."
 }

@@ -36,7 +36,11 @@ PoW, потоковый SSE с рассуждениями и локальная 
   ZIP загружается **скрепкой в поле ввода** (в агентском режиме она выбирает
   ZIP, в обычном — фото): файл копируется в `/workspace` (≤ 40 МБ), агент
   видит его в списке и сам распаковывает. Команды и результаты tool-loop
-  сохраняются в истории и восстанавливаются после перезахода в чат. Публичная SAF-папка и кнопки
+  сохраняются в истории и восстанавливаются после перезахода в чат. Каждая
+  команда с выводом — один сворачиваемый блок. Агент может отправить в чат
+  готовое медиа из `/workspace` (`[[SEND: /workspace/file]]`, фото/аудио/видео
+  до 12 МБ) и открыть системный браузер/поиск (`[[BROWSE: запрос]]`).
+  Публичная SAF-папка и кнопки
   «Папка»/«Очистить» убраны — весь обмен идёт через workspace песочницы;
   удаление файлов доступно агенту и через терминал. Кнопка «Инструменты
   агента» находится в правом меню; Python/Java/Node агент устанавливает сам.
@@ -237,7 +241,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.7.0-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.8.0-debug.apk`.
 
 ## Обновления
 
@@ -259,9 +263,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 54,
-  "versionName": "1.7.0",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.7.0/LocalApiDeepSeek.apk",
+  "versionCode": 55,
+  "versionName": "1.8.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.8.0/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }

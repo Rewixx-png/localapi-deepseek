@@ -704,6 +704,16 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String readAgentMedia(String chatId, String name) {
+            try {
+                return agentOk(AgentWorkspace.readMedia(
+                        MainActivity.this, chatId, name, 12 * 1024 * 1024));
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
         public String readAgentFile(String chatId, String name) {
             try {
                 return agentOk(AgentWorkspace.read(
