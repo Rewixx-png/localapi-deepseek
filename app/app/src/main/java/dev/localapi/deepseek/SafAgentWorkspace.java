@@ -67,7 +67,7 @@ final class SafAgentWorkspace {
         return root != null && root.exists() && root.isDirectory();
     }
 
-    static void setRoot(Context context, Uri uri) {
+    static void setRoot(Context context, Uri uri) throws IOException {
         if (uri == null) throw new IllegalArgumentException("Нет папки");
         int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
@@ -78,6 +78,11 @@ final class SafAgentWorkspace {
             // survive while the activity stays alive, but info() will report
             // the root as unavailable after a restart.
         }
+        DocumentFile root = DocumentFile.fromTreeUri(context, uri);
+        if (root == null || !root.exists() || !root.isDirectory()) {
+            throw new IOException("Система не дала доступ к выбранной папке");
+        }
+        verifyWritable(context, root);
         prefs(context).edit().putString(KEY_ROOT, uri.toString()).apply();
     }
 
@@ -305,7 +310,16 @@ final class SafAgentWorkspace {
 
     private static void verifyWritable(Context context, DocumentFile dir) throws IOException {
         String probeName = "write-test-" + System.nanoTime() + ".tmp";
-        DocumentFile probe = dir.createFile("application/octet-stream", probeName);
+        DocumentFile probe;
+        try {
+            probe = dir.createFile("application/octet-stream", probeName);
+        } catch (UnsupportedOperationException e) {
+            throw new IOException("Выбранная папка не поддерживает создание файлов. "
+                    + "Выберите папку в памяти устройства (например, Documents)", e);
+        } catch (Exception e) {
+            throw new IOException("Не удалось создать файл в выбранной папке. "
+                    + "Выберите папку в памяти устройства", e);
+        }
         if (probe == null) {
             throw new IOException("Выбранная папка только для чтения. Выберите папку "
                     + "в памяти устройства (например, Documents)");
