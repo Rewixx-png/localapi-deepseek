@@ -1,5 +1,8 @@
 package dev.localapi.deepseek;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Intent;
@@ -20,7 +23,9 @@ import android.view.View;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.animation.AnticipateInterpolator;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.webkit.WebView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -65,6 +70,8 @@ final class NativeComposer {
     private boolean light;
     private boolean agentMode;
     private boolean visible;
+    private boolean sendShown;
+    private ValueAnimator sendAnimator;
 
     NativeComposer(Activity activity, WebView web) {
         this.activity = activity;
@@ -166,9 +173,15 @@ final class NativeComposer {
         send.setContentDescription("Отправить");
         send.setOnClickListener(v -> send());
         LinearLayout.LayoutParams sendParams =
-                new LinearLayout.LayoutParams(dp(48), dp(48));
-        sendParams.setMarginStart(dp(8));
+                new LinearLayout.LayoutParams(0, dp(48));
+        sendParams.setMarginStart(0);
         row.addView(send, sendParams);
+        // Empty composer shows only the attach button. updateSendButton()
+        // reveals this view with a spring once there is text or an image.
+        send.setVisibility(View.GONE);
+        send.setAlpha(0f);
+        send.setScaleX(0.55f);
+        send.setScaleY(0.55f);
 
         applyTheme();
         updateSendButton();
@@ -479,6 +492,7 @@ final class NativeComposer {
         int onPrimary = Color.parseColor(light ? "#FFFFFF" : "#0A305F");
         int error = Color.parseColor(light ? "#BA1A1A" : "#FFB4AB");
         int onError = Color.parseColor(light ? "#FFFFFF" : "#690005");
+        boolean hasText = input.getText().toString().trim().length() > 0;
         if (streaming) {
             send.setImageResource(R.drawable.ic_stop_native);
             send.setBackground(rounded(error, 16));
@@ -490,9 +504,74 @@ final class NativeComposer {
             send.setBackground(rounded(primary, 16));
             send.setColorFilter(onPrimary);
             send.setContentDescription("Отправить");
-            boolean hasText = input.getText().toString().trim().length() > 0;
             send.setEnabled(online && (hasText || !pending.isEmpty()));
         }
+        setSendVisible(streaming || hasText || !pending.isEmpty());
+    }
+
+    /**
+     * Spring-reveals the send button on the first character and collapses the
+     * slot again when the draft becomes empty. The width is animated alongside
+     * alpha/scale so the input expands into the vacated space without a jump.
+     */
+    private void setSendVisible(boolean show) {
+        if (sendShown == show) return;
+        sendShown = show;
+        ValueAnimator previous = sendAnimator;
+        sendAnimator = null;
+        if (previous != null) previous.cancel();
+
+        LinearLayout.LayoutParams params =
+                (LinearLayout.LayoutParams) send.getLayoutParams();
+        float fromWidth = params.width;
+        float fromMargin = params.getMarginStart();
+        float fromAlpha = send.getAlpha();
+        float fromScale = send.getScaleX();
+        float toWidth = show ? dp(48) : 0f;
+        float toMargin = show ? dp(8) : 0f;
+        float toAlpha = show ? 1f : 0f;
+        float toScale = show ? 1f : 0.55f;
+        if (show) send.setVisibility(View.VISIBLE);
+
+        ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
+        animator.setDuration(show ? 260 : 220);
+        animator.setInterpolator(show
+                ? new OvershootInterpolator(1.35f)
+                : new AnticipateInterpolator(1.1f));
+        final ValueAnimator current = animator;
+        animator.addUpdateListener(a -> {
+            if (sendAnimator != current) return;
+            float raw = (float) a.getAnimatedValue();
+            float t = Math.max(0f, Math.min(1f, raw));
+            params.width = Math.round(fromWidth + (toWidth - fromWidth) * t);
+            params.setMarginStart(Math.round(fromMargin + (toMargin - fromMargin) * t));
+            send.setLayoutParams(params);
+            send.setAlpha(Math.max(0f, Math.min(1f, fromAlpha + (toAlpha - fromAlpha) * t)));
+            float scale = fromScale + (toScale - fromScale) * raw;
+            send.setScaleX(scale);
+            send.setScaleY(scale);
+        });
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (sendAnimator != current) return;
+                sendAnimator = null;
+                if (sendShown) {
+                    params.width = dp(48);
+                    params.setMarginStart(dp(8));
+                    send.setAlpha(1f);
+                    send.setScaleX(1f);
+                    send.setScaleY(1f);
+                } else {
+                    params.width = 0;
+                    params.setMarginStart(0);
+                    send.setVisibility(View.GONE);
+                }
+                send.setLayoutParams(params);
+            }
+        });
+        sendAnimator = animator;
+        animator.start();
     }
 
     private void applyTheme() {

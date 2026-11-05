@@ -2227,7 +2227,7 @@
     return m && m.role === "user" && String(m.content || "").startsWith("[TOOL_RESULT]");
   }
 
-  function addToolRow(label, text) {
+  function toolRowEl(label, text) {
     var row = document.createElement("div");
     row.className = "msg tool";
     var bubble = document.createElement("div");
@@ -2241,11 +2241,29 @@
     bubble.appendChild(head);
     bubble.appendChild(body);
     row.appendChild(bubble);
+    return row;
+  }
+
+  function addToolRow(label, text) {
     var box = $("#messages");
-    if (box) {
-      box.appendChild(row);
-      scrollToBottom(true);
+    if (!box) return;
+    box.appendChild(toolRowEl(label, text));
+    scrollToBottom(true);
+  }
+
+  /** Parse the hidden [TOOL_RESULT] user message saved by the engine. */
+  function parseToolResult(content) {
+    var text = String(content || "").replace(/^\[TOOL_RESULT\]\s*/, "");
+    var code = "?";
+    var match = /^exit code:\s*([^\n]*)\n?/i.exec(text);
+    if (match) {
+      code = match[1].trim() || "?";
+      text = text.slice(match[0].length);
     }
+    var cut = text.indexOf("\n\nПродолжай.");
+    if (cut >= 0) text = text.slice(0, cut);
+    text = text.replace(/\s+$/, "");
+    return (text || "(пусто)") + "\nexit " + code;
   }
 
   function formatFileSize(bytes) {
@@ -2550,10 +2568,25 @@
       refreshContextMeter();
       return;
     }
-    messages.forEach(function (m) {
-      if (isHiddenToolMessage(m)) return;
+    var toolNumber = 0;
+    for (var i = 0; i < messages.length; i++) {
+      var m = messages[i];
+      if (isHiddenToolMessage(m)) continue;
+      if (m.role === "user") toolNumber = 0;
+      var command = m.role === "assistant" ? extractAgentExec(m.content) : "";
+      var visible = m.role === "assistant"
+        ? stripAgentExecDirectives(m.content).trim()
+        : "";
+      if (m.role === "assistant" && !command && !visible && !m.reasoning) continue;
       box.appendChild(messageEl(m, { openReasoning: false }));
-    });
+      if (!command) continue;
+      toolNumber++;
+      box.appendChild(toolRowEl("Команда " + toolNumber, "$ " + command));
+      if (i + 1 < messages.length && isHiddenToolMessage(messages[i + 1])) {
+        box.appendChild(toolRowEl("Результат", parseToolResult(messages[i + 1].content)));
+        i++;
+      }
+    }
     refreshContextMeter();
     scrollToBottom(true);
   }
@@ -2749,7 +2782,6 @@
     });
     $("#right-agent-tools").addEventListener("click", openTools);
     $("#tools-close").addEventListener("click", closeTools);
-    $("#tools-done").addEventListener("click", closeTools);
     $("#tools-journal").addEventListener("click", openAgentJournal);
     $("#sandbox-close").addEventListener("click", closeSandbox);
     $("#sandbox-close2").addEventListener("click", closeSandbox);
