@@ -39,7 +39,12 @@ import java.security.MessageDigest;
  * the APK is verified against its SHA-256 before installation.
  */
 final class Updater {
+    // The raw CDN can serve a stale update.json for several minutes after a
+    // release. The contents API is current; raw is only a fallback if the
+    // unauthenticated API rate limit is exhausted.
     static final String MANIFEST_URL =
+            "https://api.github.com/repos/Rewixx-png/localapi-deepseek/contents/update.json?ref=main";
+    static final String MANIFEST_FALLBACK =
             "https://raw.githubusercontent.com/Rewixx-png/localapi-deepseek/main/update.json";
     static final String SOURCE_URL = "https://github.com/Rewixx-png/localapi-deepseek";
     static final int JOB_ID = 9701;
@@ -334,7 +339,17 @@ final class Updater {
     // ── static helpers (also used by UpdateJobService) ───────────────────
 
     static JSONObject fetchManifest() throws Exception {
-        HttpURLConnection connection = open(MANIFEST_URL, "application/json");
+        try {
+            return readManifest(MANIFEST_URL, "application/vnd.github.raw+json");
+        } catch (Exception primary) {
+            // Rate limit, network hiccup or an API change: raw may be stale,
+            // but it is better than failing the check entirely.
+            return readManifest(MANIFEST_FALLBACK, "application/json");
+        }
+    }
+
+    private static JSONObject readManifest(String url, String accept) throws Exception {
+        HttpURLConnection connection = open(url, accept);
         try {
             int code = connection.getResponseCode();
             if (code != HttpURLConnection.HTTP_OK) throw new IOException("HTTP " + code);
@@ -465,6 +480,7 @@ final class Updater {
         connection.setInstanceFollowRedirects(true);
         connection.setRequestProperty("User-Agent", "LocalApiDeepSeek");
         connection.setRequestProperty("Accept", accept);
+        connection.setUseCaches(false);
         // update.json sits behind a CDN; never reuse a stale manifest.
         connection.setRequestProperty("Cache-Control", "no-cache");
         connection.setRequestProperty("Pragma", "no-cache");
