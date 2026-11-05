@@ -254,7 +254,7 @@ final class AgentWorkspace {
         if (normalized.startsWith("/") || normalized.indexOf('\0') >= 0) return false;
         for (String part : normalized.split("/")) {
             if (part.isEmpty()) continue;
-            if (part.equals(".") || part.equals("..")) return false;
+            if (part.equals("..")) return false;
         }
         return true;
     }

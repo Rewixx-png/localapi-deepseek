@@ -303,6 +303,24 @@ final class SafAgentWorkspace {
         return checked > 0 && control * 100 / checked > 5;
     }
 
+    private static void verifyWritable(Context context, DocumentFile dir) throws IOException {
+        String probeName = "write-test-" + System.nanoTime() + ".tmp";
+        DocumentFile probe = dir.createFile("application/octet-stream", probeName);
+        if (probe == null) {
+            throw new IOException("Выбранная папка только для чтения. Выберите папку "
+                    + "в памяти устройства (например, Documents)");
+        }
+        try (OutputStream out = context.getContentResolver()
+                .openOutputStream(probe.getUri(), "wt")) {
+            out.write(1);
+        } catch (Exception e) {
+            probe.delete();
+            throw new IOException("В выбранную папку нельзя записать файлы. "
+                    + "Выберите папку в памяти устройства", e);
+        }
+        probe.delete();
+    }
+
     static String importZip(Context context, String chatId, String title,
             Uri uri) throws IOException {
         DocumentFile dir = chatDir(context, chatId, title, true);
@@ -313,6 +331,7 @@ final class SafAgentWorkspace {
             int entries = 0;
             long total = 0;
             byte[] buffer = new byte[64 * 1024];
+            verifyWritable(context, dir);
             try (ZipInputStream zin = new ZipInputStream(
                     new BufferedInputStream(new FileInputStream(temp)))) {
                 ZipEntry entry;
@@ -330,12 +349,17 @@ final class SafAgentWorkspace {
                         cleanName = cleanName.substring(0, cleanName.length() - 1);
                     }
                     if (cleanName.isEmpty()) continue;
-                    String[] parts = cleanName.split("/");
-                    DocumentFile parent = dir;
-                    for (int i = 0; i < parts.length - 1; i++) {
-                        parent = ensureDir(parent, parts[i]);
+                    java.util.List<String> parts = new java.util.ArrayList<>();
+                    for (String part : cleanName.split("/")) {
+                        if (part.isEmpty() || part.equals(".")) continue;
+                        parts.add(part);
                     }
-                    String leaf = parts[parts.length - 1];
+                    if (parts.isEmpty()) continue;
+                    DocumentFile parent = dir;
+                    for (int i = 0; i < parts.size() - 1; i++) {
+                        parent = ensureDir(parent, parts.get(i));
+                    }
+                    String leaf = parts.get(parts.size() - 1);
                     if (entry.isDirectory()) {
                         ensureDir(parent, leaf);
                     } else {
@@ -350,8 +374,14 @@ final class SafAgentWorkspace {
                         if (target == null) {
                             throw new IOException("Не удалось создать " + cleanName);
                         }
-                        OutputStream output = context.getContentResolver()
-                                .openOutputStream(target.getUri(), "wt");
+                        OutputStream output;
+                        try {
+                            output = context.getContentResolver()
+                                    .openOutputStream(target.getUri(), "wt");
+                        } catch (Exception first) {
+                            output = context.getContentResolver()
+                                    .openOutputStream(target.getUri(), "w");
+                        }
                         if (output == null) throw new IOException("Нет записи " + cleanName);
                         try (OutputStream out = output) {
                             int read;
@@ -469,7 +499,7 @@ final class SafAgentWorkspace {
         if (normalized.startsWith("/") || normalized.indexOf('\0') >= 0) return false;
         for (String part : normalized.split("/")) {
             if (part.isEmpty()) continue;
-            if (part.equals(".") || part.equals("..")) return false;
+            if (part.equals("..")) return false;
         }
         return true;
     }

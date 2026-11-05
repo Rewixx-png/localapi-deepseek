@@ -288,17 +288,20 @@ public final class MainActivity extends Activity {
                             }
                         });
                     } catch (Exception e) {
-                        String message = e.getMessage() == null
-                                ? "Не удалось распаковать ZIP"
-                                : e.getMessage();
+                        String message = e.getMessage();
+                        if (message == null || message.trim().isEmpty()) {
+                            message = "Не удалось распаковать ZIP ("
+                                    + e.getClass().getSimpleName() + ")";
+                        }
+                        final String detail = message;
                         runOnUiThread(() -> {
-                            Toast.makeText(MainActivity.this, message,
+                            Toast.makeText(MainActivity.this, detail,
                                     Toast.LENGTH_LONG).show();
                             if (web != null) {
                                 web.evaluateJavascript(
                                         "window.__agentError && window.__agentError("
                                                 + JSONObject.quote(chatId) + ","
-                                                + JSONObject.quote(message) + ")",
+                                                + JSONObject.quote(detail) + ")",
                                         null);
                             }
                         });
