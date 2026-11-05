@@ -45,13 +45,14 @@ PoW, потоковый SSE с рассуждениями и локальная 
   модель как изображение (Flash 1017) для мультимодального зрения.
   Публичная SAF-папка и кнопки
   «Папка»/«Очистить» убраны — весь обмен идёт через workspace песочницы;
-  удаление файлов доступно агенту и через терминал. Песочница имеет сеть
-  QEMU slirp (`eth0` 10.0.2.15, шлюз 10.0.2.2) и HTTP-прокси приложения
-  `10.0.2.2:8888`: через него работают `apt` и HTTP даже при VPN с fake-IP,
-  который ломает прямой TCP к `10.0.2.3`. Прокси и `http_proxy`/`https_proxy`
-  настраиваются при старте; UTC-время синхронизируется. `top` доступен через
-  busybox, `curl`/`ca-certificates`/`htop`/`procps` ставятся командой
-  `install-base` (пакеты живут в RAM initramfs до перезапуска песочницы).
+  удаление файлов доступно агенту и через терминал. Песочница использует
+  постоянный ext4-root (`rootfs.img`) и сеть QEMU slirp (`eth0` 10.0.2.15,
+  шлюз 10.0.2.2) с HTTP-прокси приложения `10.0.2.2:8888`: через него работают
+  `apt` и HTTP даже при VPN с fake-IP, который ломает прямой TCP к `10.0.2.3`.
+  Прокси и `http_proxy`/`https_proxy` настраиваются при старте; UTC-время
+  синхронизируется. Файлы вне `/workspace` и установленные пакеты теперь
+  переживают перезапуск. `top` доступен через busybox, `curl`/`ca-certificates`/
+  `htop`/`procps` ставятся командой `install-base` и сохраняются в образе.
   Кнопка «Инструменты агента» находится в правом меню; Python/Java/Node агент
   устанавливает сам.
 - Markdown в ответах: заголовки `#`…`######`, списки, цитаты, ссылки,
@@ -251,7 +252,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.10.1-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.11.0-debug.apk`.
 
 ## Обновления
 
@@ -273,9 +274,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 60,
-  "versionName": "1.10.1",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.10.1/LocalApiDeepSeek.apk",
+  "versionCode": 61,
+  "versionName": "1.11.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.0/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }

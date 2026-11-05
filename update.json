@@ -1,7 +1,7 @@
 {
-  "versionCode": 60,
-  "versionName": "1.10.1",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.10.1/LocalApiDeepSeek.apk",
-  "sha256": "a50c2be8057ee08df5a3a0bb37e7580ebe3a1e8964651175124359f2e9923ae0",
-  "notes": "Сеть песочницы через host HTTP-прокси 10.0.2.2:8888: обход fake-IP VPN для apt/HTTP; http_proxy и apt настроены автоматически. Добавлены top (busybox) и команда install-base для curl/ca-certificates/htop/procps. Песочницу нужно перезапустить."
+  "versionCode": 61,
+  "versionName": "1.11.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.0/LocalApiDeepSeek.apk",
+  "sha256": "d3bee982968414cafce9c6d4134d585aeac62f94076e8733bf4b6654f12a34ce",
+  "notes": "Песочница перешла на постоянный ext4-root: файлы вне /workspace и установленные пакеты переживают перезапуск. Новая sandbox-assets (127 МБ) скачивается один раз; команда install-base ставит curl/ca-certificates/htop/procps. Сеть через host-прокси 10.0.2.2:8888."
 }
