@@ -1,7 +1,7 @@
 {
-  "versionCode": 38,
-  "versionName": "1.6.24",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.24/LocalApiDeepSeek.apk",
-  "sha256": "95f48bbf0618ed2be2559e23d764376c200c7e7e77cb26467da7cf237864a214",
-  "notes": "ZIP в Agent mode теперь выбирается напрямую системным документным пикером (ACTION_OPEN_DOCUMENT), без промежуточного chooser со списком приложений. Плюс из 1.6.23: чтение выбранных файлов агентом, ZIP через скрепку, отдельная история."
+  "versionCode": 39,
+  "versionName": "1.6.25",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.25/LocalApiDeepSeek.apk",
+  "sha256": "292ea2b0cfb7c2e0dd4824fa8ad944e7dafd8c04d2a49e7e528fe702c7d2b36b",
+  "notes": "Agent mode читает больше файлов: суммарный лимит 250 000 символов, 128 КБ на файл, до 300 имён; если выбранное не помещается, модель получает явную пометку, сколько файлов вошло. ZIP — через системный документный пикер без chooser."
 }
