@@ -535,6 +535,16 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String readAgentFile(String chatId, String name) {
+            try {
+                return agentOk(AgentWorkspace.read(
+                        MainActivity.this, chatId, name, 64 * 1024));
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
         public String deleteAgentFile(String chatId, String name) {
             try {
                 if (!AgentWorkspace.delete(MainActivity.this, chatId, name)) {
@@ -754,6 +764,13 @@ public final class MainActivity extends Activity {
                 if (composer != null) composer.setVisible(visible);
             });
             return "{}";
+        }
+
+        @JavascriptInterface
+        public void setComposerAgent(boolean agentMode) {
+            runOnUiThread(() -> {
+                if (composer != null) composer.setAgentMode(agentMode);
+            });
         }
 
         @JavascriptInterface

@@ -4,15 +4,18 @@ import android.content.Context;
 import android.net.Uri;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.zip.ZipEntry;
@@ -140,6 +143,61 @@ final class AgentWorkspace {
             //noinspection ResultOfMethodCallIgnored
             temp.delete();
         }
+    }
+
+    static JSONObject read(Context context, String chatId, String name, int maxBytes)
+            throws IOException, JSONException {
+        if (!safeRelative(name)) {
+            throw new IOException("Некорректный путь файла");
+        }
+        File root = root(context, chatId);
+        File target = new File(root, name);
+        String rootPath = root.getCanonicalPath();
+        String targetPath = target.getCanonicalPath();
+        if (!targetPath.startsWith(rootPath + File.separator) || !target.isFile()) {
+            throw new IOException("Файл не найден");
+        }
+        int limit = Math.max(1, Math.min(maxBytes, 64 * 1024));
+        long size = target.length();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        boolean truncated = false;
+        try (InputStream in = new FileInputStream(target)) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                int room = limit - out.size();
+                if (room <= 0) {
+                    truncated = true;
+                    break;
+                }
+                if (read > room) {
+                    out.write(buffer, 0, room);
+                    truncated = true;
+                    break;
+                }
+                out.write(buffer, 0, read);
+            }
+        }
+        byte[] bytes = out.toByteArray();
+        boolean binary = isBinary(bytes);
+        JSONObject item = new JSONObject();
+        item.put("name", name);
+        item.put("size", size);
+        item.put("truncated", truncated || size > bytes.length);
+        item.put("binary", binary);
+        item.put("text", binary ? "" : new String(bytes, StandardCharsets.UTF_8));
+        return item;
+    }
+
+    private static boolean isBinary(byte[] bytes) {
+        int control = 0;
+        int checked = Math.min(bytes.length, 8192);
+        for (int i = 0; i < checked; i++) {
+            int value = bytes[i] & 0xff;
+            if (value == 0) return true;
+            if (value < 7 || (value > 13 && value < 32)) control++;
+        }
+        return checked > 0 && control * 100 / checked > 5;
     }
 
     static boolean delete(Context context, String chatId, String name) {

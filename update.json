@@ -1,7 +1,7 @@
 {
-  "versionCode": 36,
-  "versionName": "1.6.22",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.22/LocalApiDeepSeek.apk",
-  "sha256": "5eae6c53b0506cfc214137f13f674e87cb7f37bce72c59a1a093d01cbff5857b",
-  "notes": "Agent mode: отдельная история, ZIP-workspace с защитой от path traversal и лимитами, список/удаление/очистка файлов, меню будущих инструментов. Выполнение кода и скачивание рантаймов пока отключены. Плюс AI-названия чатов, контекст, User/Model, время ответа и tok/s из 1.6.21."
+  "versionCode": 37,
+  "versionName": "1.6.23",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.23/LocalApiDeepSeek.apk",
+  "sha256": "670fc5a2cbf8eed36e3a9d93b53fd74a7e09b827fd51ed289b794015992951a6",
+  "notes": "Agent mode: ZIP загружается скрепкой в поле ввода; выбранные текстовые файлы workspace читаются и уходят модели в контекст (read-only, до 80k символов, 64 КБ на файл). Отдельная история, список/удаление/очистка файлов; выполнение кода пока отключено."
 }
