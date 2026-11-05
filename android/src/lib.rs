@@ -124,9 +124,25 @@ pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeClearToken(
 pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeListChats(
     mut env: JNIEnv,
     _class: JClass,
+    kind: JString,
 ) -> jstring {
-    let payload = match with_engine(|e| e.list_chats()) {
+    let kind = text(&mut env, &kind);
+    let payload = match with_engine(|e| e.list_chats_kind(&kind)) {
         Ok(chats) => ok(chats),
+        Err(e) => fail(e),
+    };
+    reply(&mut env, payload)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeNewChat(
+    mut env: JNIEnv,
+    _class: JClass,
+    kind: JString,
+) -> jstring {
+    let kind = text(&mut env, &kind);
+    let payload = match with_engine(|e| e.new_chat_kind(&kind)) {
+        Ok(chat) => ok(chat),
         Err(e) => fail(e),
     };
     reply(&mut env, payload)

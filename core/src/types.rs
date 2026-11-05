@@ -32,6 +32,12 @@ pub struct Message {
     pub ts: u64,
 }
 
+impl Conversation {
+    pub fn normalized_kind(&self) -> String {
+        normalize_chat_kind(&self.kind)
+    }
+}
+
 impl Message {
     pub fn user(text: impl Into<String>) -> Self {
         Self {
@@ -60,6 +66,8 @@ impl Message {
 pub struct Conversation {
     pub id: String,
     pub title: String,
+    #[serde(default = "default_chat_kind")]
+    pub kind: String,
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(default)]
@@ -223,6 +231,17 @@ impl AuthMode {
             Self::Api => "api",
             Self::Web => "web",
         }
+    }
+}
+
+pub fn default_chat_kind() -> String {
+    "chat".to_string()
+}
+
+pub fn normalize_chat_kind(kind: &str) -> String {
+    match kind {
+        "agent" => "agent".to_string(),
+        _ => "chat".to_string(),
     }
 }
 

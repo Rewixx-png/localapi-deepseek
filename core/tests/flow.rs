@@ -997,6 +997,37 @@ fn offline_mode_blocks_network_and_persists() {
 }
 
 #[test]
+fn agent_chats_have_a_separate_history() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(API_TOKEN, "api").unwrap();
+
+    let agent = engine.new_chat_kind("agent").unwrap();
+    assert_eq!(engine.list_chats_kind("agent").unwrap().len(), 1);
+    let normal = engine.new_chat().unwrap();
+    assert_eq!(engine.list_chats().unwrap().len(), 0);
+
+    let start = engine
+        .send_opts(&agent.id, "агенту", "deepseek-flash", true, false, Vec::new(), "high")
+        .unwrap();
+    assert!(wait_done(&engine, start.stream_id).error.is_none());
+
+    let start = engine
+        .send_opts(&normal.id, "обычный", "deepseek-flash", true, false, Vec::new(), "high")
+        .unwrap();
+    assert!(wait_done(&engine, start.stream_id).error.is_none());
+
+    let agents = engine.list_chats_kind("agent").unwrap();
+    let chats = engine.list_chats().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(chats.len(), 1);
+    assert_eq!(agents[0].id, agent.id);
+    assert_eq!(chats[0].id, normal.id);
+}
+
+#[test]
 fn chat_title_is_generated_by_the_model() {
     let _guard = TEST_LOCK.lock().unwrap();
     let base = start_mock();

@@ -312,6 +312,83 @@ a { color: var(--primary); text-decoration: none; }
 .banner .icon { width: 20px; height: 20px; }
 .banner .btn { margin-left: auto; color: inherit; }
 
+.drawer-mode {
+  margin-top: 4px;
+  border-radius: 16px;
+  min-height: 48px;
+  color: var(--on-surface-variant);
+}
+.drawer-mode.active {
+  color: var(--primary);
+  background: var(--secondary-container);
+}
+
+.agent-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 6px;
+}
+.agent-bar-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 100px;
+  min-width: 0;
+}
+.agent-bar-text b { font-size: 12px; font-weight: 600; letter-spacing: .2px; }
+.agent-bar-text span { color: var(--on-surface-variant); font-size: 11px; }
+.agent-bar .btn { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.agent-files {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.agent-files::-webkit-scrollbar { display: none; }
+.agent-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 70vw;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  font-size: 11.5px;
+}
+.agent-file .af-name {
+  max-width: 44vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface);
+}
+.agent-file .af-size { opacity: .7; }
+.agent-file button {
+  border: 0; background: transparent; color: var(--on-surface-variant);
+  width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; font-size: 15px; line-height: 1;
+}
+.agent-file button:active { background: var(--surface-container-high); }
+.agent-empty { color: var(--on-surface-variant); font-size: 11.5px; padding: 2px 0; }
+.tools-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.tools-list { background: var(--surface-container-low); }
+.pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--surface-container-highest);
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+
 .context-meter {
   padding: 0 16px 4px;
   color: var(--on-surface-variant);

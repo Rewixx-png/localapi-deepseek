@@ -154,6 +154,14 @@
 
   <div id="context-meter" class="context-meter" aria-live="polite">Контекст ≈ 0 токенов</div>
 
+  <div id="agent-bar" class="agent-bar hidden">
+    <div class="agent-bar-text"><b>Агент</b><span>workspace</span></div>
+    <button id="agent-zip" class="btn tonal small" type="button">ZIP</button>
+    <button id="agent-tools" class="btn tonal small" type="button">Инструменты</button>
+    <button id="agent-clear" class="btn text small danger" type="button">Очистить</button>
+  </div>
+  <div id="agent-files" class="agent-files hidden" aria-live="polite"></div>
+
   <div class="chips" id="chips">
     <button id="model-chip" class="chip model-chip" type="button" aria-label="Модель и параметры">
       <svg class="icon"><use href="#i-bolt"></use></svg>
@@ -206,7 +214,11 @@
       <svg class="icon"><use href="#i-add"></use></svg>
       Новый чат
     </button>
-    <div class="drawer-label">Чаты</div>
+    <button id="agent-mode" class="nav-item drawer-mode" type="button">
+      <svg class="icon"><use href="#i-code"></use></svg>
+      <span id="agent-mode-label">Режим агента</span>
+    </button>
+    <div id="drawer-label" class="drawer-label">Чаты</div>
     <div id="chat-list" class="chat-list"></div>
     <div class="drawer-foot">
       <button id="open-settings" class="nav-item" type="button">
@@ -234,7 +246,45 @@
               placeholder="Например: отвечай кратко, по делу и с примерами кода"></textarea>
     <p class="fine drawer-fine">Можно очистить поле и сохранить, чтобы отключить инструкцию.</p>
     <button id="system-save" class="btn filled wide" type="button">Сохранить</button>
+    <button id="right-agent-tools" class="btn tonal wide hidden" type="button">
+      Инструменты агента
+    </button>
   </aside>
+
+  <div id="tools-scrim" class="dialog-scrim hidden">
+    <div class="dialog tools-dialog" role="dialog" aria-modal="true" aria-labelledby="tools-title">
+      <div class="model-head">
+        <h2 id="tools-title">Инструменты агента</h2>
+        <button id="tools-close" class="icon-btn" aria-label="Закрыть" type="button">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <p class="fine">Выполнение кода в этой версии отключено: Agent mode хранит ZIP и файлы
+        workspace, но не запускает их. Рантаймы подключим следующим этапом.</p>
+      <div class="card tools-list">
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
+          <div class="texts"><div class="primary">Python</div><div class="supporting">CPython · не установлен</div></div>
+          <span class="pill">скоро</span>
+        </div>
+        <div class="divider"></div>
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-play"></use></svg></span>
+          <div class="texts"><div class="primary">Java</div><div class="supporting">JVM · не установлен</div></div>
+          <span class="pill">скоро</span>
+        </div>
+        <div class="divider"></div>
+        <div class="list-item">
+          <span class="list-icon"><svg class="icon"><use href="#i-code"></use></svg></span>
+          <div class="texts"><div class="primary">Node.js</div><div class="supporting">JavaScript · не установлен</div></div>
+          <span class="pill">скоро</span>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button id="tools-done" class="btn filled" type="button">Понятно</button>
+      </div>
+    </div>
+  </div>
 
   <div id="model-scrim" class="dialog-scrim hidden">
     <div class="dialog model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-title">

@@ -55,7 +55,11 @@
     setToken: function (t, mode) { return Native.setToken(t, mode); },
     revalidate: function () { return Native.revalidate(); },
     clearToken: function () { return Native.clearToken(); },
-    listChats: function () { return Native.listChats(); },
+    listChats: function (kind) { return Native.listChats(kind || "chat"); },
+    newChat: function (kind) { return Native.newChat(kind || "chat"); },
+    listAgentFiles: function (chatId) { return Native.listAgentFiles(chatId); },
+    deleteAgentFile: function (chatId, name) { return Native.deleteAgentFile(chatId, name); },
+    clearAgentWorkspace: function (chatId) { return Native.clearAgentWorkspace(chatId); },
     getChat: function (id) { return Native.getChat(id); },
     deleteChat: function (id) { return Native.deleteChat(id); },
     send: function (chatId, text, model, effort, thinking, search, imagesJson, systemPrompt) {
@@ -1072,7 +1076,8 @@
     var update = !$("#update-scrim").classList.contains("hidden");
     var right = $("#right-drawer").classList.contains("open");
     var model = !$("#model-scrim").classList.contains("hidden");
-    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model);
+    var tools = !$("#tools-scrim").classList.contains("hidden");
+    Native.setComposerVisible(chat && !drawer && !right && !dialog && !viewer && !update && !model && !tools);
   }
 
   function openImageViewer(src) {
@@ -1843,6 +1848,7 @@
 
   function contextTokenEstimate() {
     var total = estimateTokens(S.systemPrompt || "");
+    total += estimateTokens(agentPromptSuffix());
     var messages = S.chat && S.chat.messages ? S.chat.messages : [];
     messages.forEach(function (m) {
       total += 4 + estimateTokens(m.content || "");
@@ -1876,6 +1882,185 @@
     } catch (e) { /* title is best-effort */ }
   }
 
+  function agentPromptSuffix() {
+    if (!S.agentMode) return "";
+    var names = (S.agentFiles || []).map(function (file) {
+      return file && file.name ? file.name : "";
+    }).filter(Boolean).slice(0, 50);
+    var suffix = "Ты в агентском режиме приложения. Выполнение кода пока недоступно: "
+      + "не утверждай, что запускал код или видел содержимое файлов. "
+      + "Можно обсуждать файлы workspace и планировать действия.";
+    if (names.length) suffix += " Файлы workspace: " + names.join(", ") + ".";
+    return suffix;
+  }
+
+  function formatFileSize(bytes) {
+    var size = Number(bytes) || 0;
+    if (size < 1024) return size + " Б";
+    if (size < 1024 * 1024) return (size / 1024).toFixed(1).replace(".", ",") + " КБ";
+    return (size / (1024 * 1024)).toFixed(1).replace(".", ",") + " МБ";
+  }
+
+  function refreshAgentFiles() {
+    var box = $("#agent-files");
+    refreshContextMeter();
+    if (!box) return;
+    box.innerHTML = "";
+    if (!S.agentMode) {
+      S.agentFiles = [];
+      box.classList.add("hidden");
+      return;
+    }
+    box.classList.remove("hidden");
+    if (!S.chat || !S.chat.id) {
+      S.agentFiles = [];
+      var note = document.createElement("div");
+      note.className = "agent-empty";
+      note.textContent = "Сначала создайте чат агента.";
+      box.appendChild(note);
+      return;
+    }
+    try {
+      var files = invoke("listAgentFiles", S.chat.id);
+      S.agentFiles = Array.isArray(files) ? files : [];
+    } catch (e) {
+      S.agentFiles = [];
+      var error = document.createElement("div");
+      error.className = "agent-empty";
+      error.textContent = "Workspace недоступен";
+      box.appendChild(error);
+      return;
+    }
+    if (!S.agentFiles.length) {
+      var empty = document.createElement("div");
+      empty.className = "agent-empty";
+      empty.textContent = "Workspace пуст · загрузите ZIP";
+      box.appendChild(empty);
+      return;
+    }
+    S.agentFiles.forEach(function (file) {
+      var chip = document.createElement("div");
+      chip.className = "agent-file";
+      var name = document.createElement("span");
+      name.className = "af-name";
+      name.textContent = file.name || "file";
+      var size = document.createElement("span");
+      size.className = "af-size";
+      size.textContent = formatFileSize(file.size);
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", "Удалить " + (file.name || "файл"));
+      remove.addEventListener("click", function () {
+        try {
+          invoke("deleteAgentFile", S.chat.id, file.name);
+          refreshAgentFiles();
+        } catch (e) {
+          toast(e.message);
+        }
+      });
+      chip.appendChild(name);
+      chip.appendChild(size);
+      chip.appendChild(remove);
+      box.appendChild(chip);
+    });
+    refreshContextMeter();
+  }
+
+  function refreshAgentUi() {
+    var modeButton = $("#agent-mode");
+    var label = $("#agent-mode-label");
+    if (label) label.textContent = S.agentMode ? "Обычные чаты" : "Режим агента";
+    if (modeButton) modeButton.classList.toggle("active", S.agentMode);
+    var drawerLabel = $("#drawer-label");
+    if (drawerLabel) drawerLabel.textContent = S.agentMode ? "Чаты агента" : "Чаты";
+    var bar = $("#agent-bar");
+    if (bar) bar.classList.toggle("hidden", !S.agentMode);
+    var rightTools = $("#right-agent-tools");
+    if (rightTools) rightTools.classList.toggle("hidden", !S.agentMode);
+    if (!S.agentMode) {
+      var files = $("#agent-files");
+      if (files) files.classList.add("hidden");
+    }
+  }
+
+  function startAgentChat() {
+    detachStream();
+    S.titleRequested = "";
+    try {
+      S.chat = invoke("newChat", "agent");
+    } catch (e) {
+      toast(e.message);
+      S.chat = null;
+      renderMessages();
+      return;
+    }
+    $("#chat-title").textContent = "Агент";
+    enterChat();
+    renderMessages();
+    refreshAgentFiles();
+    refreshContextMeter();
+    refreshChats();
+    focusComposer();
+  }
+
+  function setAgentMode(agent) {
+    agent = !!agent;
+    if (S.agentMode === agent) {
+      closeDrawer();
+      return;
+    }
+    detachStream();
+    S.agentMode = agent;
+    S.chat = null;
+    S.titleRequested = "";
+    S.agentFiles = [];
+    refreshAgentUi();
+    closeDrawer();
+    refreshChats();
+    if (S.chats.length) {
+      loadChat(S.chats[0].id);
+    } else if (agent) {
+      startAgentChat();
+    } else {
+      enterChat();
+      renderMessages();
+    }
+    refreshContextMeter();
+  }
+
+  function openTools() {
+    var scrim = $("#tools-scrim");
+    if (!scrim) return;
+    closeModelSheet();
+    if ($("#right-drawer").classList.contains("open")) closeSystemDrawer();
+    scrim.classList.remove("hidden");
+    syncNativeComposer();
+  }
+
+  function closeTools() {
+    var scrim = $("#tools-scrim");
+    if (!scrim) return;
+    scrim.classList.add("hidden");
+    syncNativeComposer();
+  }
+
+  function pickAgentZip() {
+    if (!S.chat || !S.chat.id) {
+      startAgentChat();
+    }
+    if (!S.chat || !S.chat.id) return;
+    if (!window.Native || !Native.pickAgentZip) {
+      toast("Мост приложения недоступен");
+      return;
+    }
+    try {
+      Native.pickAgentZip(S.chat.id);
+    } catch (e) {
+      toast("Не удалось открыть выбор ZIP");
+    }
+  }
+
   function renderMessages() {
     var box = $("#messages");
     box.innerHTML = "";
@@ -1899,13 +2084,19 @@
     icon.className = "empty-icon";
     icon.innerHTML = '<svg class="icon"><use href="#i-chat"></use></svg>';
     var h = document.createElement("h2");
-    h.textContent = "Чат пуст";
+    h.textContent = S.agentMode ? "Агент" : "Чат пуст";
     var p = document.createElement("p");
-    var reasoning = S.thinking ? "рассуждения включены" : "рассуждения выключены";
-    p.textContent = modelShortName() + " · " + reasoning;
+    if (S.agentMode) {
+      p.textContent = "Отдельная история · ZIP в workspace";
+    } else {
+      var reasoning = S.thinking ? "рассуждения включены" : "рассуждения выключены";
+      p.textContent = modelShortName() + " · " + reasoning;
+    }
     var hint = document.createElement("div");
     hint.className = "fine";
-    hint.textContent = "Enter — отправить, Shift+Enter — новая строка.";
+    hint.textContent = S.agentMode
+      ? "Выполнение кода пока недоступно. Загрузите ZIP кнопкой вверху."
+      : "Enter — отправить, Shift+Enter — новая строка.";
     wrap.appendChild(icon);
     wrap.appendChild(h);
     wrap.appendChild(p);
@@ -1955,7 +2146,7 @@
   // ── chat list ────────────────────────────────────────────────────────
   function refreshChats() {
     try {
-      S.chats = invoke("listChats");
+      S.chats = invoke("listChats", S.agentMode ? "agent" : "chat");
     } catch (e) {
       S.chats = [];
     }
@@ -1965,7 +2156,7 @@
       var empty = document.createElement("div");
       empty.className = "fine";
       empty.style.padding = "6px 8px";
-      empty.textContent = "Чатов нет.";
+      empty.textContent = S.agentMode ? "Чатов агента нет." : "Чатов нет.";
       box.appendChild(empty);
       return;
     }
@@ -2041,6 +2232,7 @@
     $("#chat-title").textContent = S.chat.title || "Чат";
     enterChat();
     renderMessages();
+    refreshAgentFiles();
     refreshChats();
   }
 
@@ -2069,6 +2261,31 @@
     $("#right-drawer-close").addEventListener("click", closeSystemDrawer);
     $("#right-backdrop").addEventListener("click", closeSystemDrawer);
     $("#system-save").addEventListener("click", saveSystemPrompt);
+    $("#agent-mode").addEventListener("click", function () {
+      setAgentMode(!S.agentMode);
+    });
+    $("#agent-zip").addEventListener("click", pickAgentZip);
+    $("#agent-tools").addEventListener("click", openTools);
+    $("#right-agent-tools").addEventListener("click", openTools);
+    $("#agent-clear").addEventListener("click", function () {
+      if (!S.chat || !S.chat.id) return;
+      confirmDialog("Очистить workspace?", "Все файлы этого чата агента будут удалены.",
+        "Очистить").then(function (ok) {
+        if (!ok || !S.chat || !S.chat.id) return;
+        try {
+          invoke("clearAgentWorkspace", S.chat.id);
+          refreshAgentFiles();
+          toast("Workspace очищен");
+        } catch (e) {
+          toast(e.message);
+        }
+      });
+    });
+    $("#tools-close").addEventListener("click", closeTools);
+    $("#tools-done").addEventListener("click", closeTools);
+    $("#tools-scrim").addEventListener("click", function (e) {
+      if (e.target === this) closeTools();
+    });
     input.addEventListener("input", function () {
       refreshSendButton();
       refreshContextMeter();
@@ -2135,6 +2352,12 @@
     S.reasoningStartedAt = 0;
     S.reasoningEndedAt = 0;
 
+    var outboundSystem = S.systemPrompt || "";
+    var agentSuffix = agentPromptSuffix();
+    if (agentSuffix) {
+      outboundSystem = outboundSystem ? outboundSystem + "\n\n" + agentSuffix : agentSuffix;
+    }
+
     var start;
     try {
       start = invoke(
@@ -2146,7 +2369,7 @@
         !!S.thinking,
         !!S.search,
         JSON.stringify(images),
-        S.systemPrompt || ""
+        outboundSystem
       );
     } catch (e) {
       S.chat.messages.pop();
@@ -2407,12 +2630,17 @@
     applyTextZoomNow(true);
     paintCompact();
     paintModel();
+    refreshAgentUi();
 
     $("#menu-btn").addEventListener("click", openDrawer);
     $("#drawer-close").addEventListener("click", closeDrawer);
     $("#drawer-backdrop").addEventListener("click", closeDrawer);
     $("#drawer-new").addEventListener("click", function () {
       closeDrawer();
+      if (S.agentMode) {
+        startAgentChat();
+        return;
+      }
       detachStream();
       S.chat = null;
       $("#chat-title").textContent = "Новый чат";
@@ -2421,6 +2649,10 @@
       focusComposer();
     });
     $("#new-chat-btn").addEventListener("click", function () {
+      if (S.agentMode) {
+        startAgentChat();
+        return;
+      }
       detachStream();
       S.chat = null;
       $("#chat-title").textContent = "Новый чат";
@@ -2665,6 +2897,16 @@
     refreshChats();
   };
 
+  window.__agentFilesUpdated = function (chatId) {
+    if (S.chat && S.chat.id === chatId) {
+      refreshAgentFiles();
+    }
+  };
+
+  window.__agentError = function (chatId, message) {
+    toast(message || "Ошибка workspace");
+  };
+
   window.__tunnelStatus = function (raw) {
     try {
       paintTunnel(JSON.parse(raw));
@@ -2676,6 +2918,7 @@
   };
 
   window.__onAndroidBack = function () {
+    if (!$("#tools-scrim").classList.contains("hidden")) { closeTools(); return true; }
     if (!$("#model-scrim").classList.contains("hidden")) { closeModelSheet(); return true; }
     if ($("#right-drawer").classList.contains("open")) { closeSystemDrawer(); return true; }
     if (!$("#image-viewer").classList.contains("hidden")) { closeImageViewer(); return true; }

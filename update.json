@@ -1,7 +1,7 @@
 {
-  "versionCode": 35,
-  "versionName": "1.6.21",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.21/LocalApiDeepSeek.apk",
-  "sha256": "8e0017b871304f65ca2c03558d62a32559c92be756b58be21cb37a672781bcc4",
-  "notes": "Название чата генерирует модель после первого ответа; в шапке — оценка контекста; подписи User/Model; время ответа, tok/s и время размышлений. Markdown-таблицы, плавный стриминг, мультивыбор фото и системная инструкция из 1.6.20."
+  "versionCode": 36,
+  "versionName": "1.6.22",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.22/LocalApiDeepSeek.apk",
+  "sha256": "5eae6c53b0506cfc214137f13f674e87cb7f37bce72c59a1a093d01cbff5857b",
+  "notes": "Agent mode: отдельная история, ZIP-workspace с защитой от path traversal и лимитами, список/удаление/очистка файлов, меню будущих инструментов. Выполнение кода и скачивание рантаймов пока отключены. Плюс AI-названия чатов, контекст, User/Model, время ответа и tok/s из 1.6.21."
 }

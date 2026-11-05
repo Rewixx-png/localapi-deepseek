@@ -14,7 +14,8 @@ public final class Rust {
     public static native String nativeRevalidate();
     public static native String nativeClearToken();
     public static native String nativeSetOnline(boolean online);
-    public static native String nativeListChats();
+    public static native String nativeListChats(String kind);
+    public static native String nativeNewChat(String kind);
     public static native String nativeGetChat(String id);
     public static native String nativeDeleteChat(String id);
     public static native String nativeSend(String chatId, String message, String model, String effort, boolean thinking, boolean search, String imagesJson, String systemPrompt);
