@@ -1,7 +1,7 @@
 {
-  "versionCode": 49,
-  "versionName": "1.6.35",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.35/LocalApiDeepSeek.apk",
-  "sha256": "2e925de5ac024794b0bcbdde229f3ffb2020e559d1fe17b10602ec03926189d8",
-  "notes": "Исправлен агентский exec: маркеры команд больше не парсятся из эха shell; QEMU возвращает реальный stdout и exit code. Маркеры вычищены из терминала. Полноэкранный терминал и tool-loop из 1.6.34."
+  "versionCode": 50,
+  "versionName": "1.6.36",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.36/LocalApiDeepSeek.apk",
+  "sha256": "d4f13ed2831911681915930064512565114667577460cccef8cb2438262eb5bc",
+  "notes": "Песочница: выбор RAM и числа ядер с ограничением по устройству (не больше доступного). Нужен перезапуск песочницы. Tool-loop и полноэкранный терминал из 1.6.34/1.6.35."
 }

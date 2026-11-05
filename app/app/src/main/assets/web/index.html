@@ -261,6 +261,15 @@
       </div>
       <p class="fine">QEMU + Ubuntu Base (arm64), без GUI. Загрузка ~50 МБ; QEMU уже в APK.
         TCG без KVM — первый запуск медленный.</p>
+      <div class="sandbox-resources">
+        <label>Память
+          <select id="sandbox-ram"></select>
+        </label>
+        <label>Ядра
+          <select id="sandbox-cores"></select>
+        </label>
+      </div>
+      <p class="fine" id="sandbox-resource-note"></p>
       <div id="sandbox-progress" class="update-percent"></div>
       <pre id="sandbox-log" class="journal-text sandbox-log"></pre>
       <div class="sandbox-command hidden" id="sandbox-command-row">

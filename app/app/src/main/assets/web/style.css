@@ -406,6 +406,9 @@ a { color: var(--primary); text-decoration: none; }
 }
 .terminal-input-row .btn { border: 1px solid #2c3138; color: #d7d7d7; background: #151a1f; }
 
+.sandbox-resources { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 2px; }
+.sandbox-resources label { display: flex; flex-direction: column; gap: 4px; color: var(--on-surface-variant); font-size: 11px; }
+.sandbox-resources select { min-width: 96px; background: var(--surface-container-lowest); color: var(--on-surface); border: 1px solid var(--outline-variant); border-radius: 8px; padding: 7px 8px; font: inherit; }
 .sandbox-dialog { max-height: calc(100dvh - 48px); overflow-y: auto; }
 .sandbox-log { min-height: 140px; max-height: 40dvh; }
 .sandbox-command { display: flex; gap: 8px; margin: 8px 0; }

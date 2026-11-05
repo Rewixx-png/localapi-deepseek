@@ -560,6 +560,15 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String sandboxConfig(int ramMb, int cores) {
+            try {
+                return agentOk(sandbox.setConfig(ramMb, cores));
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
         public void startSandbox(String chatId) {
             sandbox.start(chatId);
         }

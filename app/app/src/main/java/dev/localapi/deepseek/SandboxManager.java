@@ -1,7 +1,9 @@
 package dev.localapi.deepseek;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.webkit.WebView;
 
 import org.json.JSONObject;
@@ -45,6 +47,11 @@ final class SandboxManager {
     private final Object serialLock = new Object();
     private final StringBuilder serial = new StringBuilder();
     private final Object execLock = new Object();
+    private static final String PREFS = "sandbox_config";
+    private static final String KEY_RAM = "ram_mb";
+    private static final String KEY_CORES = "cores";
+    private int ramMb = 2048;
+    private int cores = 2;
 
     SandboxManager(Activity activity, WebView web) {
         this.activity = activity;
@@ -59,6 +66,47 @@ final class SandboxManager {
         return dir;
     }
 
+    private static SharedPreferences prefs(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private int maxRamMb() {
+        try {
+            ActivityManager am = (ActivityManager) activity.getSystemService(
+                    Context.ACTIVITY_SERVICE);
+            ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+            am.getMemoryInfo(info);
+            long total = info.totalMem / (1024L * 1024L);
+            if (total < 1024) total = 1024;
+            // Leave 1 GiB for Android; never offer more than the device has.
+            return (int) Math.min(6144L, Math.max(512L, total - 1024L));
+        } catch (Exception e) {
+            return 2048;
+        }
+    }
+
+    private int maxCores() {
+        return Math.max(1, Runtime.getRuntime().availableProcessors());
+    }
+
+    private void loadConfig() {
+        SharedPreferences prefs = prefs(activity);
+        ramMb = prefs.getInt(KEY_RAM, Math.min(2048, maxRamMb()));
+        cores = prefs.getInt(KEY_CORES, Math.min(2, maxCores()));
+        ramMb = Math.max(512, Math.min(maxRamMb(), ramMb));
+        cores = Math.max(1, Math.min(maxCores(), cores));
+    }
+
+    JSONObject setConfig(int ramMb, int cores) throws Exception {
+        this.ramMb = Math.max(512, Math.min(maxRamMb(), ramMb));
+        this.cores = Math.max(1, Math.min(maxCores(), cores));
+        prefs(activity).edit()
+                .putInt(KEY_RAM, this.ramMb)
+                .putInt(KEY_CORES, this.cores)
+                .apply();
+        return status();
+    }
+
     static boolean installed(Context context) {
         File dir = dir(context);
         return new File(dir, "vmlinuz").isFile()
@@ -68,11 +116,16 @@ final class SandboxManager {
 
     JSONObject status() throws Exception {
         JSONObject out = new JSONObject();
+        loadConfig();
         out.put("installed", installed(activity));
         out.put("installing", installing);
         out.put("running", running);
         out.put("version", VERSION);
         out.put("size", ASSET_SIZE);
+        out.put("ramMb", ramMb);
+        out.put("cores", cores);
+        out.put("maxRamMb", maxRamMb());
+        out.put("maxCores", maxCores());
         out.put("abi", android.os.Build.SUPPORTED_ABIS.length > 0
                 ? android.os.Build.SUPPORTED_ABIS[0] : "");
         File log = new File(activity.getCacheDir(), "sandbox.log");
@@ -126,6 +179,7 @@ final class SandboxManager {
             return;
         }
         try {
+            loadConfig();
             File dir = dir(activity);
             String libs = activity.getApplicationInfo().nativeLibraryDir;
             File qemu = new File(libs, "libqemu-system-aarch64.so");
@@ -139,8 +193,8 @@ final class SandboxManager {
                     qemu.getAbsolutePath(),
                     "-M", "virt",
                     "-cpu", "max",
-                    "-m", "1024",
-                    "-smp", "2",
+                    "-m", String.valueOf(ramMb),
+                    "-smp", String.valueOf(cores),
                     "-nographic",
                     "-no-reboot",
                     "-L", new File(dir, "qemu-data").getAbsolutePath(),
