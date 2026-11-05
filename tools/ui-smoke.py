@@ -36,12 +36,13 @@ MOCK = r"""
     token: saved.token || null,
     mode: saved.mode || 'api',
     chats: saved.chats || [],
+    agentFiles: saved.agentFiles || {},
     perms: saved.perms || { notifications: 'missing', battery: 'optimized' },
     stream: null,
     seq: 1
   };
   function persist() {
-    localStorage.setItem('__mock', JSON.stringify({ token: st.token, mode: st.mode, chats: st.chats, perms: st.perms }));
+    localStorage.setItem('__mock', JSON.stringify({ token: st.token, mode: st.mode, chats: st.chats, perms: st.perms, agentFiles: st.agentFiles }));
   }
   function status() {
     return {
@@ -77,11 +78,17 @@ MOCK = r"""
     revalidate: () => st.token ? ok(status()) : bad('unauthorized', 'Токен ещё не добавлен'),
     clearToken: () => { st.token = null; st.mode = 'api'; persist(); return ok(status()); },
     setOnline: on => { st.online = !!on; return ok(status()); },
-    newChat: () => {
-      const c = { id: 'c' + (st.seq++), title: '', created_at: Date.now(), updated_at: Date.now(), messages: [] };
+    newChat: kind => {
+      const k = kind === 'agent' ? 'agent' : 'chat';
+      const c = { id: 'c' + (st.seq++), kind: k, title: '', created_at: Date.now(), updated_at: Date.now(), messages: [] };
       st.chats.unshift(c); persist(); return ok(c);
     },
-    listChats: () => ok(st.chats.map(c => ({ id: c.id, title: c.title || 'Без названия', updated_at: c.updated_at, message_count: c.messages.length }))),
+    listChats: kind => {
+      const k = kind === 'agent' ? 'agent' : 'chat';
+      return ok(st.chats
+        .filter(c => (c.kind || 'chat') === k)
+        .map(c => ({ id: c.id, title: c.title || 'Без названия', updated_at: c.updated_at, message_count: c.messages.length })));
+    },
     getChat: id => {
       const c = st.chats.find(x => x.id === id);
       return c ? ok(c) : bad('not_found', 'Чат не найден');
@@ -96,13 +103,31 @@ MOCK = r"""
       }, 0);
       return ok(null);
     },
+    pickAgentZip: chatId => {
+      st.agentFiles[chatId] = [
+        { name: 'src/main.py', size: 1536 },
+        { name: 'README.md', size: 240 }
+      ];
+      persist();
+      setTimeout(() => {
+        try { window.__agentFilesUpdated(chatId); } catch (e) {}
+      }, 0);
+    },
+    listAgentFiles: chatId => ok(st.agentFiles[chatId] || []),
+    deleteAgentFile: (chatId, name) => {
+      st.agentFiles[chatId] = (st.agentFiles[chatId] || []).filter(f => f.name !== name);
+      persist(); return ok('deleted');
+    },
+    clearAgentWorkspace: chatId => {
+      delete st.agentFiles[chatId]; persist(); return ok('cleared');
+    },
     deleteChat: id => { st.chats = st.chats.filter(x => x.id !== id); persist(); return ok(null); },
     send: function (chatId, text, model, effort, thinking, search, images, systemPrompt) {
       if (arguments.length !== 8) throw new Error('send bridge args=' + arguments.length);
       window.__lastSystemPrompt = systemPrompt;
       let c = st.chats.find(x => x.id === chatId);
       if (!c) {
-        c = { id: 'c' + (st.seq++), title: text.slice(0, 48), created_at: Date.now(), updated_at: Date.now(), messages: [] };
+        c = { id: 'c' + (st.seq++), kind: 'chat', title: text.slice(0, 48), created_at: Date.now(), updated_at: Date.now(), messages: [] };
         st.chats.unshift(c);
       }
       c.messages.push({ role: 'user', content: text, ts: Date.now() });
@@ -157,7 +182,7 @@ MOCK = r"""
     requestNotifications: () => { st.perms.notifications = 'granted'; persist(); return JSON.stringify(st.perms); },
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
-    appInfo: () => JSON.stringify({ version: '1.6.21', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.6.22', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -455,6 +480,35 @@ with sync_playwright() as p:
     page.click("#dialog-ok")
     page.wait_for_timeout(300)
     assert page.inner_text("#chat-title") == "Новый чат"
+
+    # agent mode: separate history, ZIP workspace and tools catalog, no execution
+    page.click("#menu-btn")
+    page.wait_for_timeout(300)
+    page.click("#agent-mode")
+    page.wait_for_timeout(400)
+    assert page.is_visible("#agent-bar")
+    assert page.inner_text("#agent-mode-label") == "Обычные чаты"
+    page.click("#agent-zip")
+    page.wait_for_selector(".agent-file", timeout=3000)
+    assert page.locator(".agent-file").count() == 2
+    page.locator(".agent-file button").first.click()
+    page.wait_for_timeout(250)
+    assert page.locator(".agent-file").count() == 1
+    page.click("#agent-tools")
+    page.wait_for_selector("#tools-scrim:not(.hidden)")
+    page.wait_for_timeout(350)
+    assert "Python" in page.inner_text("#tools-scrim")
+    assert "Java" in page.inner_text("#tools-scrim")
+    page.screenshot(path=f"{SHOTS}/17-agent-tools.png")
+    page.click("#tools-done")
+    assert page.is_hidden("#tools-scrim")
+    page.screenshot(path=f"{SHOTS}/17-agent.png")
+    page.click("#menu-btn")
+    page.wait_for_timeout(300)
+    page.click("#agent-mode")
+    page.wait_for_timeout(400)
+    assert page.is_hidden("#agent-bar")
+    assert page.inner_text("#agent-mode-label") == "Режим агента"
 
     browser.close()
 

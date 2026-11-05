@@ -39,6 +39,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
@@ -53,6 +54,7 @@ public final class MainActivity extends Activity {
     private static final String HOST = "appassets.local";
     private static final String ORIGIN = "https://" + HOST + "/";
     private static final int REQ_NOTIFICATIONS = 7;
+    private static final int REQ_AGENT_ZIP = 22;
 
     private static final String CHANNEL_ID = "replies";
     private static final int NOTIFICATION_ID = 41;
@@ -65,6 +67,7 @@ public final class MainActivity extends Activity {
     private volatile boolean foreground = false;
     private boolean pageReady;
     private String pendingInstallError;
+    private volatile String pendingAgentChatId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -241,6 +244,46 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_AGENT_ZIP) {
+            String chatId = pendingAgentChatId;
+            pendingAgentChatId = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null
+                    && chatId != null) {
+                Uri uri = data.getData();
+                new Thread(() -> {
+                    try {
+                        String summary = AgentWorkspace.importZip(
+                                MainActivity.this, chatId, uri);
+                        runOnUiThread(() -> {
+                            Toast.makeText(MainActivity.this, summary,
+                                    Toast.LENGTH_SHORT).show();
+                            if (web != null) {
+                                web.evaluateJavascript(
+                                        "window.__agentFilesUpdated && window.__agentFilesUpdated("
+                                                + JSONObject.quote(chatId) + ")",
+                                        null);
+                            }
+                        });
+                    } catch (Exception e) {
+                        String message = e.getMessage() == null
+                                ? "Не удалось распаковать ZIP"
+                                : e.getMessage();
+                        runOnUiThread(() -> {
+                            Toast.makeText(MainActivity.this, message,
+                                    Toast.LENGTH_LONG).show();
+                            if (web != null) {
+                                web.evaluateJavascript(
+                                        "window.__agentError && window.__agentError("
+                                                + JSONObject.quote(chatId) + ","
+                                                + JSONObject.quote(message) + ")",
+                                        null);
+                            }
+                        });
+                    }
+                }, "agent-zip").start();
+            }
+            return;
+        }
         if (composer != null) {
             composer.onActivityResult(requestCode, resultCode, data);
         }
@@ -452,8 +495,90 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public String listChats() {
-            return Rust.nativeListChats();
+        public String listChats(String kind) {
+            return Rust.nativeListChats(kind);
+        }
+
+        @JavascriptInterface
+        public String newChat(String kind) {
+            return Rust.nativeNewChat(kind);
+        }
+
+        @JavascriptInterface
+        public void pickAgentZip(String chatId) {
+            pendingAgentChatId = chatId;
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES,
+                    new String[]{"application/zip", "application/x-zip-compressed"});
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            runOnUiThread(() -> {
+                try {
+                    startActivityForResult(Intent.createChooser(intent, "ZIP-архив"),
+                            REQ_AGENT_ZIP);
+                } catch (Exception e) {
+                    pendingAgentChatId = null;
+                    Toast.makeText(MainActivity.this,
+                            "Нет приложения для выбора ZIP", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String listAgentFiles(String chatId) {
+            try {
+                return agentOk(AgentWorkspace.list(MainActivity.this, chatId));
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String deleteAgentFile(String chatId, String name) {
+            try {
+                if (!AgentWorkspace.delete(MainActivity.this, chatId, name)) {
+                    throw new IOException("Не удалось удалить файл");
+                }
+                return agentOk("Файл удалён");
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String clearAgentWorkspace(String chatId) {
+            try {
+                AgentWorkspace.clear(MainActivity.this, chatId);
+                return agentOk("Workspace очищен");
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        private String agentOk(Object data) {
+            try {
+                JSONObject root = new JSONObject();
+                root.put("ok", true);
+                root.put("data", data);
+                return root.toString();
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        private String agentFail(Exception e) {
+            try {
+                JSONObject error = new JSONObject();
+                error.put("kind", "agent");
+                error.put("message", e.getMessage() == null ? "Ошибка workspace" : e.getMessage());
+                JSONObject root = new JSONObject();
+                root.put("ok", false);
+                root.put("error", error);
+                return root.toString();
+            } catch (Exception ignored) {
+                return "{\"ok\":false,\"error\":{\"kind\":\"agent\",\"message\":\"Ошибка workspace\"}}";
+            }
         }
 
         @JavascriptInterface

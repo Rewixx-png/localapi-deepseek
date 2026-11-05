@@ -420,15 +420,23 @@ impl Engine {
     }
 
     pub fn new_chat(&self) -> Result<Conversation, Error> {
+        self.new_chat_kind("chat")
+    }
+
+    pub fn new_chat_kind(&self, kind: &str) -> Result<Conversation, Error> {
         let inner = lock(&self.inner);
-        let conv = inner.store.create();
+        let conv = inner.store.create_kind(kind);
         inner.store.save(&conv)?;
         Ok(conv)
     }
 
     pub fn list_chats(&self) -> Result<Vec<ChatSummary>, Error> {
+        self.list_chats_kind("chat")
+    }
+
+    pub fn list_chats_kind(&self, kind: &str) -> Result<Vec<ChatSummary>, Error> {
         let inner = lock(&self.inner);
-        inner.store.list()
+        inner.store.list_kind(kind)
     }
 
     pub fn get_chat(&self, id: &str) -> Result<Conversation, Error> {

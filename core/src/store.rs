@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::types::{
-    now_ms, truncate_title, AuthMode, ChatSummary, Conversation, Error, ErrorKind, Message,
+    normalize_chat_kind, now_ms, truncate_title, AuthMode, ChatSummary, Conversation, Error,
+    ErrorKind, Message,
 };
 
 /// File-backed store: one JSON document per conversation, atomic writes.
@@ -110,10 +111,15 @@ impl Store {
     }
 
     pub fn create(&self) -> Conversation {
+        self.create_kind("chat")
+    }
+
+    pub fn create_kind(&self, kind: &str) -> Conversation {
         let ts = now_ms();
         Conversation {
             id: new_id(ts),
             title: String::new(),
+            kind: normalize_chat_kind(kind),
             created_at: ts,
             updated_at: ts,
             messages: Vec::new(),
@@ -123,6 +129,10 @@ impl Store {
     }
 
     pub fn list(&self) -> Result<Vec<ChatSummary>, Error> {
+        self.list_kind("chat")
+    }
+
+    pub fn list_kind(&self, kind: &str) -> Result<Vec<ChatSummary>, Error> {
         let mut out = Vec::new();
         let Ok(entries) = fs::read_dir(self.conv_dir()) else {
             return Ok(out);
@@ -134,7 +144,12 @@ impl Store {
             }
             let Ok(raw) = fs::read_to_string(&path) else { continue };
             let Ok(conv) = serde_json::from_str::<Conversation>(&raw) else { continue };
-            if conv.messages.is_empty() {
+            if conv.kind != normalize_chat_kind(kind) {
+                continue;
+            }
+            // Agent chats own a workspace, so an empty one must stay visible:
+            // otherwise a ZIP imported before the first message becomes orphaned.
+            if conv.messages.is_empty() && conv.normalized_kind() != "agent" {
                 continue;
             }
             out.push(ChatSummary {
