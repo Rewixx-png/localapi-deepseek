@@ -62,6 +62,8 @@
     deleteAgentFile: function (chatId, name) { return Native.deleteAgentFile(chatId, name); },
     clearAgentWorkspace: function (chatId) { return Native.clearAgentWorkspace(chatId); },
     setComposerAgent: function (agent) { return Native.setComposerAgent(agent); },
+    agentRootInfo: function () { return Native.agentRootInfo(); },
+    ensureAgentFolder: function (chatId, title) { return Native.ensureAgentFolder(chatId, title); },
     getChat: function (id) { return Native.getChat(id); },
     deleteChat: function (id) { return Native.deleteChat(id); },
     send: function (chatId, text, model, effort, thinking, search, imagesJson, systemPrompt) {
@@ -1917,6 +1919,57 @@
     });
   }
 
+  function refreshAgentRoot() {
+    try {
+      S.agentRoot = invoke("agentRootInfo") || { configured: false, name: "" };
+    } catch (e) {
+      S.agentRoot = { configured: false, name: "" };
+    }
+    var button = $("#agent-folder");
+    if (button) {
+      button.textContent = S.agentRoot.configured ? "Открыть папку" : "Выбрать папку";
+    }
+  }
+
+  function chooseAgentRoot() {
+    if (!window.Native || !Native.chooseAgentRoot) {
+      toast("Системный выбор папки недоступен");
+      return;
+    }
+    try {
+      Native.chooseAgentRoot();
+    } catch (e) {
+      toast("Не удалось открыть выбор папки");
+    }
+  }
+
+  function maybePromptAgentRoot() {
+    if (!S.agentMode || S.agentRoot.configured) return;
+    if (localStorage.getItem("agentRootPrompted") === "1") return;
+    localStorage.setItem("agentRootPrompted", "1");
+    setTimeout(chooseAgentRoot, 500);
+  }
+
+  function openAgentWorkspaceFolder() {
+    if (!S.agentRoot.configured) {
+      chooseAgentRoot();
+      return;
+    }
+    if (!S.chat || !S.chat.id) {
+      startAgentChat();
+    }
+    if (!S.chat || !S.chat.id) return;
+    if (!window.Native || !Native.openAgentFolder) {
+      toast("Мост приложения недоступен");
+      return;
+    }
+    try {
+      Native.openAgentFolder(S.chat.id, S.chat.title || "");
+    } catch (e) {
+      toast("Не удалось открыть папку");
+    }
+  }
+
   function prepareAgentContext() {
     S.agentContents = {};
     if (!S.agentMode || !S.chat || !S.chat.id) return;
@@ -2005,6 +2058,12 @@
       box.appendChild(note);
       return;
     }
+    try {
+      if (window.Native && Native.ensureAgentFolder) {
+        invoke("ensureAgentFolder", S.chat.id, S.chat.title || "");
+      }
+    } catch (e) { /* private fallback or unavailable SAF */ }
+    refreshAgentRoot();
     try {
       var files = invoke("listAgentFiles", S.chat.id);
       S.agentFiles = Array.isArray(files) ? files : [];
@@ -2149,6 +2208,7 @@
       renderMessages();
     }
     refreshContextMeter();
+    maybePromptAgentRoot();
   }
 
   function openTools() {
@@ -2177,7 +2237,7 @@
       return;
     }
     try {
-      Native.pickAgentZip(S.chat.id);
+      Native.pickAgentZip(S.chat.id, S.chat.title || "");
     } catch (e) {
       toast("Не удалось открыть выбор ZIP");
     }
@@ -2387,6 +2447,7 @@
     $("#agent-mode").addEventListener("click", function () {
       setAgentMode(!S.agentMode);
     });
+    $("#agent-folder").addEventListener("click", openAgentWorkspaceFolder);
     $("#agent-tools").addEventListener("click", openTools);
     $("#right-agent-tools").addEventListener("click", openTools);
     $("#agent-clear").addEventListener("click", function () {
@@ -2753,6 +2814,7 @@
     applyTextZoomNow(true);
     paintCompact();
     paintModel();
+    refreshAgentRoot();
     refreshAgentUi();
 
     $("#menu-btn").addEventListener("click", openDrawer);
@@ -3017,11 +3079,21 @@
       S.chat.title = title;
       $("#chat-title").textContent = title;
     }
+    if (S.agentMode && window.Native && Native.renameAgentFolder) {
+      try { Native.renameAgentFolder(chatId, title); } catch (e) { /* ignore */ }
+      if (S.chat && S.chat.id === chatId) refreshAgentFiles();
+    }
     refreshChats();
   };
 
   window.__nativeAgentZip = function () {
     pickAgentZip();
+  };
+
+  window.__agentRootUpdated = function () {
+    refreshAgentRoot();
+    if (S.agentMode) refreshAgentFiles();
+    toast("Папка workspace выбрана");
   };
 
   window.__agentFilesUpdated = function (chatId) {

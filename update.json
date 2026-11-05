@@ -1,7 +1,7 @@
 {
-  "versionCode": 39,
-  "versionName": "1.6.25",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.25/LocalApiDeepSeek.apk",
-  "sha256": "292ea2b0cfb7c2e0dd4824fa8ad944e7dafd8c04d2a49e7e528fe702c7d2b36b",
-  "notes": "Agent mode читает больше файлов: суммарный лимит 250 000 символов, 128 КБ на файл, до 300 имён; если выбранное не помещается, модель получает явную пометку, сколько файлов вошло. ZIP — через системный документный пикер без chooser."
+  "versionCode": 40,
+  "versionName": "1.6.26",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.6.26/LocalApiDeepSeek.apk",
+  "sha256": "94f12c16159d4ec73db77a3c6ffd4fb5ac2bee362133bbee9deaee0badd78131",
+  "notes": "Agent workspace: публичная SAF-папка (например Documents/LocalApiDeepSeek), папка проекта на каждую сессию, видна в системном файловом менеджере; выбор папки при первом входе, кнопка «Открыть папку», миграция старых файлов. ZIP — через скрепку, файлы читаются в контекст; выполнение кода пока отключено."
 }

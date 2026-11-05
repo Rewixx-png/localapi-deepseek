@@ -10,8 +10,8 @@ android {
         applicationId 'dev.localapi.deepseek'
         minSdk 26
         targetSdk 35
-        versionCode 39
-        versionName '1.6.25'
+        versionCode 40
+        versionName '1.6.26'
     }
 
     buildTypes {
@@ -41,4 +41,8 @@ android {
             assets.srcDirs = ['src/main/assets']
         }
     }
+}
+
+dependencies {
+    implementation 'androidx.documentfile:documentfile:1.0.1'
 }

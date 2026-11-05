@@ -55,6 +55,7 @@ public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://" + HOST + "/";
     private static final int REQ_NOTIFICATIONS = 7;
     private static final int REQ_AGENT_ZIP = 22;
+    private static final int REQ_AGENT_ROOT = 23;
 
     private static final String CHANNEL_ID = "replies";
     private static final int NOTIFICATION_ID = 41;
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity {
     private boolean pageReady;
     private String pendingInstallError;
     private volatile String pendingAgentChatId;
+    private volatile String pendingAgentTitle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -244,16 +246,37 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_AGENT_ROOT) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                try {
+                    SafAgentWorkspace.setRoot(MainActivity.this, data.getData());
+                    if (web != null) {
+                        web.evaluateJavascript(
+                                "window.__agentRootUpdated && window.__agentRootUpdated()",
+                                null);
+                    }
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this,
+                            "Не удалось сохранить папку workspace",
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+            return;
+        }
         if (requestCode == REQ_AGENT_ZIP) {
             String chatId = pendingAgentChatId;
+            String title = pendingAgentTitle;
             pendingAgentChatId = null;
+            pendingAgentTitle = null;
             if (resultCode == RESULT_OK && data != null && data.getData() != null
                     && chatId != null) {
                 Uri uri = data.getData();
                 new Thread(() -> {
                     try {
-                        String summary = AgentWorkspace.importZip(
-                                MainActivity.this, chatId, uri);
+                        String summary = SafAgentWorkspace.hasRoot(MainActivity.this)
+                                ? SafAgentWorkspace.importZip(
+                                        MainActivity.this, chatId, title == null ? "" : title, uri)
+                                : AgentWorkspace.importZip(MainActivity.this, chatId, uri);
                         runOnUiThread(() -> {
                             Toast.makeText(MainActivity.this, summary,
                                     Toast.LENGTH_SHORT).show();
@@ -505,8 +528,85 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void pickAgentZip(String chatId) {
+        public void chooseAgentRoot() {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+            runOnUiThread(() -> {
+                try {
+                    startActivityForResult(intent, REQ_AGENT_ROOT);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this,
+                            "Нет системного выбора папки", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String agentRootInfo() {
+            try {
+                return agentOk(SafAgentWorkspace.info(MainActivity.this));
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
+        public String ensureAgentFolder(String chatId, String title) {
+            try {
+                if (!SafAgentWorkspace.hasRoot(MainActivity.this)) return agentOk(null);
+                org.json.JSONObject data = new org.json.JSONObject();
+                data.put("name", SafAgentWorkspace.chatDir(
+                        MainActivity.this, chatId, title, true).getName());
+                return agentOk(data);
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
+        public void openAgentFolder(String chatId, String title) {
+            try {
+                if (!SafAgentWorkspace.hasRoot(MainActivity.this)) return;
+                androidx.documentfile.provider.DocumentFile dir =
+                        SafAgentWorkspace.chatDir(MainActivity.this, chatId, title, true);
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(dir.getUri(), "vnd.android.document/directory");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_ACTIVITY_NEW_TASK);
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        Toast.makeText(MainActivity.this,
+                                "Файловый менеджер не открыл папку; она лежит в выбранном workspace",
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                        e.getMessage() == null ? "Нет доступа к папке" : e.getMessage(),
+                        Toast.LENGTH_LONG).show());
+            }
+        }
+
+        @JavascriptInterface
+        public String renameAgentFolder(String chatId, String title) {
+            try {
+                return agentOk(SafAgentWorkspace.renameChatDir(
+                        MainActivity.this, chatId, title));
+            } catch (Exception e) {
+                return agentFail(e);
+            }
+        }
+
+        @JavascriptInterface
+        public void pickAgentZip(String chatId, String title) {
             pendingAgentChatId = chatId;
+            pendingAgentTitle = title;
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
@@ -529,6 +629,9 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String listAgentFiles(String chatId) {
             try {
+                if (SafAgentWorkspace.hasRoot(MainActivity.this)) {
+                    return agentOk(SafAgentWorkspace.list(MainActivity.this, chatId, ""));
+                }
                 return agentOk(AgentWorkspace.list(MainActivity.this, chatId));
             } catch (Exception e) {
                 return agentFail(e);
@@ -538,6 +641,10 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String readAgentFile(String chatId, String name) {
             try {
+                if (SafAgentWorkspace.hasRoot(MainActivity.this)) {
+                    return agentOk(SafAgentWorkspace.read(
+                            MainActivity.this, chatId, "", name, 128 * 1024));
+                }
                 return agentOk(AgentWorkspace.read(
                         MainActivity.this, chatId, name, 128 * 1024));
             } catch (Exception e) {
@@ -548,9 +655,10 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String deleteAgentFile(String chatId, String name) {
             try {
-                if (!AgentWorkspace.delete(MainActivity.this, chatId, name)) {
-                    throw new IOException("Не удалось удалить файл");
-                }
+                boolean deleted = SafAgentWorkspace.hasRoot(MainActivity.this)
+                        ? SafAgentWorkspace.delete(MainActivity.this, chatId, "", name)
+                        : AgentWorkspace.delete(MainActivity.this, chatId, name);
+                if (!deleted) throw new IOException("Не удалось удалить файл");
                 return agentOk("Файл удалён");
             } catch (Exception e) {
                 return agentFail(e);
@@ -560,7 +668,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String clearAgentWorkspace(String chatId) {
             try {
-                AgentWorkspace.clear(MainActivity.this, chatId);
+                if (SafAgentWorkspace.hasRoot(MainActivity.this)) {
+                    SafAgentWorkspace.clear(MainActivity.this, chatId, "");
+                } else {
+                    AgentWorkspace.clear(MainActivity.this, chatId);
+                }
                 return agentOk("Workspace очищен");
             } catch (Exception e) {
                 return agentFail(e);
