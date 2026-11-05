@@ -1,7 +1,7 @@
 {
-  "versionCode": 56,
-  "versionName": "1.8.1",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.8.1/LocalApiDeepSeek.apk",
-  "sha256": "7c93c141758cdaf9b349b6a3a9586a0db76039ce59bc83cc23accf40d3c0f0e4",
-  "notes": "Агент: браузер/поиск через [[BROWSE]], медиа из /workspace через [[SEND]] (фото, аудио, видео до 12 МБ, с безопасным fallback для прочих файлов); команда и вывод в одном сворачиваемом блоке. Плюс синхронная IME-анимация, пружинная отправка и история tool-loop."
+  "versionCode": 57,
+  "versionName": "1.9.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.9.0/LocalApiDeepSeek.apk",
+  "sha256": "9b12d4e6c08c33afe04f55690f2b055ae7595f3af89962d4a72325ef8171bf0f",
+  "notes": "Встроенный браузер агента с сессией: open/click/type/scroll/extract/screenshot/back/forward/reload. Скриншоты передаются модели (Flash) для мультимодального зрения. Медиа из /workspace через [[SEND]], команда+вывод одним сворачиваемым блоком."
 }

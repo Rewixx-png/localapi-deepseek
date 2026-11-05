@@ -63,6 +63,7 @@ public final class MainActivity extends Activity {
     private WebView web;
     private LinearLayout root;
     private NativeComposer composer;
+    private AgentBrowser agentBrowser;
     private Updater updater;
     private CloudflareTunnel tunnel;
     private SandboxManager sandbox;
@@ -95,6 +96,7 @@ public final class MainActivity extends Activity {
         s.setTextZoom(100);
 
         web.setWebViewClient(new AssetsClient());
+        agentBrowser = new AgentBrowser(this);
         web.addJavascriptInterface(new Bridge(), "Native");
         sandbox = new SandboxManager(this, web);
         tunnel = CloudflareTunnel.get(this);
@@ -492,6 +494,10 @@ public final class MainActivity extends Activity {
         if (tunnel != null) {
             tunnel.detachWebView();
         }
+        if (agentBrowser != null) {
+            agentBrowser.destroy();
+            agentBrowser = null;
+        }
         super.onDestroy();
     }
 
@@ -711,6 +717,29 @@ public final class MainActivity extends Activity {
             } catch (Exception e) {
                 return agentFail(e);
             }
+        }
+
+        @JavascriptInterface
+        public void browserCommand(String action, String arg, String callbackId) {
+            final String id = callbackId == null ? "" : callbackId;
+            runOnUiThread(() -> {
+                if (agentBrowser == null) {
+                    sendBrowserResult(id, "{\"ok\":false,\"error\":\"Браузер недоступен\"}");
+                    return;
+                }
+                agentBrowser.command(action, arg, result -> {
+                    String payload = result == null ? "{}" : result.toString();
+                    sendBrowserResult(id, payload);
+                });
+            });
+        }
+
+        private void sendBrowserResult(String id, String payload) {
+            if (web == null) return;
+            web.evaluateJavascript(
+                    "window.__browserResult && window.__browserResult("
+                            + JSONObject.quote(id) + "," + JSONObject.quote(payload) + ")",
+                    null);
         }
 
         @JavascriptInterface

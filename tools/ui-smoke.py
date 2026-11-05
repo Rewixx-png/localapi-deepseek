@@ -151,13 +151,22 @@ MOCK = r"""
       }
       c.messages.push({ role: 'user', content: text, ts: Date.now() });
       c.updated_at = Date.now();
-      st.stream = { chatId: c.id, ri: 0, ci: 0, reasoning: '', content: '', chat: c, search: !!search };
+      if (text.indexOf('[TOOL_RESULT]') === 0) window.__lastSentImages = images;
+      st.stream = { chatId: c.id, ri: 0, ci: 0, reasoning: '', content: '', chat: c,
+        search: !!search, browser: text.indexOf('BROWSER_TEST') >= 0 };
       persist();
       return ok({ stream_id: 7, chat: c });
     },
     poll: () => {
       const s = st.stream;
       if (!s) return bad('not_found', 'Поток не найден');
+      if (s.browser && !s.browserSent) {
+        s.browserSent = true;
+        s.ri = REASON.length;
+        s.ci = CONTENT.length;
+        s.reasoning = '';
+        s.content = '[[BROWSER: screenshot]]';
+      }
       let progressed = false;
       if (s.ri < REASON.length) { s.reasoning += REASON[s.ri++]; progressed = true; }
       else if (s.ci < CONTENT.length) { s.content += CONTENT[s.ci++]; progressed = true; }
@@ -202,8 +211,19 @@ MOCK = r"""
     requestBattery: () => { st.perms.battery = 'ignoring'; persist(); return JSON.stringify(st.perms); },
     readClipboard: () => 'sk-test-token-1234567890',
     openUrl: url => { window.__openedUrl = url; return '{}'; },
+    browserCommand: (action, arg, id) => {
+      setTimeout(() => {
+        try {
+          window.__browserResult(id, JSON.stringify({
+            ok: true, action: action, url: 'https://example.com', title: 'Example',
+            text: 'Example page text', links: [],
+            screenshot: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII='
+          }));
+        } catch (e) { /* ignore */ }
+      }, 0);
+    },
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.8.1', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.9.0', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -566,6 +586,21 @@ with sync_playwright() as p:
     page.wait_for_timeout(500)
     assert "README.md" in page.evaluate("window.__lastSystemPrompt || ''")
     assert "# Readme" in page.evaluate("window.__lastSystemPrompt || ''")
+
+    # Browser tool loop: an assistant [[BROWSER]] directive must execute through
+    # the native bridge, render one collapsible browser block and pass the
+    # screenshot into the next model request.
+    page.wait_for_selector("#send-btn:not(.stop)", timeout=5000)
+    page.fill("#input", "BROWSER_TEST")
+    page.click("#send-btn")
+    page.wait_for_selector(".tool-block .tool-label", timeout=5000)
+    page.wait_for_timeout(900)
+    assert "БРАУЗЕР" in page.inner_text(".tool-block")
+    page.click(".tool-block .tool-toggle")
+    assert "Example page text" in page.inner_text(".tool-block")
+    assert "data:image/png;base64" in page.evaluate("window.__lastSentImages || ''")
+    page.screenshot(path=f"{SHOTS}/17b-browser.png")
+
     page.click("#menu-btn")
     page.wait_for_timeout(300)
     page.click("#agent-mode")
