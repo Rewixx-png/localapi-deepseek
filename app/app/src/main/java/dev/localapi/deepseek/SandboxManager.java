@@ -388,6 +388,13 @@ final class SandboxManager {
                 + "/bin/busybox route add default gw 10.0.2.2 eth0 2>/dev/null\n"
                 + "printf 'nameserver 10.0.2.3\\n' > /etc/resolv.conf\n"
                 + "date -u -s \"" + date + "\" 2>/dev/null\n"
+                + "export http_proxy=http://10.0.2.2:8888\n"
+                + "export https_proxy=http://10.0.2.2:8888\n"
+                + "[ -e /usr/bin/top ] || ln -s /bin/busybox /usr/bin/top 2>/dev/null\n"
+                + "printf '#!/bin/sh\napt-get update && apt-get install -y --no-install-recommends curl ca-certificates htop procps\n' > /usr/bin/install-base\n"
+                + "chmod +x /usr/bin/install-base\n"
+                + "printf 'Acquire::http::Proxy \"http://10.0.2.2:8888\";\\n"
+                + "Acquire::https::Proxy \"http://10.0.2.2:8888\";\\n' > /etc/apt/apt.conf.d/99proxy\n"
                 + "echo __LOCALAPI_NET_READY__\n";
         try {
             synchronized (writeLock) {

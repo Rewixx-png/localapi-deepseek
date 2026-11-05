@@ -97,6 +97,7 @@ public final class MainActivity extends Activity {
 
         web.setWebViewClient(new AssetsClient());
         agentBrowser = new AgentBrowser(this);
+        SandboxProxy.start();
         web.addJavascriptInterface(new Bridge(), "Native");
         sandbox = new SandboxManager(this, web);
         tunnel = CloudflareTunnel.get(this);
@@ -498,6 +499,7 @@ public final class MainActivity extends Activity {
             agentBrowser.destroy();
             agentBrowser = null;
         }
+        SandboxProxy.stop();
         super.onDestroy();
     }
 
