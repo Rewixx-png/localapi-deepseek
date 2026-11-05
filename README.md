@@ -45,7 +45,10 @@ PoW, потоковый SSE с рассуждениями и локальная 
   модель как изображение (Flash 1017) для мультимодального зрения.
   Публичная SAF-папка и кнопки
   «Папка»/«Очистить» убраны — весь обмен идёт через workspace песочницы;
-  удаление файлов доступно агенту и через терминал. Кнопка «Инструменты
+  удаление файлов доступно агенту и через терминал. Песочница имеет выход в
+  интернет через QEMU slirp: `eth0` получает 10.0.2.15, шлюз 10.0.2.2, DNS
+  10.0.2.3; при старте синхронизируется UTC-время, поэтому `apt`, `wget`/HTTP и
+  `curl` после установки работают. Кнопка «Инструменты
   агента» находится в правом меню; Python/Java/Node агент устанавливает сам.
 - Markdown в ответах: заголовки `#`…`######`, списки, цитаты, ссылки,
   `**жирный**`, `*курсив*`, `~~зачёркнутый~~`, блоки кода с копированием,
@@ -244,7 +247,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.9.1-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.10.0-debug.apk`.
 
 ## Обновления
 
@@ -266,9 +269,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 58,
-  "versionName": "1.9.1",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.9.1/LocalApiDeepSeek.apk",
+  "versionCode": 59,
+  "versionName": "1.10.0",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.10.0/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }
