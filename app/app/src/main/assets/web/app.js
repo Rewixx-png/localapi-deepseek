@@ -146,9 +146,109 @@
       .replace(/"/g, "&quot;");
   }
 
+  function protectMath(text) {
+    var stored = [];
+    var source = String(text || "");
+    var protectedText = source.replace(
+      /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g,
+      function (match) {
+        var token = "@@KATEX_MATH_" + stored.length + "@@";
+        stored.push(match);
+        return token;
+      }
+    );
+    return { text: protectedText, math: stored };
+  }
+
+  function restoreMath(html, math) {
+    if (!math || !math.length) return html;
+    return String(html).replace(/@@KATEX_MATH_(\d+)@@/g, function (_, index) {
+      var value = math[Number(index)];
+      return value == null ? "" : escapeHtml(value);
+    });
+  }
+
+  function renderMath(root) {
+    if (!root || !window.renderMathInElement) return;
+    try {
+      window.renderMathInElement(root, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "\\[", right: "\\]", display: true },
+          { left: "\\(", right: "\\)", display: false },
+          { left: "$", right: "$", display: false }
+        ],
+        ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+        throwOnError: false,
+        strict: false,
+        errorColor: "#ff9b9b"
+      });
+    } catch (e) { /* malformed math must not break the message */ }
+  }
+
+  var FONT_CLASSES = {
+    serif: "md-font-serif",
+    sans: "md-font-sans",
+    mono: "md-font-mono",
+    cursive: "md-font-cursive",
+    condensed: "md-font-condensed",
+    light: "md-font-light",
+    black: "md-font-black",
+    smallcaps: "md-font-smallcaps"
+  };
+
+  function applyCustomFonts(root) {
+    if (!root) return;
+    var nodes = [];
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        var parent = node.parentNode;
+        while (parent && parent !== root) {
+          var tag = (parent.tagName || "").toLowerCase();
+          if (tag === "pre" || tag === "code" || tag === "script" ||
+              tag === "style" || tag === "textarea" ||
+              (parent.classList && parent.classList.contains("katex"))) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          parent = parent.parentNode;
+        }
+        return String(node.nodeValue || "").indexOf("[[font:") >= 0
+          ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function (node) {
+      var text = node.nodeValue || "";
+      var re = /\[\[font:([a-z-]+)\|([\s\S]*?)\]\]/gi;
+      var match;
+      var last = 0;
+      var fragment = document.createDocumentFragment();
+      var changed = false;
+      while ((match = re.exec(text))) {
+        var cls = FONT_CLASSES[String(match[1]).toLowerCase()];
+        if (!cls) continue;
+        changed = true;
+        if (match.index > last) {
+          fragment.appendChild(document.createTextNode(text.slice(last, match.index)));
+        }
+        var span = document.createElement("span");
+        span.className = cls;
+        span.textContent = match[2];
+        fragment.appendChild(span);
+        last = match.index + match[0].length;
+      }
+      if (!changed) return;
+      if (last < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(last)));
+      }
+      node.parentNode.replaceChild(fragment, node);
+    });
+  }
+
   function renderMarkdown(text) {
     if (!text) return "";
-    var parts = String(text).split("```");
+    var protectedMath = protectMath(text);
+    var parts = protectedMath.text.split("```");
     var html = "";
     for (var i = 0; i < parts.length; i++) {
       var part = parts[i];
@@ -179,7 +279,7 @@
         html += renderBlocks(part);
       }
     }
-    return html;
+    return restoreMath(html, protectedMath.math);
   }
 
   function normalizeCodeLang(lang) {
@@ -244,6 +344,8 @@
         code.textContent = raw;
       }
     });
+    applyCustomFonts(root);
+    renderMath(root);
   }
 
   function splitTableRow(line) {
@@ -2869,6 +2971,14 @@
     }
   }
 
+  function formattingPrompt() {
+    return "Форматирование ответа: математику оформляй в LaTeX "
+      + "(например `\\(x^2\\)` или `\\[ ... \\]`). Отдельные слова можно "
+      + "выделить шрифтом синтаксисом [[font:serif|слово]], [[font:sans|слово]], "
+      + "[[font:mono|слово]], [[font:cursive|слово]], [[font:condensed|слово]], "
+      + "[[font:light|слово]], [[font:black|слово]]. Не используй raw HTML.";
+  }
+
   function renderMessages() {
     var box = $("#messages");
     box.innerHTML = "";
@@ -3255,6 +3365,8 @@
     if (agentSuffix) {
       outboundSystem = outboundSystem ? outboundSystem + "\n\n" + agentSuffix : agentSuffix;
     }
+    var formatSuffix = formattingPrompt();
+    outboundSystem = outboundSystem ? outboundSystem + "\n\n" + formatSuffix : formatSuffix;
 
     var start;
     try {
@@ -3389,6 +3501,8 @@
     var system = S.systemPrompt || "";
     var suffix = agentPromptSuffix();
     if (suffix) system = system ? system + "\n\n" + suffix : suffix;
+    var formatting = formattingPrompt();
+    system = system ? system + "\n\n" + formatting : formatting;
     S.streamStartedAt = performance.now();
     S.firstTokenAt = 0;
     S.reasoningStartedAt = 0;

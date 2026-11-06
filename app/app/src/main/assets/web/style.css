@@ -804,6 +804,17 @@ a { color: var(--primary); text-decoration: none; }
 .sandbox-notice.stopped .sandbox-dot { background: var(--outline); }
 .sandbox-notice.error .sandbox-dot { background: var(--error); }
 .msg-meta button .icon { width: 14px; height: 14px; }
+.katex { color: inherit; }
+.katex-display { margin: 12px 0; overflow-x: auto; overflow-y: hidden; }
+.katex-display > .katex { font-size: 1.08em; }
+.md-font-serif { font-family: Georgia, "Noto Serif", serif; }
+.md-font-sans { font-family: Roboto, "Noto Sans", sans-serif; }
+.md-font-mono { font-family: "Roboto Mono", monospace; }
+.md-font-cursive { font-family: "Dancing Script", "Comic Sans MS", cursive; }
+.md-font-condensed { font-family: "Roboto Condensed", "Arial Narrow", sans-serif; }
+.md-font-light { font-family: "Roboto Light", "Segoe UI Light", sans-serif; font-weight: 300; }
+.md-font-black { font-family: "Roboto Black", "Segoe UI Black", sans-serif; font-weight: 900; }
+.md-font-smallcaps { font-variant: small-caps; letter-spacing: .04em; }
 .msg-meta button:active { color: var(--primary); }
 .msg-error { color: var(--error); font-size: 13px; line-height: 1.45; margin-top: 8px; }
 .stream-stage {

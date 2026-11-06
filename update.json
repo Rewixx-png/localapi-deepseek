@@ -1,7 +1,7 @@
 {
-  "versionCode": 67,
-  "versionName": "1.11.6",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.6/LocalApiDeepSeek.apk",
-  "sha256": "31840f6647041c8c095a6c13a278cc74b27c34e1abf0bbdf5d920c0e9889b59a",
-  "notes": "В agent-чате появились системные строки «Песочница запущена/остановлена» с временем; сохраняются локально. Вывод команд разделён на команду и «ВЫВОД», install-base расширен. Web-агент на постоянной сессии."
+  "versionCode": 68,
+  "versionName": "1.11.7",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.7/LocalApiDeepSeek.apk",
+  "sha256": "3555a793eaa162831257f45815353c635a7b416be4cf10794dc7f59b7b380fe1",
+  "notes": "LaTeX-формулы рендерятся локальным KaTeX (\\(...\\), \\[...\\], $...$, 97762...97762). Модель может выбирать шрифт слов через [[font:serif|...]], sans, mono, cursive, condensed, light, black; инструкция добавлена в каждый запрос."
 }
