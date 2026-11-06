@@ -175,6 +175,9 @@ fn cleanup_web_sessions(web: WebApi, store: Arc<Store>) {
         let Ok(mut conv) = store.get(&chat.id) else {
             continue;
         };
+        if conv.normalized_kind() == "agent" {
+            continue;
+        }
         if conv.web_session_id.is_empty() {
             continue;
         }
@@ -194,12 +197,18 @@ fn save_answer(
     reasoning: &str,
     sources: &[Source],
     web_parent_id: Option<i64>,
+    web_session: Option<(String, Option<i64>)>,
 ) -> Result<(), Error> {
     if content.is_empty() && reasoning.is_empty() {
         return Ok(());
     }
     let mut latest = store.get(chat_id).unwrap_or_else(|_| fallback.clone());
-    if let Some(parent) = web_parent_id {
+    if let Some((session, parent)) = web_session {
+        // Persistent web session for agent chats: the remote thread keeps the
+        // task/tool context and avoids replaying a labelled local transcript.
+        latest.web_session_id = session;
+        latest.web_parent_id = parent;
+    } else if let Some(parent) = web_parent_id {
         latest.web_parent_id = Some(parent);
     } else {
         latest.web_session_id.clear();
@@ -769,9 +778,12 @@ impl Engine {
         let worker_stream = Arc::clone(&stream);
         let worker_store = Arc::clone(&store);
         let worker_chat = conv.id.clone();
+        let is_agent = fallback.normalized_kind() == "agent";
         std::thread::Builder::new()
             .name(format!("deepseek-stream-{stream_id}"))
             .spawn(move || {
+                let mut web_session_saved: Option<String> = None;
+                let mut web_parent_saved: Option<i64> = None;
                 let result: Result<Option<Usage>, Error> = match mode {
                     AuthMode::Api => match api {
                         Some(api) => {
@@ -836,16 +848,22 @@ impl Engine {
                             );
                             match uploads {
                                 Ok(ref_file_ids) => {
-                                    // Web sessions are ephemeral: the official
-                                    // DeepSeek sidebar must not keep our chats.
-                                    // The transcript is flattened into the prompt
-                                    // instead of relying on a server-side session.
+                                    let mut session_id = String::new();
+                                    let mut parent_id = None;
                                     if let Ok(old) = worker_store.get(&worker_chat) {
-                                        if !old.web_session_id.is_empty() {
+                                        if is_agent && !old.web_session_id.is_empty() {
+                                            session_id = old.web_session_id.clone();
+                                            parent_id = old.web_parent_id;
+                                        } else if !is_agent && !old.web_session_id.is_empty() {
                                             let _ = web.delete_session(&old.web_session_id);
                                         }
                                     }
-                                    match web.create_session() {
+                                    let session = if session_id.is_empty() {
+                                        web.create_session()
+                                    } else {
+                                        Ok(session_id.clone())
+                                    };
+                                    match session {
                                         Ok(session_id) => {
                                             let mut started = false;
                                             let mut on_delta = |delta: WebDelta| {
@@ -866,10 +884,26 @@ impl Engine {
                                                 &worker_stream,
                                                 Some(if search { "searching" } else { "writing" }),
                                             );
-                                            let transcript = web::prompt(&history);
+                                            let transcript = if is_agent {
+                                                if parent_id.is_some() {
+                                                    prompt.clone()
+                                                } else {
+                                                    let system = history.iter()
+                                                        .find(|m| m.role == "system")
+                                                        .map(|m| m.content.clone())
+                                                        .unwrap_or_default();
+                                                    if system.is_empty() {
+                                                        prompt.clone()
+                                                    } else {
+                                                        format!("{system}\n\n{prompt}")
+                                                    }
+                                                }
+                                            } else {
+                                                web::prompt(&history)
+                                            };
                                             let result = web.stream_completion(
                                                 &session_id,
-                                                None,
+                                                parent_id,
                                                 &transcript,
                                                 Some("default"),
                                                 thinking,
@@ -878,7 +912,14 @@ impl Engine {
                                                 &worker_stream.cancel,
                                                 &mut on_delta,
                                             );
-                                            let _ = web.delete_session(&session_id);
+                                            if is_agent {
+                                                if let Ok(new_parent) = result {
+                                                    web_session_saved = Some(session_id.clone());
+                                                    web_parent_saved = new_parent;
+                                                }
+                                            } else {
+                                                let _ = web.delete_session(&session_id);
+                                            }
                                             result.map(|_| None)
                                         }
                                         Err(e) => Err(e),
@@ -908,6 +949,7 @@ impl Engine {
                         &reasoning,
                         &sources,
                         None,
+                        web_session_saved.clone().map(|s| (s, web_parent_saved)),
                     ),
                     Err(e) if e.kind == ErrorKind::Cancelled => save_answer(
                         &worker_store,
@@ -917,6 +959,7 @@ impl Engine {
                         &reasoning,
                         &sources,
                         None,
+                        web_session_saved.clone().map(|s| (s, web_parent_saved)),
                     ),
                     Err(_) => Ok(()),
                 };
