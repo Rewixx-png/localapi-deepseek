@@ -55,6 +55,32 @@ pub fn prompt(messages: &[Message]) -> String {
     if messages.len() == 1 {
         return messages[0].content.clone();
     }
+    // Agent tool loops add hidden [TOOL_RESULT] user messages. Replaying the
+    // whole labelled transcript makes DeepSeek web sometimes continue the
+    // transcript instead of answering ("User: ... Assistant: ..."). Use a
+    // compact task + latest tool result prompt for that case.
+    let first_user = messages.iter().find(|m| {
+        m.role == "user" && !m.content.starts_with("[TOOL_RESULT]")
+    });
+    let last_tool = messages.iter().rev().find(|m| {
+        m.role == "user" && m.content.starts_with("[TOOL_RESULT]")
+    });
+    if let (Some(user), Some(tool)) = (first_user, last_tool) {
+        let tool_text = tool.content
+            .split("\n\nПродолжай.")
+            .next()
+            .unwrap_or(tool.content.as_str());
+        let mut out = String::new();
+        out.push_str("System: Ты в агентском tool-loop. Не пересказывай и не повторяй ");
+        out.push_str("историю, tool results или строки User/Assistant. Отвечай только ");
+        out.push_str("новым сообщением Assistant.\n\n");
+        out.push_str("User: ");
+        out.push_str(&user.content);
+        out.push_str("\n\nTool result:\n");
+        out.push_str(tool_text);
+        out.push_str("\n\nAssistant:");
+        return out;
+    }
     let mut out = String::new();
     for message in messages {
         let label = match message.role.as_str() {
@@ -728,6 +754,29 @@ fn fragment_list(value: &Value) -> Vec<Value> {
 }
 
 /// `response/fragments/-1/content` → -1; other paths → None.
+#[cfg(test)]
+mod prompt_tests {
+    use super::prompt;
+    use crate::types::Message;
+
+    #[test]
+    fn agent_tool_prompt_is_compact_and_does_not_replay_transcript() {
+        let mut old = Message::assistant("OLD ASSISTANT ANSWER", "");
+        old.role = "assistant".to_string();
+        let messages = vec![
+            Message::user("original task"),
+            old,
+            Message::user("[TOOL_RESULT]\nexit code: 0\noutput\n\nПродолжай. Если нужна ещё команда — ответь строкой [[EXEC: ...]]."),
+        ];
+        let text = prompt(&messages);
+        assert!(text.contains("original task"));
+        assert!(text.contains("output"));
+        assert!(!text.contains("OLD ASSISTANT ANSWER"));
+        assert!(!text.contains("[[EXEC"));
+        assert!(text.ends_with("Assistant:"));
+    }
+}
+
 fn fragment_content_index(path: &str) -> Option<i64> {
     let rest = path.strip_prefix("response/fragments/")?;
     let (index, tail) = rest.split_once('/')?;
