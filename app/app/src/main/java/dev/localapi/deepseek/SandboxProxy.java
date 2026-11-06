@@ -28,7 +28,7 @@ import java.util.List;
  */
 final class SandboxProxy {
     private static final String TAG = "SandboxProxy";
-    private static final int PORT = 8888;
+    private static final int PORT = 18991;
     private static final int MAX_BODY = 64 * 1024 * 1024;
 
     private static ServerSocket server;

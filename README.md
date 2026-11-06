@@ -47,7 +47,7 @@ PoW, потоковый SSE с рассуждениями и локальная 
   «Папка»/«Очистить» убраны — весь обмен идёт через workspace песочницы;
   удаление файлов доступно агенту и через терминал. Песочница использует
   постоянный ext4-root (`rootfs.img`) и сеть QEMU slirp (`eth0` 10.0.2.15,
-  шлюз 10.0.2.2) с HTTP-прокси приложения `10.0.2.2:8888`: через него работают
+  шлюз 10.0.2.2) с HTTP-прокси приложения `10.0.2.2:18991`: через него работают
   `apt` и HTTP даже при VPN с fake-IP, который ломает прямой TCP к `10.0.2.3`.
   Прокси и `http_proxy`/`https_proxy` настраиваются при старте; UTC-время
   синхронизируется. Файлы вне `/workspace` и установленные пакеты теперь
@@ -254,7 +254,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.11.2-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.11.3-debug.apk`.
 
 ## Обновления
 
@@ -276,9 +276,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 63,
-  "versionName": "1.11.2",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.2/LocalApiDeepSeek.apk",
+  "versionCode": 64,
+  "versionName": "1.11.3",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.3/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }
