@@ -223,7 +223,7 @@ MOCK = r"""
       }, 0);
     },
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.11.0', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.11.1', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -596,7 +596,9 @@ with sync_playwright() as p:
     page.wait_for_selector(".tool-block .tool-label", timeout=5000)
     page.wait_for_timeout(900)
     assert "БРАУЗЕР" in page.inner_text(".tool-block")
-    page.click(".tool-block .tool-toggle")
+    if page.locator(".tool-block .tool-body").is_hidden():
+        page.click(".tool-block .tool-toggle")
+    assert page.locator(".tool-block .tool-body").is_visible()
     assert "Example page text" in page.inner_text(".tool-block")
     assert "data:image/png;base64" in page.evaluate("window.__lastSentImages || ''")
     page.screenshot(path=f"{SHOTS}/17b-browser.png")
