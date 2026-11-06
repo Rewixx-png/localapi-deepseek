@@ -53,6 +53,8 @@ PoW, потоковый SSE с рассуждениями и локальная 
   синхронизируется. Файлы вне `/workspace` и установленные пакеты теперь
   переживают перезапуск. `top` доступен через busybox, `curl`/`ca-certificates`/
   `htop`/`procps` ставятся командой `install-base` и сохраняются в образе.
+  При запуске/остановке песочницы в agent-чате появляется системная строка
+  «Песочница запущена/остановлена» с временем (сохраняется локально).
   Вывод shell-команды показывается в чате построчно во время выполнения
   (включая долгий apt; для apt/install-base таймаут 15 минут).
   Кнопка «Инструменты агента» находится в правом меню; Python/Java/Node агент
@@ -254,7 +256,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.11.5-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.11.6-debug.apk`.
 
 ## Обновления
 
@@ -276,9 +278,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 66,
-  "versionName": "1.11.5",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.5/LocalApiDeepSeek.apk",
+  "versionCode": 67,
+  "versionName": "1.11.6",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.6/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }

@@ -53,6 +53,7 @@ final class SandboxManager {
     private final Object execLock = new Object();
     private final Object writeLock = new Object();
     private volatile boolean networkConfigured;
+    private volatile String activeChatId = "";
     private static final String PREFS = "sandbox_config";
     private static final String KEY_RAM = "ram_mb";
     private static final String KEY_CORES = "cores";
@@ -186,6 +187,7 @@ final class SandboxManager {
         }
         try {
             loadConfig();
+            activeChatId = chatId == null ? "" : chatId;
             File dir = dir(activity);
             String libs = activity.getApplicationInfo().nativeLibraryDir;
             File qemu = new File(libs, "libqemu-system-aarch64.so");
@@ -237,7 +239,8 @@ final class SandboxManager {
                 serial.setLength(0);
             }
             log("sandbox start " + VERSION + " chat=" + chatId);
-            runJs("window.__sandboxStarted && window.__sandboxStarted()");
+            runJs("window.__sandboxStarted && window.__sandboxStarted("
+                    + JSONObject.quote(activeChatId) + ")");
             new Thread(() -> {
                 File logFile = new File(activity.getCacheDir(), "sandbox.log");
                 try (InputStream in = process.getInputStream();
@@ -268,15 +271,18 @@ final class SandboxManager {
                 } catch (Exception ignored) {
                 }
                 running = false;
+                String exitedChat = activeChatId;
+                activeChatId = "";
                 log("sandbox exit code=" + code);
-                runJs("window.__sandboxExit && window.__sandboxExit(" + code + ")");
+                runJs("window.__sandboxExit && window.__sandboxExit(" + code + ","
+                        + JSONObject.quote(exitedChat) + ")");
             }, "sandbox-output").start();
         } catch (Exception e) {
             running = false;
             String message = e.getMessage() == null ? "QEMU не запустился" : e.getMessage();
             log("sandbox start error: " + message);
             runJs("window.__sandboxError && window.__sandboxError("
-                    + JSONObject.quote(message) + ")");
+                    + JSONObject.quote(message) + "," + JSONObject.quote(activeChatId) + ")");
         }
     }
 

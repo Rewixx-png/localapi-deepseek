@@ -2807,12 +2807,75 @@
     }
   }
 
+  function sandboxNoticeKey(chatId) {
+    return "sandboxNotices:" + chatId;
+  }
+
+  function loadSandboxNotices(chatId) {
+    if (!chatId) return [];
+    try {
+      var raw = localStorage.getItem(sandboxNoticeKey(chatId));
+      var list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list.slice(-30) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveSandboxNotice(chatId, item) {
+    if (!chatId) return;
+    try {
+      var list = loadSandboxNotices(chatId);
+      list.push(item);
+      localStorage.setItem(sandboxNoticeKey(chatId), JSON.stringify(list.slice(-30)));
+    } catch (e) { /* ignore */ }
+  }
+
+  function sandboxNoticeEl(item) {
+    var row = document.createElement("div");
+    row.className = "sandbox-notice " + (item.kind || "");
+    var dot = document.createElement("span");
+    dot.className = "sandbox-dot";
+    var text = document.createElement("span");
+    var time = "";
+    try {
+      time = new Date(item.ts || Date.now()).toLocaleTimeString("ru-RU",
+        { hour: "2-digit", minute: "2-digit" });
+    } catch (e) { /* ignore */ }
+    text.textContent = (item.text || "") + (time ? " · " + time : "");
+    row.appendChild(dot);
+    row.appendChild(text);
+    return row;
+  }
+
+  function appendSandboxNotices(box, chatId) {
+    if (!box || !S.agentMode || !chatId) return;
+    loadSandboxNotices(chatId).forEach(function (item) {
+      if (item && item.text) box.appendChild(sandboxNoticeEl(item));
+    });
+  }
+
+  function showSandboxNotice(chatId, text, kind) {
+    if (!chatId) chatId = S.chat && S.chat.id;
+    if (!chatId) return;
+    var item = { text: text, kind: kind || "", ts: Date.now() };
+    saveSandboxNotice(chatId, item);
+    if (S.agentMode && S.chat && S.chat.id === chatId) {
+      var box = $("#messages");
+      if (box) {
+        box.appendChild(sandboxNoticeEl(item));
+        scrollToBottom(true);
+      }
+    }
+  }
+
   function renderMessages() {
     var box = $("#messages");
     box.innerHTML = "";
     var messages = S.chat && S.chat.messages ? S.chat.messages : [];
     if (!messages.length) {
       box.appendChild(emptyState());
+      appendSandboxNotices(box, S.chat && S.chat.id);
       refreshContextMeter();
       return;
     }
@@ -2841,6 +2904,7 @@
         result ? result.output : "", result ? result.code : "?", !result);
       box.appendChild(block.row);
     }
+    appendSandboxNotices(box, S.chat && S.chat.id);
     refreshContextMeter();
     scrollToBottom(true);
   }
@@ -3889,15 +3953,17 @@
     toast("Песочница установлена");
   };
 
-  window.__sandboxError = function (message) {
+  window.__sandboxError = function (message, chatId) {
     journalLine("sandbox", "Ошибка: " + (message || "unknown"));
     toast(message || "Ошибка песочницы");
+    showSandboxNotice(chatId, "Ошибка песочницы: " + (message || "неизвестно"), "error");
     var el = $("#sandbox-progress");
     if (el) el.textContent = message || "Ошибка";
   };
 
-  window.__sandboxStarted = function () {
+  window.__sandboxStarted = function (chatId) {
     journalLine("sandbox", "QEMU запущен");
+    showSandboxNotice(chatId, "Песочница запущена", "started");
     refreshSandbox();
   };
 
@@ -3938,8 +4004,12 @@
     continueAgentWithTool(output || "(пусто)", code);
   };
 
-  window.__sandboxExit = function (code) {
+  window.__sandboxExit = function (code, chatId) {
     journalLine("sandbox", "QEMU завершился, код " + code);
+    var message = String(code) === "0"
+      ? "Песочница остановлена"
+      : "Песочница остановлена (код " + code + ")";
+    showSandboxNotice(chatId, message, String(code) === "0" ? "stopped" : "error");
     refreshSandbox();
   };
 

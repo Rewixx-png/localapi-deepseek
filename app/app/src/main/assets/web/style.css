@@ -795,6 +795,14 @@ a { color: var(--primary); text-decoration: none; }
   font-size: 11.5px; padding: 2px 0; cursor: pointer;
   display: inline-flex; align-items: center; gap: 4px;
 }
+.sandbox-notice {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  margin: 12px 0; color: var(--on-surface-variant);
+  font-size: 11.5px; line-height: 1.3; text-align: center;
+}
+.sandbox-dot { width: 7px; height: 7px; border-radius: 50%; background: #7bd88f; flex: 0 0 7px; }
+.sandbox-notice.stopped .sandbox-dot { background: var(--outline); }
+.sandbox-notice.error .sandbox-dot { background: var(--error); }
 .msg-meta button .icon { width: 14px; height: 14px; }
 .msg-meta button:active { color: var(--primary); }
 .msg-error { color: var(--error); font-size: 13px; line-height: 1.45; margin-top: 8px; }
