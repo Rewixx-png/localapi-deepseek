@@ -1,7 +1,7 @@
 {
-  "versionCode": 65,
-  "versionName": "1.11.4",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.4/LocalApiDeepSeek.apk",
-  "sha256": "e978922bd0a31a1fd9c8e84594ea78af3458953823eeb1d46d8125df71d2eadb",
-  "notes": "Web-агент переведён на постоянную серверную сессию с parent_message_id: модель больше не теряет задачу и не отвечает «Привет! Чем помочь?» после tool-loop. Обычные web-чаты остаются эфемерными; для agent-чатов сессия сохраняется."
+  "versionCode": 66,
+  "versionName": "1.11.5",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.5/LocalApiDeepSeek.apk",
+  "sha256": "7ef349f852b3a63d103fc1e576c6ee781c59f5548e08eb398047c3779e547447",
+  "notes": "В блоке команды теперь отдельно показаны команда и секция «ВЫВОД». install-base расширен: python3, pip, git, wget, dnsutils, iputils-ping; apt/HTTP идут через host-прокси 18991. Локальный DNS 10.0.2.3 может не работать при VPN fake-IP — домены резолвит прокси."
 }

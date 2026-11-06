@@ -425,7 +425,7 @@ final class SandboxManager {
                 + "export http_proxy=http://10.0.2.2:18991\n"
                 + "export https_proxy=http://10.0.2.2:18991\n"
                 + "[ -e /usr/bin/top ] || ln -s /bin/busybox /usr/bin/top 2>/dev/null\n"
-                + "printf '#!/bin/sh\napt-get update && apt-get install -y --no-install-recommends curl ca-certificates htop procps\n' > /usr/bin/install-base\n"
+                + "printf '#!/bin/sh\napt-get update && apt-get install -y --no-install-recommends curl ca-certificates htop procps python3 python3-pip git wget dnsutils iputils-ping\n' > /usr/bin/install-base\n"
                 + "chmod +x /usr/bin/install-base\n"
                 + "printf 'Acquire::http::Proxy \"http://10.0.2.2:18991\";\\n"
                 + "Acquire::https::Proxy \"http://10.0.2.2:18991\";\\n' > /etc/apt/apt.conf.d/99proxy\n"
