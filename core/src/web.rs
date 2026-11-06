@@ -59,13 +59,13 @@ pub fn prompt(messages: &[Message]) -> String {
     // whole labelled transcript makes DeepSeek web sometimes continue the
     // transcript instead of answering ("User: ... Assistant: ..."). Use a
     // compact task + latest tool result prompt for that case.
-    let first_user = messages.iter().find(|m| {
+    let last_user = messages.iter().rev().find(|m| {
         m.role == "user" && !m.content.starts_with("[TOOL_RESULT]")
     });
     let last_tool = messages.iter().rev().find(|m| {
         m.role == "user" && m.content.starts_with("[TOOL_RESULT]")
     });
-    if let (Some(user), Some(tool)) = (first_user, last_tool) {
+    if let (Some(user), Some(tool)) = (last_user, last_tool) {
         let tool_text = tool.content
             .split("\n\nПродолжай.")
             .next()

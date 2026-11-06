@@ -1,7 +1,7 @@
 {
-  "versionCode": 64,
-  "versionName": "1.11.3",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.3/LocalApiDeepSeek.apk",
-  "sha256": "53895236d8652356a4da8b5f5f2542b398b35b1abe663b40259feec77b11f25f",
-  "notes": "Порт host-прокси перенесён с 8888 на 18991, чтобы не конфликтовать с локальным прокси VPN (из-за него guest получал 502). Web-agent не повторяет транскрипт, вывод команд стримится, sandbox-root ext4 сохраняется."
+  "versionCode": 65,
+  "versionName": "1.11.4",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.4/LocalApiDeepSeek.apk",
+  "sha256": "e978922bd0a31a1fd9c8e84594ea78af3458953823eeb1d46d8125df71d2eadb",
+  "notes": "Web-агент переведён на постоянную серверную сессию с parent_message_id: модель больше не теряет задачу и не отвечает «Привет! Чем помочь?» после tool-loop. Обычные web-чаты остаются эфемерными; для agent-чатов сессия сохраняется."
 }
