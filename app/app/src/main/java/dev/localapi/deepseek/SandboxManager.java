@@ -301,10 +301,14 @@ final class SandboxManager {
                         process.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
                         process.getOutputStream().flush();
                     }
-                    long deadline = System.currentTimeMillis() + 120_000;
+                    long timeoutMs = (command.contains("install-base")
+                            || command.contains("apt-get")) ? 900_000L : 120_000L;
+                    long deadline = System.currentTimeMillis() + timeoutMs;
                     int endAt = -1;
                     int code = -1;
+                    String lastChunk = "";
                     while (System.currentTimeMillis() < deadline) {
+                        String partial = null;
                         synchronized (serialLock) {
                             String buffer = serial.toString();
                             // The interactive shell echoes the command, including
@@ -326,7 +330,24 @@ final class SandboxManager {
                                 }
                             }
                             if (endAt >= 0) break;
+                            int beginAt = buffer.lastIndexOf(begin);
+                            if (beginAt >= 0) {
+                                partial = buffer.substring(beginAt + begin.length());
+                            }
                             serialLock.wait(200);
+                        }
+                        if (partial != null) {
+                            String chunk = cleanShellOutput(
+                                    partial.replace(begin, "").replace(end, "").trim(), command);
+                            if (chunk.length() > 16000) {
+                                chunk = chunk.substring(0, 16000) + "\n[вывод обрезан]";
+                            }
+                            if (!chunk.equals(lastChunk)) {
+                                lastChunk = chunk;
+                                runJs("window.__sandboxExecChunk && window.__sandboxExecChunk("
+                                        + JSONObject.quote(id) + ","
+                                        + JSONObject.quote(chunk) + ")");
+                            }
                         }
                     }
                     String buffer;

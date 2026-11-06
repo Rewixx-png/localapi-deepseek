@@ -2190,7 +2190,7 @@
         + "(root, рабочая папка /workspace). Для shell-команды ответь директивой "
         + "[[EXEC: команда]] (можно вместе с коротким текстом). "
         + "После результата приложение продолжит диалог автоматически. Не запускай "
-        + "интерактивные команды; таймаут 120 секунд. Не утверждай, что что-то "
+        + "интерактивные команды; обычный таймаут 120 секунд, для apt/install-base — 15 минут. Не утверждай, что что-то "
         + "выполнил, пока не получил вывод. В /workspace могут быть ZIP-архивы: "
         + "проверь `ls -la /workspace`, список — `/bin/busybox unzip -l файл.zip`, "
         + "распаковка — `/bin/busybox unzip файл.zip -d project`. "
@@ -2448,8 +2448,9 @@
 
     function paint(result, exitCode, isRunning) {
       var text = "$ " + command;
+      if (result) text += "\n\n" + result;
       if (!isRunning) {
-        text += "\n\n" + (result || "(пусто)") + "\nexit " + exitCode;
+        text += "\nexit " + exitCode;
         statusEl.textContent = "exit " + exitCode;
         statusEl.classList.toggle("ok", String(exitCode) === "0");
         statusEl.classList.toggle("bad", String(exitCode) !== "0");
@@ -2469,6 +2470,9 @@
       row: row,
       setResult: function (result, exitCode) {
         paint(result, exitCode, false);
+      },
+      setChunk: function (result) {
+        paint(result, null, true);
       }
     };
   }
@@ -2478,6 +2482,9 @@
     var box = $("#messages");
     if (box) {
       box.appendChild(block.row);
+      block.row.classList.add("open");
+      var toggle = block.row.querySelector(".tool-toggle");
+      if (toggle) toggle.setAttribute("aria-expanded", "true");
       scrollToBottom(true);
     }
     return block;
@@ -3903,6 +3910,12 @@
       box.scrollTop = box.scrollHeight;
     }
     appendTerminal(text);
+  };
+
+  window.__sandboxExecChunk = function (id, output) {
+    if (!S.agentPendingTool || S.agentPendingTool.id !== id) return;
+    var block = S.agentPendingTool.block;
+    if (block && block.setChunk) block.setChunk(output || "");
   };
 
   window.__sandboxExecResult = function (id, output, code) {
