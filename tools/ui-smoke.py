@@ -223,7 +223,7 @@ MOCK = r"""
       }, 0);
     },
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.11.5', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.11.6', package: 'dev.localapi.deepseek' })
   };
 })();
 """
@@ -558,6 +558,12 @@ with sync_playwright() as p:
     page.wait_for_timeout(400)
     assert page.is_visible("#agent-bar")
     assert page.inner_text("#agent-mode-label") == "Обычные чаты"
+    page.evaluate("window.__sandboxStarted && window.__sandboxStarted()")
+    page.wait_for_selector(".sandbox-notice.started")
+    page.evaluate("window.__sandboxExit && window.__sandboxExit(0)")
+    page.wait_for_timeout(100)
+    assert page.locator(".sandbox-notice.stopped").count() == 1
+    assert "Песочница остановлена" in page.inner_text(".sandbox-notice.stopped")
     page.evaluate("window.__nativeAgentZip && window.__nativeAgentZip()")
     page.wait_for_selector(".agent-file", timeout=3000)
     assert page.locator(".agent-file").count() == 2

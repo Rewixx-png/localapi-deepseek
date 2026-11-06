@@ -1,7 +1,7 @@
 {
-  "versionCode": 66,
-  "versionName": "1.11.5",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.5/LocalApiDeepSeek.apk",
-  "sha256": "7ef349f852b3a63d103fc1e576c6ee781c59f5548e08eb398047c3779e547447",
-  "notes": "В блоке команды теперь отдельно показаны команда и секция «ВЫВОД». install-base расширен: python3, pip, git, wget, dnsutils, iputils-ping; apt/HTTP идут через host-прокси 18991. Локальный DNS 10.0.2.3 может не работать при VPN fake-IP — домены резолвит прокси."
+  "versionCode": 67,
+  "versionName": "1.11.6",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.6/LocalApiDeepSeek.apk",
+  "sha256": "31840f6647041c8c095a6c13a278cc74b27c34e1abf0bbdf5d920c0e9889b59a",
+  "notes": "В agent-чате появились системные строки «Песочница запущена/остановлена» с временем; сохраняются локально. Вывод команд разделён на команду и «ВЫВОД», install-base расширен. Web-агент на постоянной сессии."
 }
