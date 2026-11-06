@@ -1,7 +1,7 @@
 {
-  "versionCode": 62,
-  "versionName": "1.11.1",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.1/LocalApiDeepSeek.apk",
-  "sha256": "357689b2b561b9f97bb164f95ebe5e462aab801a47e48e06e15e19320e94efe7",
-  "notes": "Вывод shell-команды теперь стримится в чат во время выполнения и блок раскрыт — видно, работает ли сеть/apt. Для apt/install-base таймаут 15 минут. Песочница на постоянном ext4-root и host-прокси."
+  "versionCode": 63,
+  "versionName": "1.11.2",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.2/LocalApiDeepSeek.apk",
+  "sha256": "ca49d04bb98cfc77014ff2476c45be981d543c10e8ccee411e4643231f089333",
+  "notes": "Web-режим агента больше не подмешивает весь помеченный транскрипт в prompt tool-loop: модель не повторяет User/Assistant и tool results. Живой вывод команд и постоянный ext4-root сохранены."
 }
