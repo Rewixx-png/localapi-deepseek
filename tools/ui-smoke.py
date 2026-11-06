@@ -223,7 +223,7 @@ MOCK = r"""
       }, 0);
     },
     restoreComposerText: text => { window.__restored = text; },
-    appInfo: () => JSON.stringify({ version: '1.11.4', package: 'dev.localapi.deepseek' })
+    appInfo: () => JSON.stringify({ version: '1.11.5', package: 'dev.localapi.deepseek' })
   };
 })();
 """

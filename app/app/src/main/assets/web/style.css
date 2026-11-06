@@ -753,6 +753,14 @@ a { color: var(--primary); text-decoration: none; }
 .tool-toggle .icon { width: 16px; height: 16px; flex: 0 0 16px; color: #8b949e; transition: transform .18s ease; }
 .tool-block.open .tool-toggle .icon { transform: rotate(180deg); }
 .tool-toggle .tool-label { margin: 0; }
+.tool-command { color: #e6edf3; }
+.tool-section-label {
+  margin: 10px 0 4px; padding-top: 8px;
+  border-top: 1px solid #242a31;
+  color: #8b949e; font: 10px/1.3 ui-monospace, "Roboto Mono", monospace;
+  text-transform: uppercase; letter-spacing: .6px;
+}
+.tool-output { color: #c9d1d9; }
 .tool-status { margin-left: auto; color: #8b949e; font-size: 10.5px; white-space: nowrap; }
 .tool-status.ok { color: #7bd88f; }
 .tool-status.bad { color: #ff9b9b; }

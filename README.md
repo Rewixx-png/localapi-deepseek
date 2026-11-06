@@ -254,7 +254,7 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 `jniLibs` и запускает `gradlew assembleDebug`.
 
 APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.11.4-debug.apk`.
+Готовый артефакт: `dist/localapi-deepseek-1.11.5-debug.apk`.
 
 ## Обновления
 
@@ -276,9 +276,9 @@ SHA-256 из манифеста проверяется до установки.
 
 ```json
 {
-  "versionCode": 65,
-  "versionName": "1.11.4",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.4/LocalApiDeepSeek.apk",
+  "versionCode": 66,
+  "versionName": "1.11.5",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.5/LocalApiDeepSeek.apk",
   "sha256": "…",
   "notes": "Что изменилось"
 }
