@@ -1,7 +1,7 @@
 {
-  "versionCode": 63,
-  "versionName": "1.11.2",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.2/LocalApiDeepSeek.apk",
-  "sha256": "ca49d04bb98cfc77014ff2476c45be981d543c10e8ccee411e4643231f089333",
-  "notes": "Web-режим агента больше не подмешивает весь помеченный транскрипт в prompt tool-loop: модель не повторяет User/Assistant и tool results. Живой вывод команд и постоянный ext4-root сохранены."
+  "versionCode": 64,
+  "versionName": "1.11.3",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.3/LocalApiDeepSeek.apk",
+  "sha256": "53895236d8652356a4da8b5f5f2542b398b35b1abe663b40259feec77b11f25f",
+  "notes": "Порт host-прокси перенесён с 8888 на 18991, чтобы не конфликтовать с локальным прокси VPN (из-за него guest получал 502). Web-agent не повторяет транскрипт, вывод команд стримится, sandbox-root ext4 сохраняется."
 }
