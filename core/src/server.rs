@@ -300,6 +300,13 @@ fn cached_web_session(
     Ok(session)
 }
 
+fn invalidate_web_session(cache: &Arc<Mutex<Option<String>>>, failed: &str) {
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.as_deref() == Some(failed) {
+        *guard = None;
+    }
+}
+
 fn complete(
     backend: &Backend,
     chat: &ChatRequest,
@@ -391,7 +398,37 @@ fn accumulate_web(
             Ok(())
         },
     );
-    result.map(|_| ())
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind == ErrorKind::Api && content.is_empty() && reasoning.is_empty() => {
+            invalidate_web_session(web_session, &session);
+            let fresh = cached_web_session(web, web_session)?;
+            web.stream_completion(
+                &fresh,
+                None,
+                &prompt,
+                Some(web_model(&chat.model)),
+                chat.thinking,
+                false,
+                &[],
+                &cancel,
+                &mut |delta| {
+                    match delta {
+                        WebDelta::Answer(s) => content.push_str(&s),
+                        WebDelta::Reasoning(s) => reasoning.push_str(&s),
+                    }
+                    Ok(())
+                },
+            )
+            .map(|_| ())
+        }
+        Err(e) => {
+            if e.kind == ErrorKind::Api {
+                invalidate_web_session(web_session, &session);
+            }
+            Err(e)
+        }
+    }
 }
 
 fn respond_stream(
@@ -444,7 +481,8 @@ fn respond_stream(
             Backend::Web(web) => match cached_web_session(web, &web_session) {
                 Ok(session) => {
                     let prompt = web_prompt(&chat.messages);
-                    web.stream_completion(
+                    let mut emitted = false;
+                    let first = web.stream_completion(
                         &session,
                         None,
                         &prompt,
@@ -453,9 +491,39 @@ fn respond_stream(
                         false,
                         &[],
                         &cancel,
-                        &mut |delta| sink.web_delta(delta),
-                    )
-                    .map(|_| None)
+                        &mut |delta| {
+                            emitted = true;
+                            sink.web_delta(delta)
+                        },
+                    );
+                    match first {
+                        Ok(_) => Ok(None),
+                        Err(e) if e.kind == ErrorKind::Api && !emitted => {
+                            invalidate_web_session(&web_session, &session);
+                            match cached_web_session(web, &web_session) {
+                                Ok(fresh) => web
+                                    .stream_completion(
+                                        &fresh,
+                                        None,
+                                        &prompt,
+                                        Some(web_model(&chat.model)),
+                                        chat.thinking,
+                                        false,
+                                        &[],
+                                        &cancel,
+                                        &mut |delta| sink.web_delta(delta),
+                                    )
+                                    .map(|_| None),
+                                Err(err) => Err(err),
+                            }
+                        }
+                        Err(e) => {
+                            if e.kind == ErrorKind::Api {
+                                invalidate_web_session(&web_session, &session);
+                            }
+                            Err(e)
+                        }
+                    }
                 }
                 Err(e) => Err(e),
             },
@@ -578,13 +646,13 @@ impl ChatRequest {
         // stream=false clients sit silent through a full DeepThink run and
         // often hit their own one-minute read timeout.
         let explicit_thinking = match value.get("thinking") {
+            None | Some(Value::Null) => None,
             Some(Value::Bool(on)) => Some(*on),
             Some(object) => match object.get("type").and_then(Value::as_str) {
                 Some("enabled") => Some(true),
                 Some("disabled") => Some(false),
                 _ => Some(false),
             },
-            None => None,
         };
         let requested_effort = value.get("reasoning_effort").and_then(Value::as_str);
         let effort = match requested_effort {
@@ -642,7 +710,15 @@ fn authorized(request: &Request, key: &str) -> bool {
         .headers()
         .iter()
         .find(|h| h.field.equiv("Authorization"))
-        .map(|h| h.value.as_str().trim() == format!("Bearer {key}"))
+        .and_then(|h| {
+            let raw = h.value.as_str().trim();
+            let (scheme, token) = raw.split_once(char::is_whitespace)?;
+            if scheme.eq_ignore_ascii_case("Bearer") {
+                Some(token.trim() == key)
+            } else {
+                None
+            }
+        })
         .unwrap_or(false)
 }
 
@@ -724,6 +800,8 @@ mod tests {
                    "deepseek-reasoner");
         assert!(!parse(json!({"model": "deepseek-reasoner",
                               "thinking": false})).thinking);
+        assert!(parse(json!({"model": "deepseek-reasoner",
+                             "thinking": null})).thinking);
         assert_eq!(
             parse(json!({"thinking": {"type": "enabled"}, "reasoning_effort": "low"})).effort,
             "low"

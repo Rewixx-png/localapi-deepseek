@@ -39,7 +39,6 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
@@ -281,7 +280,6 @@ public final class MainActivity extends Activity {
         }
         if (requestCode == REQ_AGENT_ZIP) {
             String chatId = pendingAgentChatId;
-            String title = pendingAgentTitle;
             pendingAgentChatId = null;
             pendingAgentTitle = null;
             if (resultCode == RESULT_OK && data != null && data.getData() != null
@@ -304,12 +302,8 @@ public final class MainActivity extends Activity {
                         });
                     } catch (Exception e) {
                         String message = e.getMessage();
-                        if (e instanceof UnsupportedOperationException) {
-                            message = "Выбранная папка workspace не поддерживает "
-                                    + "создание файлов. Выберите папку в памяти "
-                                    + "устройства (например, Documents)";
-                        } else if (message == null || message.trim().isEmpty()) {
-                            message = "Не удалось распаковать ZIP ("
+                        if (message == null || message.trim().isEmpty()) {
+                            message = "Не удалось добавить ZIP в workspace ("
                                     + e.getClass().getSimpleName() + ")";
                         }
                         final String detail = message;
@@ -498,6 +492,10 @@ public final class MainActivity extends Activity {
         if (agentBrowser != null) {
             agentBrowser.destroy();
             agentBrowser = null;
+        }
+        if (sandbox != null) {
+            sandbox.stop();
+            sandbox = null;
         }
         SandboxProxy.stop();
         super.onDestroy();
@@ -952,19 +950,7 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface
         public void hideKeyboard() {
-            runOnUiThread(() -> {
-                InputMethodManager imm = (InputMethodManager)
-                        getSystemService(Context.INPUT_METHOD_SERVICE);
-                View focus = getCurrentFocus();
-                if (focus != null) {
-                    if (imm != null) {
-                        imm.hideSoftInputFromWindow(focus.getWindowToken(), 0);
-                    }
-                    focus.clearFocus();
-                } else if (web != null && imm != null) {
-                    imm.hideSoftInputFromWindow(web.getWindowToken(), 0);
-                }
-            });
+            runOnUiThread(MainActivity.this::hideIme);
         }
 
         @JavascriptInterface
@@ -1229,6 +1215,7 @@ public final class MainActivity extends Activity {
         }
         final long id = streamId;
         final String label = title;
+        final Context appContext = getApplicationContext();
         Thread thread = new Thread(() -> {
             for (int i = 0; i < 3600; i++) {
                 try {
@@ -1250,8 +1237,8 @@ public final class MainActivity extends Activity {
                 if (data == null || !data.optBoolean("done")) {
                     continue;
                 }
-                if (!foreground && !data.optBoolean("cancelled")) {
-                    notifyFinished(label);
+                if (!foreground && !data.optBoolean("cancelled") && data.isNull("error")) {
+                    notifyFinished(appContext, label);
                 }
                 return;
             }
@@ -1298,9 +1285,10 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void notifyFinished(String title) {
+    private static void notifyFinished(Context context, String title) {
         try {
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            NotificationManager nm = (NotificationManager)
+                    context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) {
                 return;
             }
@@ -1309,16 +1297,16 @@ public final class MainActivity extends Activity {
                         CHANNEL_ID, "Ответы", NotificationManager.IMPORTANCE_DEFAULT);
                 nm.createNotificationChannel(channel);
             }
-            Intent open = new Intent(this, MainActivity.class)
+            Intent open = new Intent(context, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= 23) {
                 flags |= PendingIntent.FLAG_IMMUTABLE;
             }
-            PendingIntent pending = PendingIntent.getActivity(this, 0, open, flags);
+            PendingIntent pending = PendingIntent.getActivity(context, 0, open, flags);
             Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                    ? new Notification.Builder(this, CHANNEL_ID)
-                    : new Notification.Builder(this);
+                    ? new Notification.Builder(context, CHANNEL_ID)
+                    : new Notification.Builder(context);
             builder.setSmallIcon(R.drawable.ic_stat_reply)
                     .setContentTitle("Ответ готов")
                     .setContentText(title)
@@ -1398,6 +1386,8 @@ public final class MainActivity extends Activity {
             if (p.endsWith(".png")) return "image/png";
             if (p.endsWith(".json")) return "application/json";
             if (p.endsWith(".woff2")) return "font/woff2";
+            if (p.endsWith(".woff")) return "font/woff";
+            if (p.endsWith(".ttf")) return "font/ttf";
             return "application/octet-stream";
         }
     }

@@ -27,14 +27,12 @@ import java.util.zip.ZipInputStream;
  * Per-agent-chat workspace. ZIP imports are treated as untrusted input:
  * names must stay inside the workspace, entries and sizes are capped, and
  * symlinks are never created by ZipInputStream.
- *
- * The workspace is deliberately separate from the Rust engine's files so a
- * later sandbox/runtime can be given exactly this directory.
  */
 final class AgentWorkspace {
     private static final long MAX_ZIP_BYTES = 40L * 1024 * 1024;
     private static final long MAX_TOTAL_BYTES = 120L * 1024 * 1024;
     private static final long MAX_FILE_BYTES = 32L * 1024 * 1024;
+    private static final int MAX_READ_BYTES = 128 * 1024;
     private static final int MAX_ENTRIES = 600;
     private static final int MAX_LISTED = 300;
 
@@ -71,8 +69,13 @@ final class AgentWorkspace {
         } catch (Exception ignored) {
         }
         name = name.replace('/', '_').replace('\\', '_').replace('\0', '_');
+        if (name.isEmpty() || name.equals(".") || name.equals("..")) {
+            name = "project.zip";
+        }
         if (name.length() > 96) name = name.substring(name.length() - 96);
         if (!name.toLowerCase().endsWith(".zip")) name += ".zip";
+        if (name.equals(".zip")) name = "project.zip";
+
         File target = new File(root, name);
         String rootPath = root.getCanonicalPath();
         String targetPath = target.getCanonicalPath();
@@ -93,14 +96,18 @@ final class AgentWorkspace {
             }
             copied = true;
         } finally {
-            if (!copied) target.delete();
+            if (!copied) {
+                //noinspection ResultOfMethodCallIgnored
+                target.delete();
+            }
         }
         try (InputStream check = new FileInputStream(target)) {
-            byte[] signature = new byte[4];
-            int count = check.read(signature);
-            if (count < 2 || signature[0] != 'P' || signature[1] != 'K') {
+            int b0 = check.read();
+            int b1 = check.read();
+            if (b0 != 'P' || b1 != 'K') {
+                //noinspection ResultOfMethodCallIgnored
                 target.delete();
-                throw new IOException("Выбранный файл не является ZIP");
+                throw new IOException("Выбранный файл не является ZIP-архивом");
             }
         }
         return name;
@@ -109,24 +116,25 @@ final class AgentWorkspace {
     static JSONArray list(Context context, String chatId) {
         File root = root(context, chatId);
         JSONArray out = new JSONArray();
-        collect(root, root, out);
+        collect(root, "", out);
         return out;
     }
 
-    private static void collect(File root, File dir, JSONArray out) {
+    private static void collect(File dir, String prefix, JSONArray out) {
         if (out.length() >= MAX_LISTED) return;
         File[] files = dir.listFiles();
         if (files == null) return;
         Arrays.sort(files, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
         for (File file : files) {
             if (out.length() >= MAX_LISTED) return;
+            String name = file.getName();
+            String relative = prefix.isEmpty() ? name : prefix + "/" + name;
             if (file.isDirectory()) {
-                collect(root, file, out);
+                collect(file, relative, out);
             } else if (file.isFile()) {
                 try {
                     JSONObject item = new JSONObject();
-                    String relative = root.toPath().relativize(file.toPath()).toString();
-                    item.put("name", relative.replace(File.separatorChar, '/'));
+                    item.put("name", relative);
                     item.put("size", file.length());
                     out.put(item);
                 } catch (Exception ignored) {
@@ -212,7 +220,7 @@ final class AgentWorkspace {
         if (!targetPath.startsWith(rootPath + File.separator) || !target.isFile()) {
             throw new IOException("Файл не найден");
         }
-        int limit = Math.max(1, Math.min(maxBytes, 64 * 1024));
+        int limit = Math.max(1, Math.min(maxBytes, MAX_READ_BYTES));
         long size = target.length();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         boolean truncated = false;
@@ -235,13 +243,34 @@ final class AgentWorkspace {
         }
         byte[] bytes = out.toByteArray();
         boolean binary = isBinary(bytes);
+        int textLen = truncated && !binary ? utf8SafeLength(bytes) : bytes.length;
         JSONObject item = new JSONObject();
         item.put("name", name);
         item.put("size", size);
         item.put("truncated", truncated || size > bytes.length);
         item.put("binary", binary);
-        item.put("text", binary ? "" : new String(bytes, StandardCharsets.UTF_8));
+        item.put("text", binary ? "" : new String(bytes, 0, textLen, StandardCharsets.UTF_8));
         return item;
+    }
+
+    private static int utf8SafeLength(byte[] bytes) {
+        int len = bytes.length;
+        if (len == 0) return 0;
+        int i = len - 1;
+        int cont = 0;
+        while (i >= 0 && cont < 3 && (bytes[i] & 0xC0) == 0x80) {
+            cont++;
+            i--;
+        }
+        if (i < 0) return len;
+        int lead = bytes[i] & 0xFF;
+        int expected;
+        if ((lead & 0x80) == 0) expected = 1;
+        else if ((lead & 0xE0) == 0xC0) expected = 2;
+        else if ((lead & 0xF0) == 0xE0) expected = 3;
+        else if ((lead & 0xF8) == 0xF0) expected = 4;
+        else return len;
+        return (len - i) < expected ? i : len;
     }
 
     static JSONObject readMedia(Context context, String chatId, String name, int maxBytes)
@@ -279,14 +308,19 @@ final class AgentWorkspace {
         if (lower.endsWith(".mp3")) return "audio/mpeg";
         if (lower.endsWith(".wav")) return "audio/wav";
         if (lower.endsWith(".m4a")) return "audio/mp4";
+        if (lower.endsWith(".aac")) return "audio/aac";
+        if (lower.endsWith(".flac")) return "audio/flac";
         if (lower.endsWith(".ogg") || lower.endsWith(".opus")) return "audio/ogg";
         if (lower.endsWith(".mp4")) return "video/mp4";
         if (lower.endsWith(".webm")) return "video/webm";
         if (lower.endsWith(".mkv")) return "video/x-matroska";
+        if (lower.endsWith(".mov")) return "video/quicktime";
         if (lower.endsWith(".png")) return "image/png";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
         if (lower.endsWith(".webp")) return "image/webp";
         if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".bmp")) return "image/bmp";
+        if (lower.endsWith(".avif")) return "image/avif";
         return "application/octet-stream";
     }
 

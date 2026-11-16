@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Base64;
 import android.webkit.WebView;
 
 import org.json.JSONObject;
@@ -14,15 +15,20 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -31,8 +37,7 @@ import java.util.zip.ZipInputStream;
  * app-private agent workspace shared over 9p.
  *
  * QEMU itself is packaged in jniLibs (arm64-v8a). There is no KVM on Android,
- * so the guest runs under TCG and is slow. All output is forwarded to the
- * WebView journal; the first milestone is a bootable terminal guest.
+ * so the guest runs under TCG and is slow.
  */
 final class SandboxManager {
     static final String VERSION = "ubuntu-disk-1";
@@ -43,17 +48,26 @@ final class SandboxManager {
             "22d2c6d4feba7d514e1406ce3ad394daa61b98fcd72e47fee01650c16f0775b6";
     static final long ASSET_SIZE = 132758428L;
 
+    private static final String NET_READY_MARKER = "__LOCALAPI_NET_READY__";
+    private static final long MAX_LOG_BYTES = 2L * 1024 * 1024;
+    private static final Pattern ANSI_PATTERN =
+            Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
+
     private final Activity activity;
     private final WebView web;
     private volatile Process process;
     private volatile boolean installing;
     private volatile boolean running;
+    private volatile boolean networkConfigured;
+    private volatile boolean shellReady;
+    private volatile String activeChatId = "";
+
+    private final Object startLock = new Object();
     private final Object serialLock = new Object();
     private final StringBuilder serial = new StringBuilder();
     private final Object execLock = new Object();
     private final Object writeLock = new Object();
-    private volatile boolean networkConfigured;
-    private volatile String activeChatId = "";
+
     private static final String PREFS = "sandbox_config";
     private static final String KEY_RAM = "ram_mb";
     private static final String KEY_CORES = "cores";
@@ -85,7 +99,6 @@ final class SandboxManager {
             am.getMemoryInfo(info);
             long total = info.totalMem / (1024L * 1024L);
             if (total < 1024) total = 1024;
-            // Leave 1 GiB for Android; never offer more than the device has.
             return (int) Math.min(6144L, Math.max(512L, total - 1024L));
         } catch (Exception e) {
             return 2048;
@@ -180,114 +193,142 @@ final class SandboxManager {
                     + JSONObject.quote("Сначала скачайте песочницу") + ")");
             return;
         }
-        if (running) {
-            runJs("window.__sandboxOutput && window.__sandboxOutput("
-                    + JSONObject.quote("[sandbox уже запущена]") + ")");
-            return;
-        }
-        try {
-            loadConfig();
-            activeChatId = chatId == null ? "" : chatId;
-            File dir = dir(activity);
-            String libs = activity.getApplicationInfo().nativeLibraryDir;
-            File qemu = new File(libs, "libqemu-system-aarch64.so");
-            if (!qemu.isFile()) {
-                throw new IOException("QEMU не упакован в APK для этой ABI");
+        final Process started;
+        final String currentChat;
+        synchronized (startLock) {
+            if (running) {
+                runJs("window.__sandboxOutput && window.__sandboxOutput("
+                        + JSONObject.quote("[sandbox уже запущена]") + ")");
+                return;
             }
-            File workspace = AgentWorkspace.root(activity, chatId);
-            String cmd = "/system/bin/linker64";
-            File rootfs = new File(dir, "rootfs.img");
-            java.util.List<String> args = new java.util.ArrayList<>();
-            args.add(cmd);
-            args.add(qemu.getAbsolutePath());
-            java.util.Collections.addAll(args,
-                    "-M", "virt",
-                    "-cpu", "max",
-                    "-m", String.valueOf(ramMb),
-                    "-smp", String.valueOf(cores),
-                    "-nographic",
-                    "-no-reboot",
-                    "-L", new File(dir, "qemu-data").getAbsolutePath(),
-                    "-kernel", new File(dir, "vmlinuz").getAbsolutePath());
-            if (rootfs.isFile()) {
-                args.add("-drive");
-                args.add("file=" + rootfs.getAbsolutePath()
-                        + ",if=virtio,format=raw,cache=writeback");
-                args.add("-append");
-                args.add("root=/dev/vda rw console=ttyAMA0 init=/init loglevel=7");
-            } else {
-                args.add("-initrd");
-                args.add(new File(dir, "initramfs.cpio.gz").getAbsolutePath());
-                args.add("-append");
-                args.add("console=ttyAMA0 rdinit=/init loglevel=7");
-            }
-            java.util.Collections.addAll(args,
-                    "-virtfs", "local,path=" + workspace.getAbsolutePath()
-                            + ",mount_tag=workspace,security_model=none",
-                    "-netdev", "user,id=net0",
-                    "-device", "virtio-net-device,netdev=net0");
-            ProcessBuilder pb = new ProcessBuilder(args);
-            pb.redirectErrorStream(true);
-            pb.directory(activity.getCacheDir());
-            pb.environment().put("LD_LIBRARY_PATH", libs);
-            pb.environment().put("HOME", dir.getAbsolutePath());
-            pb.environment().put("TMPDIR", activity.getCacheDir().getAbsolutePath());
-            process = pb.start();
-            running = true;
-            networkConfigured = false;
-            synchronized (serialLock) {
-                serial.setLength(0);
-            }
-            log("sandbox start " + VERSION + " chat=" + chatId);
-            runJs("window.__sandboxStarted && window.__sandboxStarted("
-                    + JSONObject.quote(activeChatId) + ")");
-            new Thread(() -> {
-                File logFile = new File(activity.getCacheDir(), "sandbox.log");
-                try (InputStream in = process.getInputStream();
-                     OutputStream out = new FileOutputStream(logFile, true)) {
-                    byte[] buffer = new byte[4096];
-                    int read;
-                    while ((read = in.read(buffer)) > 0) {
-                        out.write(buffer, 0, read);
-                        out.flush();
-                        String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
-                        synchronized (serialLock) {
-                            serial.append(text);
-                            if (serial.length() > 400000) {
-                                serial.delete(0, serial.length() - 300000);
-                            }
-                            serialLock.notifyAll();
-                        }
-                        maybeConfigureNetwork();
-                        runJs("window.__sandboxOutput && window.__sandboxOutput("
-                                + JSONObject.quote(text) + ")");
-                    }
-                } catch (Exception e) {
-                    log("sandbox output error: " + e.getMessage());
+            try {
+                loadConfig();
+                currentChat = chatId == null ? "" : chatId;
+                activeChatId = currentChat;
+                File dir = dir(activity);
+                String libs = activity.getApplicationInfo().nativeLibraryDir;
+                File qemu = new File(libs, "libqemu-system-aarch64.so");
+                if (!qemu.isFile()) {
+                    throw new IOException("QEMU не упакован в APK для этой ABI");
                 }
-                int code = -1;
-                try {
-                    code = process.waitFor();
-                } catch (Exception ignored) {
+                File workspace = AgentWorkspace.root(activity, currentChat);
+                File rootfs = new File(dir, "rootfs.img");
+                List<String> args = new ArrayList<>();
+                args.add("/system/bin/linker64");
+                args.add(qemu.getAbsolutePath());
+                Collections.addAll(args,
+                        "-M", "virt",
+                        "-cpu", "max",
+                        "-m", String.valueOf(ramMb),
+                        "-smp", String.valueOf(cores),
+                        "-nographic",
+                        "-no-reboot",
+                        "-L", new File(dir, "qemu-data").getAbsolutePath(),
+                        "-kernel", new File(dir, "vmlinuz").getAbsolutePath());
+                if (rootfs.isFile()) {
+                    args.add("-drive");
+                    args.add("file=" + rootfs.getAbsolutePath()
+                            + ",if=virtio,format=raw,cache=writeback");
+                    args.add("-append");
+                    args.add("root=/dev/vda rw console=ttyAMA0 init=/init loglevel=7");
+                } else {
+                    args.add("-initrd");
+                    args.add(new File(dir, "initramfs.cpio.gz").getAbsolutePath());
+                    args.add("-append");
+                    args.add("console=ttyAMA0 rdinit=/init loglevel=7");
+                }
+                Collections.addAll(args,
+                        "-virtfs", "local,path=" + workspace.getAbsolutePath()
+                                + ",mount_tag=workspace,security_model=none",
+                        "-netdev", "user,id=net0",
+                        "-device", "virtio-net-device,netdev=net0");
+                ProcessBuilder pb = new ProcessBuilder(args);
+                pb.redirectErrorStream(true);
+                pb.directory(activity.getCacheDir());
+                pb.environment().put("LD_LIBRARY_PATH", libs);
+                pb.environment().put("HOME", dir.getAbsolutePath());
+                pb.environment().put("TMPDIR", activity.getCacheDir().getAbsolutePath());
+
+                started = pb.start();
+                process = started;
+                running = true;
+                networkConfigured = false;
+                shellReady = false;
+                synchronized (serialLock) {
+                    serial.setLength(0);
+                }
+            } catch (Exception e) {
+                running = false;
+                process = null;
+                String message = e.getMessage() == null ? "QEMU не запустился" : e.getMessage();
+                log("sandbox start error: " + message);
+                runJs("window.__sandboxError && window.__sandboxError("
+                        + JSONObject.quote(message) + "," + JSONObject.quote(activeChatId) + ")");
+                return;
+            }
+        }
+
+        log("sandbox start " + VERSION + " chat=" + currentChat);
+        runJs("window.__sandboxStarted && window.__sandboxStarted("
+                + JSONObject.quote(currentChat) + ")");
+
+        new Thread(() -> {
+            File logFile = rotateLogIfNeeded(new File(activity.getCacheDir(), "sandbox.log"));
+            try (InputStream rawIn = started.getInputStream();
+                 InputStreamReader reader = new InputStreamReader(rawIn, StandardCharsets.UTF_8);
+                 OutputStream logOut = new FileOutputStream(logFile, true)) {
+                char[] cbuf = new char[4096];
+                int read;
+                while ((read = reader.read(cbuf)) > 0) {
+                    String text = new String(cbuf, 0, read);
+                    logOut.write(text.getBytes(StandardCharsets.UTF_8));
+                    logOut.flush();
+                    synchronized (serialLock) {
+                        serial.append(text);
+                        if (!shellReady && networkConfigured
+                                && serial.indexOf(NET_READY_MARKER) >= 0) {
+                            shellReady = true;
+                        }
+                        if (serial.length() > 400000) {
+                            serial.delete(0, serial.length() - 300000);
+                        }
+                        serialLock.notifyAll();
+                    }
+                    maybeConfigureNetwork(started);
+                    runJs("window.__sandboxOutput && window.__sandboxOutput("
+                            + JSONObject.quote(text) + ")");
+                }
+            } catch (Exception e) {
+                log("sandbox output error: " + e.getMessage());
+            }
+
+            int code = -1;
+            try {
+                code = started.waitFor();
+            } catch (Exception ignored) {
+            }
+            String exitedChat;
+            synchronized (startLock) {
+                if (process == started) {
+                    process = null;
                 }
                 running = false;
-                String exitedChat = activeChatId;
+                shellReady = false;
+                exitedChat = activeChatId;
                 activeChatId = "";
-                log("sandbox exit code=" + code);
-                runJs("window.__sandboxExit && window.__sandboxExit(" + code + ","
-                        + JSONObject.quote(exitedChat) + ")");
-            }, "sandbox-output").start();
-        } catch (Exception e) {
-            running = false;
-            String message = e.getMessage() == null ? "QEMU не запустился" : e.getMessage();
-            log("sandbox start error: " + message);
-            runJs("window.__sandboxError && window.__sandboxError("
-                    + JSONObject.quote(message) + "," + JSONObject.quote(activeChatId) + ")");
-        }
+            }
+            synchronized (serialLock) {
+                serialLock.notifyAll();
+            }
+            log("sandbox exit code=" + code);
+            runJs("window.__sandboxExit && window.__sandboxExit(" + code + ","
+                    + JSONObject.quote(exitedChat) + ")");
+        }, "sandbox-output").start();
     }
 
     void exec(String id, String command) {
-        if (!running || process == null) {
+        final Process proc = process;
+        if (!running || proc == null) {
             runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                     + JSONObject.quote(id) + "," + JSONObject.quote(
                     "Песочница не запущена") + ",-1)");
@@ -295,31 +336,75 @@ final class SandboxManager {
         }
         new Thread(() -> {
             synchronized (execLock) {
-                String begin = "__LOCALAPI_BEGIN_" + id + "__";
-                String end = "__LOCALAPI_END_" + id + "__";
+                if (!running || process != proc) {
+                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                            + JSONObject.quote(id) + "," + JSONObject.quote(
+                            "Песочница не запущена") + ",-1)");
+                    return;
+                }
+
+                // Wait for the guest OS + network setup to finish before pushing
+                // commands into the serial console.
+                long bootDeadline = System.currentTimeMillis() + 60_000L;
+                synchronized (serialLock) {
+                    while (!shellReady && running && process == proc
+                            && System.currentTimeMillis() < bootDeadline) {
+                        try {
+                            serialLock.wait(250);
+                        } catch (InterruptedException ignored) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                }
+                if (!running || process != proc) {
+                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                            + JSONObject.quote(id) + "," + JSONObject.quote(
+                            "Песочница остановлена") + ",-1)");
+                    return;
+                }
+
+                String rawId = id == null ? "" : id.replaceAll("[^A-Za-z0-9_-]", "");
+                if (rawId.isEmpty()) rawId = String.valueOf(System.nanoTime());
+                String begin = "__LOCALAPI_BEGIN_" + rawId + "__";
+                String end = "__LOCALAPI_END_" + rawId + "__";
+                String tmpFile = "/tmp/.cmd_" + rawId + ".sh";
+                String cmdText = command == null ? "" : command;
+                String b64 = Base64.encodeToString(
+                        cmdText.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+
                 synchronized (serialLock) {
                     serial.setLength(0);
                 }
+
                 try {
-                    String script = "printf '\\n" + begin + "\\n'; " + command
-                            + "\n__rc=$?; printf '\\n" + end + "%s\\n' \"$__rc\"\n";
+                    // Run via a base64-decoded temporary script in a subshell so
+                    // multi-line scripts, quotes, '#' comments, 'set -e' or 'exit'
+                    // never break or kill PID 1, while preserving 'cd' via trap.
+                    String script = "printf '%s' '" + b64 + "' | "
+                            + "(base64 -d 2>/dev/null || /bin/busybox base64 -d) > " + tmpFile
+                            + " && printf '\\n" + begin + "\\n'"
+                            + " && ( trap 'pwd > /tmp/.localapi_cwd 2>/dev/null' EXIT; . " + tmpFile + " )"
+                            + "; __rc=$?; rm -f " + tmpFile
+                            + "; [ -f /tmp/.localapi_cwd ] && cd \"$(cat /tmp/.localapi_cwd)\" 2>/dev/null"
+                            + "; printf '\\n" + end + "%s\\n' \"$__rc\"\n";
+
                     synchronized (writeLock) {
-                        process.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
-                        process.getOutputStream().flush();
+                        proc.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
+                        proc.getOutputStream().flush();
                     }
-                    long timeoutMs = (command.contains("install-base")
-                            || command.contains("apt-get")) ? 900_000L : 120_000L;
+
+                    long timeoutMs = (cmdText.contains("install-base")
+                            || cmdText.contains("apt-get")) ? 900_000L : 120_000L;
                     long deadline = System.currentTimeMillis() + timeoutMs;
                     int endAt = -1;
                     int code = -1;
                     String lastChunk = "";
-                    while (System.currentTimeMillis() < deadline) {
+
+                    while (running && process == proc && System.currentTimeMillis() < deadline) {
                         String partial = null;
                         synchronized (serialLock) {
                             String buffer = serial.toString();
-                            // The interactive shell echoes the command, including
-                            // the marker text. Pick an END occurrence followed by a
-                            // numeric exit code; the echoed "%s" is ignored.
                             for (int pos = buffer.indexOf(end); pos >= 0;
                                  pos = buffer.indexOf(end, pos + 1)) {
                                 int codeStart = pos + end.length();
@@ -344,7 +429,7 @@ final class SandboxManager {
                         }
                         if (partial != null) {
                             String chunk = cleanShellOutput(
-                                    partial.replace(begin, "").replace(end, "").trim(), command);
+                                    partial.replace(begin, "").replace(end, ""));
                             if (chunk.length() > 16000) {
                                 chunk = chunk.substring(0, 16000) + "\n[вывод обрезан]";
                             }
@@ -356,6 +441,20 @@ final class SandboxManager {
                             }
                         }
                     }
+
+                    boolean timedOut = (endAt < 0 && running && process == proc);
+                    if (timedOut) {
+                        // Interrupt the stuck foreground job so subsequent execs
+                        // get a clean prompt back.
+                        try {
+                            synchronized (writeLock) {
+                                proc.getOutputStream().write(new byte[]{3, '\n'});
+                                proc.getOutputStream().flush();
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+
                     String buffer;
                     synchronized (serialLock) {
                         buffer = serial.toString();
@@ -366,13 +465,17 @@ final class SandboxManager {
                         int from = beginAt >= 0 ? beginAt + begin.length() : 0;
                         output = buffer.substring(from, endAt);
                     } else {
-                        output = buffer;
+                        int beginAt = buffer.lastIndexOf(begin);
+                        output = beginAt >= 0 ? buffer.substring(beginAt + begin.length()) : buffer;
                         if (output.length() > 12000) {
                             output = output.substring(output.length() - 12000);
                         }
                     }
-                    output = output.replace(begin, "").replace(end, "").trim();
-                    output = cleanShellOutput(output, command);
+                    output = cleanShellOutput(output.replace(begin, "").replace(end, ""));
+                    if (timedOut) {
+                        output = (output.isEmpty() ? "" : output + "\n")
+                                + "[таймаут выполнения команды]";
+                    }
                     if (output.length() > 16000) {
                         output = output.substring(0, 16000) + "\n[вывод обрезан]";
                     }
@@ -389,40 +492,31 @@ final class SandboxManager {
         }, "sandbox-exec").start();
     }
 
-    private static String cleanShellOutput(String output, String command) {
-        String echoed = command == null ? "" : command.trim();
-        StringBuilder cleaned = new StringBuilder(output.length());
-        boolean first = true;
-        for (String line : output.split("\n", -1)) {
-            String trimmed = line.trim();
-            // Interactive QEMU console prints its root prompt into the serial
-            // capture. It is not command output and confuses the model.
+    private static String cleanShellOutput(String output) {
+        if (output == null || output.isEmpty()) return "";
+        String normalized = output.replace("\r\n", "\n").replace('\r', '\n');
+        normalized = ANSI_PATTERN.matcher(normalized).replaceAll("");
+        StringBuilder cleaned = new StringBuilder(normalized.length());
+        for (String line : normalized.split("\n", -1)) {
             if (line.equals("#") || line.equals("# ")) continue;
-            if (first && line.startsWith("# ")) line = line.substring(2);
-            // The shell can echo the command line back on the serial console.
-            if (!echoed.isEmpty() && trimmed.equals(echoed)) continue;
-            if (trimmed.startsWith("__rc=$?;")) continue;
             cleaned.append(line).append('\n');
-            if (!trimmed.isEmpty()) first = false;
         }
         return cleaned.toString().trim();
     }
 
-    private void maybeConfigureNetwork() {
-        if (networkConfigured) return;
+    private void maybeConfigureNetwork(Process proc) {
+        if (networkConfigured || proc == null) return;
         synchronized (serialLock) {
             String tail = serial.length() > 8
                     ? serial.substring(serial.length() - 8) : serial.toString();
             if (!tail.endsWith("# ") && !tail.endsWith("#")) return;
+            if (networkConfigured) return;
+            networkConfigured = true;
         }
-        networkConfigured = true;
-        Process p = process;
-        if (p == null) return;
-        // QEMU user-mode (slirp) provides this fixed network. Configure it once
-        // when the guest init shell is ready; the workspace shell is interactive.
         SimpleDateFormat utc = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
         utc.setTimeZone(TimeZone.getTimeZone("UTC"));
         String date = utc.format(new Date());
+        // Split the marker string in printf so the tty echo doesn't trigger shellReady early.
         String setup = "/bin/busybox ifconfig lo up 2>/dev/null\n"
                 + "/bin/busybox ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
                 + "/bin/busybox route add default gw 10.0.2.2 eth0 2>/dev/null\n"
@@ -431,33 +525,42 @@ final class SandboxManager {
                 + "export http_proxy=http://10.0.2.2:18991\n"
                 + "export https_proxy=http://10.0.2.2:18991\n"
                 + "[ -e /usr/bin/top ] || ln -s /bin/busybox /usr/bin/top 2>/dev/null\n"
-                + "printf '#!/bin/sh\napt-get update && apt-get install -y --no-install-recommends curl ca-certificates htop procps python3 python3-pip git wget dnsutils iputils-ping\n' > /usr/bin/install-base\n"
+                + "printf '#!/bin/sh\\napt-get update && apt-get install -y --no-install-recommends curl ca-certificates htop procps python3 python3-pip git wget dnsutils iputils-ping\\n' > /usr/bin/install-base\n"
                 + "chmod +x /usr/bin/install-base\n"
                 + "printf 'Acquire::http::Proxy \"http://10.0.2.2:18991\";\\n"
                 + "Acquire::https::Proxy \"http://10.0.2.2:18991\";\\n' > /etc/apt/apt.conf.d/99proxy\n"
-                + "echo __LOCALAPI_NET_READY__\n";
+                + "cd /workspace 2>/dev/null || true\n"
+                + "printf '__LOCALAPI_' 'NET_READY__\\n'\n";
         try {
             synchronized (writeLock) {
-                p.getOutputStream().write(setup.getBytes(StandardCharsets.UTF_8));
-                p.getOutputStream().flush();
+                proc.getOutputStream().write(setup.getBytes(StandardCharsets.UTF_8));
+                proc.getOutputStream().flush();
             }
             log("sandbox network configured (slirp 10.0.2.15)");
         } catch (Exception e) {
+            shellReady = true;
             log("sandbox network setup error: " + e.getMessage());
         }
     }
 
     void stop() {
-        Process p = process;
-        process = null;
-        running = false;
+        Process p;
+        synchronized (startLock) {
+            p = process;
+            process = null;
+            running = false;
+            shellReady = false;
+        }
         if (p != null) p.destroy();
+        synchronized (serialLock) {
+            serialLock.notifyAll();
+        }
         log("sandbox stop");
     }
 
     void write(String text) {
         Process p = process;
-        if (p == null) return;
+        if (p == null || text == null) return;
         try {
             synchronized (writeLock) {
                 p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
@@ -504,6 +607,7 @@ final class SandboxManager {
     }
 
     private static void unzip(File zip, File dir) throws IOException {
+        List<File> written = new ArrayList<>();
         try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(
                 new FileInputStream(zip)))) {
             ZipEntry entry;
@@ -527,12 +631,19 @@ final class SandboxManager {
                 } else {
                     continue;
                 }
+                written.add(target);
                 try (OutputStream out = new FileOutputStream(target)) {
                     byte[] buffer = new byte[64 * 1024];
                     int read;
                     while ((read = zin.read(buffer)) > 0) out.write(buffer, 0, read);
                 }
             }
+        } catch (IOException e) {
+            for (File f : written) {
+                //noinspection ResultOfMethodCallIgnored
+                f.delete();
+            }
+            throw e;
         }
         if (!new File(dir, "vmlinuz").isFile()
                 || !new File(dir, "rootfs.img").isFile()
@@ -568,9 +679,20 @@ final class SandboxManager {
         }
     }
 
+    private static File rotateLogIfNeeded(File logFile) {
+        if (logFile.isFile() && logFile.length() > MAX_LOG_BYTES) {
+            File old = new File(logFile.getParentFile(), "sandbox.log.old");
+            //noinspection ResultOfMethodCallIgnored
+            old.delete();
+            //noinspection ResultOfMethodCallIgnored
+            logFile.renameTo(old);
+        }
+        return logFile;
+    }
+
     private void log(String message) {
-        try (OutputStream out = new FileOutputStream(
-                new File(activity.getCacheDir(), "sandbox.log"), true)) {
+        File logFile = rotateLogIfNeeded(new File(activity.getCacheDir(), "sandbox.log"));
+        try (OutputStream out = new FileOutputStream(logFile, true)) {
             out.write((System.currentTimeMillis() + " " + message + "\n")
                     .getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) {

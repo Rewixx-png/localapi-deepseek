@@ -35,8 +35,8 @@ pub enum WebDelta {
 /// Accept the raw token, the JSON wrapper, or an `Authorization: Bearer …` line.
 pub fn normalize_token(raw: &str) -> String {
     let mut token = raw.trim();
-    if let Some(rest) = token.strip_prefix("Bearer ").or_else(|| token.strip_prefix("bearer ")) {
-        token = rest.trim();
+    if token.len() > 7 && token[..7].eq_ignore_ascii_case("bearer ") {
+        token = token[7..].trim();
     }
     if token.starts_with('{') {
         if let Ok(value) = serde_json::from_str::<Value>(token) {
@@ -442,6 +442,17 @@ impl StreamParser {
             Ok(v) => v,
             Err(_) => return Ok(false),
         };
+
+        if let Some(code) = value.get("code").and_then(Value::as_i64).filter(|&c| c != 0) {
+            if code == 40003 {
+                return Err(unauthorized());
+            }
+            let msg = value.get("msg").and_then(Value::as_str).unwrap_or("");
+            return Err(Error::new(ErrorKind::Api, format!("DeepSeek web: {code} {msg}")));
+        }
+        if let Some(msg) = value.pointer("/error/message").and_then(Value::as_str) {
+            return Err(Error::new(ErrorKind::Api, msg));
+        }
 
         if event == "ready" {
             if let Some(id) = value.get("response_message_id").and_then(Value::as_i64) {
@@ -1028,7 +1039,7 @@ fn read_envelope(resp: Response) -> Result<Value, Error> {
     let value: Value = serde_json::from_str(&text).map_err(|_| {
         Error::new(
             ErrorKind::Api,
-            "DeepSeek вернул не JSON — возможно, сработала проверка Cloudflare",
+            "DeepSeek вернул не JSON, возможно сработала проверка Cloudflare",
         )
     })?;
 

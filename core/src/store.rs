@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -174,7 +174,7 @@ impl Store {
     pub fn get(&self, id: &str) -> Result<Conversation, Error> {
         let path = self.conv_path(id)?;
         let raw = fs::read_to_string(&path)
-            .map_err(|_| Error::not_found("Чат не найден — возможно, он был удалён"))?;
+            .map_err(|_| Error::not_found("Чат не найден, возможно он уже удалён"))?;
         Ok(serde_json::from_str(&raw)?)
     }
 
@@ -186,6 +186,10 @@ impl Store {
 
     pub fn delete(&self, id: &str) -> Result<(), Error> {
         let path = self.conv_path(id)?;
+        let agent_dir = self.root.join("agent").join(id);
+        if agent_dir.exists() {
+            let _ = fs::remove_dir_all(agent_dir);
+        }
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -225,6 +229,19 @@ impl Store {
 }
 
 fn random_hex(len: usize) -> String {
+    let need = (len + 1) / 2;
+    let mut buf = vec![0u8; need];
+    let urandom_ok = fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .is_ok();
+    if urandom_ok {
+        let mut out = String::with_capacity(need * 2);
+        for b in buf {
+            out.push_str(&format!("{b:02x}"));
+        }
+        out.truncate(len);
+        return out;
+    }
     let mut state = now_ms()
         ^ ((std::process::id() as u64) << 32)
         ^ TMP_COUNTER.fetch_add(1, Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15);

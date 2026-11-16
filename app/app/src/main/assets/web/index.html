@@ -57,15 +57,15 @@
   <div class="page">
     <div class="hero-mark"><svg class="brand-icon"><use href="#i-brand"></use></svg></div>
     <h1>Local API DeepSeek</h1>
-    <p class="lead">DeepSeek V4.1 Flash 1017. Ключ и история остаются на устройстве,
-      запросы идут напрямую в DeepSeek.</p>
+    <p class="lead">Клиент DeepSeek (V4.1 Flash и V4 Pro). Все запросы идут напрямую,
+      без сторонних прокси-серверов.</p>
 
     <div class="card">
       <div class="list-item" id="perm-notifications">
         <span class="list-icon"><svg class="icon"><use href="#i-bell"></use></svg></span>
         <div class="texts">
           <div class="primary">Уведомления</div>
-          <div class="supporting">О готовом ответе, когда приложение свёрнуто</div>
+          <div class="supporting">Покажет уведомление, если ответ придёт в фоне</div>
         </div>
         <button class="btn tonal small" data-perm="notifications" type="button">Разрешить</button>
       </div>
@@ -74,7 +74,7 @@
         <span class="list-icon"><svg class="icon"><use href="#i-battery"></use></svg></span>
         <div class="texts">
           <div class="primary">Оптимизация батареи</div>
-          <div class="supporting">Чтобы система не останавливала длинные ответы</div>
+          <div class="supporting">Чтобы Android не обрывал длинные ответы в фоне</div>
         </div>
         <button class="btn tonal small" data-perm="battery" type="button">Отключить</button>
       </div>
@@ -82,9 +82,9 @@
 
     <button id="onboard-continue" class="btn filled wide">Далее</button>
     <p class="fine">Разрешения можно изменить в настройках Android.</p>
-    <p class="fine">Samsung/One UI: приложение → «Использование батареи» → «Разрешить
-      энергопотребление в фоновом режиме»; отключите «Приостанавливать работу приложения…».
-      Xiaomi/HyperOS: автозапуск и «Без ограничений».</p>
+    <p class="fine">На Samsung (One UI) включите фоновую работу в настройках батареи
+      и отключите «Приостанавливать работу…». На Xiaomi (HyperOS) включите автозапуск
+      и режим «Без ограничений».</p>
   </div>
 </section>
 
@@ -92,8 +92,8 @@
   <div class="page">
     <div class="hero-mark small"><svg class="brand-icon"><use href="#i-brand"></use></svg></div>
     <h1 id="token-title">Подключение</h1>
-    <p class="lead" id="token-lead">Вставьте API-ключ. Приложение проверит его запросом к /models
-      и сохранит на устройстве.</p>
+    <p class="lead" id="token-lead">Вставьте API-ключ. Перед сохранением проверим его
+      запросом к /models.</p>
 
     <div class="segmented" id="auth-mode" role="tablist" aria-label="Тип токена">
       <button type="button" data-mode="api" class="active">API-ключ</button>
@@ -113,12 +113,12 @@
       <button id="token-paste" class="text-btn" type="button">вставить</button>
     </div>
 
-    <div id="token-offline" class="support error hidden">Нет доступа к интернету —
-      <button id="token-online-enable" class="text-btn" type="button">включить</button>
+    <div id="token-offline" class="support error hidden">Нет интернета.
+      <button id="token-online-enable" class="text-btn" type="button">Включить</button>
     </div>
     <div id="token-error" class="error hidden" role="alert"></div>
     <div id="web-warning" class="warning hidden">
-      Неофициальный протокол. DeepSeek блокирует такие клиенты и может забанить аккаунт.
+      Неофициальный веб-протокол: DeepSeek иногда блокирует такие клиенты и может ограничить аккаунт.
     </div>
 
     <button id="token-save" class="btn filled wide">Проверить и сохранить</button>
@@ -135,7 +135,7 @@
       <button id="token-open" class="btn filled wide">Открыть чат</button>
     </div>
 
-    <p class="fine" id="token-fine">Ключ хранится в приватной папке приложения, права 0600.</p>
+    <p class="fine" id="token-fine">Ключ сохраняется локально в приватных данных приложения.</p>
   </div>
 </section>
 
@@ -246,7 +246,7 @@
     <div class="drawer-label">Системная инструкция</div>
     <textarea id="system-prompt" class="system-prompt" rows="8"
               placeholder="Например: отвечай кратко, по делу и с примерами кода"></textarea>
-    <p class="fine drawer-fine">Можно очистить поле и сохранить, чтобы отключить инструкцию.</p>
+    <p class="fine drawer-fine">Оставьте поле пустым, если системная инструкция не нужна.</p>
     <button id="system-save" class="btn filled wide" type="button">Сохранить</button>
   </aside>
 
@@ -258,8 +258,8 @@
           <svg class="icon"><use href="#i-close"></use></svg>
         </button>
       </div>
-      <p class="fine">QEMU + Ubuntu Base (arm64), без GUI. Загрузка ~50 МБ; QEMU уже в APK.
-        TCG без KVM — первый запуск медленный.</p>
+      <p class="fine">Ubuntu Base (arm64) в QEMU без GUI. Нужно скачать образ (~127 МБ),
+        сам QEMU уже встроен. Работает через TCG без KVM, поэтому запуск занимает время.</p>
       <div class="sandbox-resources">
         <label>Память
           <select id="sandbox-ram"></select>
@@ -329,8 +329,8 @@
           <svg class="icon"><use href="#i-close"></use></svg>
         </button>
       </div>
-      <p class="fine">Shell-команды выполняются в QEMU Ubuntu внутри /workspace.
-        Python, Java или Node агент установит сам — попросите его в чате.</p>
+      <p class="fine">Команды выполняются в Ubuntu внутри /workspace. Если для задачи нужен
+        Python, Java или Node, агент установит их сам.</p>
       <button id="tools-journal" class="btn tonal wide" type="button">Журнал агента</button>
       <button id="tools-terminal" class="btn tonal wide" type="button">Терминал Ubuntu</button>
     </div>
@@ -357,7 +357,7 @@
                 <span class="list-icon"><svg class="icon"><use href="#i-search"></use></svg></span>
                 <div class="texts">
                   <div class="primary">Поиск в интернете</div>
-                  <div class="supporting" id="search-note">DeepSeek Search · платно за запрос</div>
+                  <div class="supporting" id="search-note">DeepSeek Search (оплачивается за запрос)</div>
                 </div>
                 <label class="switch"><input type="checkbox" id="search-toggle"><span></span></label>
               </div>
@@ -429,7 +429,7 @@
       <button class="settings-cat" type="button" data-settings-pane="tunnel">
         <span class="cat-icon"><svg class="icon"><use href="#i-refresh"></use></svg></span>
         <span class="cat-texts">
-          <span class="cat-title">Cloudflare Туннель</span>
+          <span class="cat-title">Cloudflare Tunnel</span>
           <span class="cat-sub" id="cat-sub-tunnel">—</span>
         </span>
         <span class="cat-arrow" aria-hidden="true">›</span>
@@ -501,8 +501,8 @@
               <div class="row-actions">
                 <button id="settings-token-save" class="btn tonal" type="button" disabled>Сохранить</button>
               </div>
-              <p class="fine" id="settings-token-note">Ключ проверяется перед сохранением и хранится
-                только на устройстве.</p>
+              <p class="fine" id="settings-token-note">Перед сохранением новый ключ проверяется
+                запросом к DeepSeek.</p>
             </div>
           </div>
         </div>
@@ -511,8 +511,7 @@
             <div class="row-actions padded">
               <button id="token-howto" class="btn tonal" type="button">Инструкция по токену</button>
             </div>
-            <p class="fine inset-bottom">Ключ можно удалить существующей кнопкой «Удалить» —
-              приложение вернётся на экран авторизации.</p>
+            <p class="fine inset-bottom">Кнопка «Удалить» выше сбросит ключ и вернёт на экран входа.</p>
           </div>
         </div>
       </section>
@@ -539,18 +538,15 @@
                 <button id="server-copy-url" class="btn tonal small" type="button">URL</button>
                 <button id="server-copy-model" class="btn tonal small" type="button">Модель</button>
               </div>
-              <p class="fine inset-bottom">Слушает только localhost. Запросы требуют ключ и уходят в DeepSeek
-                с вашим токеном.</p>
+              <p class="fine inset-bottom">Принимает подключения только с localhost и только с ключом выше.</p>
             </div>
-            <p class="fine inset-bottom hidden" id="server-web-note">Веб-режим: сессия DeepSeek удаляется
-              после каждого ответа. История остаётся только на этом устройстве.</p>
+            <p class="fine inset-bottom hidden" id="server-web-note">В веб-режиме серверная сессия
+              удаляется после ответа, а история сохраняется только локально.</p>
             <div class="row-actions padded">
               <button id="background-settings" class="btn tonal small" type="button">Настройки фоновой работы</button>
             </div>
-            <p class="fine inset-bottom">Если прошивка замораживает сервер в фоне:
-              Samsung/One UI — «Использование батареи» → «Разрешить энергопотребление в фоновом
-              режиме» и выключите «Приостанавливать работу приложения…»; Xiaomi/HyperOS —
-              автозапуск и «Без ограничений».</p>
+            <p class="fine inset-bottom">Если система усыпляет сервер в фоне: на Samsung разрешите
+              фоновую работу в настройках батареи, на Xiaomi включите автозапуск и «Без ограничений».</p>
           </div>
         </div>
       </section>
@@ -597,10 +593,9 @@
               <div class="row-actions">
                 <button id="cf-copy" class="btn tonal small hidden" type="button">Копировать URL</button>
               </div>
-              <p class="fine inset-bottom">Публичный адрес требует ключ локального API. Ключ даёт
-                доступ к вашему токену DeepSeek — не публикуйте его. Быстрый URL меняется после
-                перезапуска приложения. Для постоянного адреса используйте именованный туннель
-                и Cloudflare Access.</p>
+              <p class="fine inset-bottom">Публичный URL тоже требует ключ локального API, не светите его.
+                Адрес быстрого туннеля сбрасывается после перезапуска. Для постоянного адреса нужен
+                именованный туннель (лучше закрыть его через Cloudflare Access).</p>
             </div>
           </div>
         </div>
@@ -654,12 +649,12 @@
               <span class="list-icon"><svg class="icon"><use href="#i-brand"></use></svg></span>
               <div class="texts">
                 <div class="primary">Local API DeepSeek</div>
-                <div class="supporting">Неофициальный клиент. Токены хранятся только на устройстве.</div>
+                <div class="supporting">Неофициальный клиент без сторонних серверов и телеметрии.</div>
               </div>
             </div>
           </div>
-          <p class="fine">cloudflared распространяется по Apache 2.0, CA bundle — MPL 2.0.
-            Полный список — в THIRD_PARTY_NOTICES.md репозитория.</p>
+          <p class="fine">Лицензии сторонних компонентов (cloudflared, QEMU, KaTeX, highlight.js,
+            CA bundle) перечислены в THIRD_PARTY_NOTICES.md.</p>
         </div>
         <div class="settings-group">
           <div class="version" id="sheet-version"></div>

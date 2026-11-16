@@ -25,14 +25,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * cloudflared on Android needs two things the official binary cannot do itself:
- * Java-side DNS and executable native libraries. Quick tunnels are registered
- * through the trycloudflare API here, and edge IPs are resolved with Android's
- * resolver; cloudflared then runs with explicit --edge addresses and never
- * touches /etc/resolv.conf (which does not exist on Android).
- *
- * Token (named) tunnels use the same edge-IP trick. The public hostname is
- * configured in the Cloudflare dashboard and passed in by the UI.
+ * cloudflared on Android needs Java-side DNS and executable native libraries.
+ * Quick tunnels are registered through the trycloudflare API here, edge IPs
+ * are resolved via Android's resolver, and traffic enters the local API over
+ * a Unix domain socket to bypass VPN interception on loopback TCP.
  */
 final class CloudflareTunnel {
     private static final int EDGE_PORT = 7844;
@@ -101,12 +97,12 @@ final class CloudflareTunnel {
         String cleanToken = token == null ? "" : token.trim();
 
         if (port <= 0) {
-            fail("Сначала запусти локальный API");
+            fail(ticket, "Сначала запусти локальный API");
             return statusJson();
         }
         if ("token".equals(mode)) {
             if (cleanToken.isEmpty()) {
-                fail("Нужен токен именованного туннеля");
+                fail(ticket, "Нужен токен именованного туннеля");
                 return statusJson();
             }
             publicUrl = normalizeHost(hostname);
@@ -141,27 +137,27 @@ final class CloudflareTunnel {
     }
 
     private void startWorker(long ticket, String token, String hostname) {
+        File localWorkDir = null;
         try {
             File unixSocket = new File(context.getFilesDir(), "localapi.sock");
             try (LocalSocket socket = new LocalSocket()) {
+                socket.setSoTimeout(3000);
                 socket.connect(new LocalSocketAddress(
                         unixSocket.getAbsolutePath(), LocalSocketAddress.Namespace.FILESYSTEM));
             } catch (IOException e) {
-                fail("Локальный API не слушает Unix-сокет");
+                fail(ticket, "Локальный API не слушает Unix-сокет");
                 return;
             }
             List<String> edges = resolveEdges();
-            if (stopped || ticket != generation) {
-                return;
-            }
+            if (isStale(ticket)) return;
 
             File binary = new File(context.getApplicationInfo().nativeLibraryDir, "libcloudflared.so");
             if (!binary.isFile()) {
-                fail("cloudflared не собран для этой архитектуры");
+                fail(ticket, "cloudflared не собран для этой архитектуры");
                 return;
             }
             if (!binary.canExecute()) {
-                fail("cloudflared не исполняемый (нужен extractNativeLibs)");
+                fail(ticket, "cloudflared не исполняемый (нужен extractNativeLibs)");
                 return;
             }
 
@@ -181,21 +177,19 @@ final class CloudflareTunnel {
 
             if ("quick".equals(mode)) {
                 JSONObject registered = registerQuickTunnel();
-                if (stopped || ticket != generation) {
-                    return;
-                }
+                if (isStale(ticket)) return;
+
                 String id = registered.getString("id");
                 String host = registered.getString("hostname");
                 String account = registered.getString("account_tag");
                 String secret = registered.getString("secret");
-                publicUrl = "https://" + host;
 
-                workDir = new File(context.getCacheDir(), "cf-" + id);
-                if (!workDir.exists() && !workDir.mkdirs()) {
+                localWorkDir = new File(context.getCacheDir(), "cf-" + id);
+                if (!localWorkDir.exists() && !localWorkDir.mkdirs()) {
                     throw new IOException("не удалось создать каталог туннеля");
                 }
-                File creds = new File(workDir, "creds.json");
-                File config = new File(workDir, "config.yml");
+                File creds = new File(localWorkDir, "creds.json");
+                File config = new File(localWorkDir, "config.yml");
                 writeFile(creds, new JSONObject()
                         .put("AccountTag", account)
                         .put("TunnelID", id)
@@ -207,8 +201,17 @@ final class CloudflareTunnel {
                         "protocol: http2\n" +
                         "ingress:\n" +
                         "  - hostname: \"" + host + "\"\n" +
-                        "    service: \"unix:" + new File(context.getFilesDir(), "localapi.sock").getAbsolutePath() + "\"\n" +
+                        "    service: \"unix:" + unixSocket.getAbsolutePath() + "\"\n" +
                         "  - service: \"http_status:404\"\n");
+
+                synchronized (this) {
+                    if (stopped || ticket != generation) {
+                        deleteRecursive(localWorkDir);
+                        return;
+                    }
+                    publicUrl = "https://" + host;
+                    workDir = localWorkDir;
+                }
 
                 cmd.add("--config");
                 cmd.add(config.getAbsolutePath());
@@ -222,22 +225,22 @@ final class CloudflareTunnel {
                 cmd.add(token);
             }
 
-            if (stopped || ticket != generation) {
+            if (isStale(ticket)) {
+                deleteRecursive(localWorkDir);
                 return;
             }
 
             lastCommand = new ArrayList<>(cmd);
             launch(ticket, cmd);
         } catch (Exception e) {
-            fail(message(e));
+            deleteRecursive(localWorkDir);
+            fail(ticket, message(e));
         }
     }
 
     private void launch(long ticket, List<String> cmd) {
         try {
-            if (stopped || ticket != generation) {
-                return;
-            }
+            if (isStale(ticket)) return;
             File caBundle = ensureCaBundle();
             ProcessBuilder builder = new ProcessBuilder(cmd);
             builder.redirectErrorStream(true);
@@ -248,33 +251,44 @@ final class CloudflareTunnel {
             builder.environment().put("SSL_CERT_FILE", caBundle.getAbsolutePath());
 
             Process started = builder.start();
-            long sequence = ++launchSeq;
+            long sequence;
             synchronized (this) {
                 if (stopped || ticket != generation) {
                     started.destroy();
                     return;
                 }
+                sequence = ++launchSeq;
                 process = started;
                 state = "starting";
                 error = "";
             }
             notifyStatus();
 
-            reader = new Thread(() -> readLogs(started, ticket), "cf-tunnel-log");
-            reader.setDaemon(true);
-            reader.start();
+            Thread logThread = new Thread(() -> readLogs(started, ticket), "cf-tunnel-log");
+            logThread.setDaemon(true);
+            synchronized (this) {
+                reader = logThread;
+            }
+            logThread.start();
 
             main.postDelayed(() -> {
-                if (!stopped && ticket == generation && sequence == launchSeq
-                        && !"connected".equals(state)) {
-                    fail(lastLogError.isEmpty()
-                            ? "Cloudflare не подключился за 60 секунд"
-                            : lastLogError);
+                synchronized (CloudflareTunnel.this) {
+                    if (stopped || ticket != generation || sequence != launchSeq
+                            || "connected".equals(state)) {
+                        return;
+                    }
                 }
+                fail(ticket, lastLogError.isEmpty()
+                        ? "Cloudflare не подключился за 60 секунд"
+                        : lastLogError);
             }, 60_000);
         } catch (Exception e) {
-            fail(message(e));
+            fail(ticket, message(e));
         }
+    }
+
+    private synchronized boolean isStale(long ticket) {
+        return stopped || ticket != generation;
     }
 
     private List<String> resolveEdges() throws IOException {
@@ -321,32 +335,36 @@ final class CloudflareTunnel {
     private JSONObject registerQuickTunnel() throws Exception {
         HttpURLConnection connection =
                 (HttpURLConnection) new URL("https://api.trycloudflare.com/tunnel").openConnection();
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(20_000);
-        connection.setReadTimeout(20_000);
-        connection.setDoOutput(true);
-        connection.setFixedLengthStreamingMode(0);
-        connection.setRequestProperty("Content-Type", "application/json");
-        connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "localapi-deepseek/" +
-                context.getPackageManager().getPackageInfo(context.getPackageName(), 0).versionName);
-        connection.connect();
+        try {
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(20_000);
+            connection.setReadTimeout(20_000);
+            connection.setDoOutput(true);
+            connection.setFixedLengthStreamingMode(0);
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("User-Agent", "localapi-deepseek/" +
+                    context.getPackageManager().getPackageInfo(context.getPackageName(), 0).versionName);
+            connection.connect();
 
-        int code = connection.getResponseCode();
-        InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        String body = readAll(stream);
-        if (code != 200) {
-            throw new IOException("Cloudflare API " + code + ": " + shorten(body));
+            int code = connection.getResponseCode();
+            InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String body = readAll(stream);
+            if (code != 200) {
+                throw new IOException("Cloudflare API " + code + ": " + shorten(body));
+            }
+            JSONObject result = new JSONObject(body).optJSONObject("result");
+            if (result == null
+                    || result.optString("id").isEmpty()
+                    || result.optString("hostname").isEmpty()
+                    || result.optString("account_tag").isEmpty()
+                    || result.optString("secret").isEmpty()) {
+                throw new IOException("Cloudflare API: неполный ответ");
+            }
+            return result;
+        } finally {
+            connection.disconnect();
         }
-        JSONObject result = new JSONObject(body).optJSONObject("result");
-        if (result == null
-                || result.optString("id").isEmpty()
-                || result.optString("hostname").isEmpty()
-                || result.optString("account_tag").isEmpty()
-                || result.optString("secret").isEmpty()) {
-            throw new IOException("Cloudflare API: неполный ответ");
-        }
-        return result;
     }
 
     private void readLogs(Process started, long ticket) {
@@ -354,16 +372,13 @@ final class CloudflareTunnel {
                 new InputStreamReader(started.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = input.readLine()) != null) {
-                if (stopped || ticket != generation) {
-                    break;
-                }
+                if (isStale(ticket)) break;
                 String clean = line.replaceAll("\u001B\\[[;\\d]*m", "").trim();
-                if (clean.isEmpty()) {
-                    continue;
-                }
+                if (clean.isEmpty()) continue;
+
                 if (clean.contains("Registered tunnel connection")) {
                     synchronized (this) {
-                        if (!stopped) {
+                        if (!stopped && ticket == generation) {
                             state = "connected";
                             error = "";
                             lastLogError = "";
@@ -371,8 +386,12 @@ final class CloudflareTunnel {
                         }
                     }
                     notifyStatus();
-                } else if (clean.contains("ERR") || clean.toLowerCase().contains("failed")) {
-                    lastLogError = shorten(clean);
+                } else {
+                    String lower = clean.toLowerCase();
+                    if (clean.contains(" ERR ") || clean.contains("ERR\t")
+                            || lower.contains("error=") || lower.contains("failed")) {
+                        lastLogError = shorten(clean);
+                    }
                 }
             }
         } catch (IOException ignored) {
@@ -385,34 +404,45 @@ final class CloudflareTunnel {
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
+
+        boolean shouldRestart = false;
+        int attempt = 0;
+        List<String> command = null;
         synchronized (this) {
-            if (started != process) {
+            if (started != process || stopped || ticket != generation) {
                 return;
             }
-        }
-        if (!stopped && ticket == generation) {
-            List<String> command = lastCommand;
+            command = lastCommand;
             if (command != null && restartAttempts < 4) {
                 restartAttempts++;
+                attempt = restartAttempts;
                 state = "starting";
                 error = "";
-                notifyStatus();
-                int attempt = restartAttempts;
-                main.postDelayed(() -> {
-                    if (!stopped && ticket == generation && attempt == restartAttempts) {
-                        launch(ticket, new ArrayList<>(command));
-                    }
-                }, 2500);
-            } else {
-                fail(lastLogError.isEmpty()
-                        ? "cloudflared завершился (код " + exit + ")"
-                        : lastLogError);
+                shouldRestart = true;
             }
+        }
+
+        if (shouldRestart) {
+            notifyStatus();
+            final int targetAttempt = attempt;
+            final List<String> restartCmd = new ArrayList<>(command);
+            main.postDelayed(() -> {
+                synchronized (CloudflareTunnel.this) {
+                    if (stopped || ticket != generation || targetAttempt != restartAttempts) {
+                        return;
+                    }
+                }
+                launch(ticket, restartCmd);
+            }, 2500);
+        } else {
+            fail(ticket, lastLogError.isEmpty()
+                    ? "cloudflared завершился (код " + exit + ")"
+                    : lastLogError);
         }
     }
 
-    private synchronized void fail(String message) {
-        if (stopped) {
+    private synchronized void fail(long ticket, String message) {
+        if (stopped || ticket != generation) {
             return;
         }
         stopped = true;

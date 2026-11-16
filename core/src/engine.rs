@@ -749,6 +749,15 @@ impl Engine {
         }
 
         let mut conv = if chat_id.is_empty() { store.create() } else { store.get(chat_id)? };
+        if mode == AuthMode::Api
+            && model == "deepseek-v4-pro"
+            && conv.messages.iter().any(|m| !m.images.is_empty())
+        {
+            return Err(Error::new(
+                ErrorKind::Invalid,
+                "В этом чате есть изображения: V4 Pro их не поддерживает. Выберите Flash 1017",
+            ));
+        }
         store.append_user(&mut conv, text, &images)?;
         let mut history = conv.messages.clone();
         if let Some(system) = system_prompt.map(str::trim).filter(|s| !s.is_empty()) {
@@ -858,6 +867,7 @@ impl Engine {
                                             let _ = web.delete_session(&old.web_session_id);
                                         }
                                     }
+                                    let reused_session = is_agent && !session_id.is_empty();
                                     let session = if session_id.is_empty() {
                                         web.create_session()
                                     } else {
@@ -916,6 +926,16 @@ impl Engine {
                                                 if let Ok(new_parent) = result {
                                                     web_session_saved = Some(session_id.clone());
                                                     web_parent_saved = new_parent;
+                                                } else if reused_session {
+                                                    if let Err(ref e) = result {
+                                                        if e.kind == ErrorKind::Api {
+                                                            if let Ok(mut stale) = worker_store.get(&worker_chat) {
+                                                                stale.web_session_id.clear();
+                                                                stale.web_parent_id = None;
+                                                                let _ = worker_store.save(&stale);
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             } else {
                                                 let _ = web.delete_session(&session_id);
@@ -1014,11 +1034,12 @@ impl Engine {
 
         if done {
             let mut streams = lock(&self.streams);
-            let finished: Vec<u64> = streams
+            let mut finished: Vec<u64> = streams
                 .iter()
                 .filter(|(id, s)| **id != stream_id && lock(&s.state).done)
                 .map(|(id, _)| *id)
                 .collect();
+            finished.sort_unstable();
             for id in finished.into_iter().rev().skip(8) {
                 streams.remove(&id);
             }

@@ -21,14 +21,11 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 
 /**
  * Visible, session-persistent browser controlled by the agent. It is a normal
@@ -43,6 +40,7 @@ final class AgentBrowser {
     }
 
     private static final int LOAD_TIMEOUT_MS = 25_000;
+    private static final int MAX_SCREENSHOT_SIDE = 1024;
 
     private final Activity activity;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -52,6 +50,7 @@ final class AgentBrowser {
     private ProgressBar progress;
     private Callback pending;
     private Runnable timeout;
+    private Runnable pendingCollect;
     private String lastAction = "";
 
     AgentBrowser(Activity activity) {
@@ -100,16 +99,19 @@ final class AgentBrowser {
                 scroll(arg, callback);
                 break;
             case "extract":
+                pending = callback;
                 collect(callback, false);
                 break;
             case "screenshot":
+                pending = callback;
                 collect(callback, true);
                 break;
             case "wait":
                 int delay = 800;
                 try { delay = Math.max(100, Math.min(5000, Integer.parseInt(arg))); }
                 catch (Exception ignored) { }
-                handler.postDelayed(() -> collect(callback, false), delay);
+                pending = callback;
+                scheduleCollect(callback, delay);
                 break;
             default:
                 callback.done(error("Неизвестное действие браузера: " + action));
@@ -219,7 +221,7 @@ final class AgentBrowser {
 
         dialog.setContentView(root);
         dialog.setOnDismissListener(d -> {
-            cancelTimeout();
+            cancelTimers();
             if (pending != null) {
                 Callback cb = pending;
                 pending = null;
@@ -253,10 +255,7 @@ final class AgentBrowser {
             url = "https://duckduckgo.com/?q=" + android.net.Uri.encode(arg);
         }
         title.setText(url);
-        pending = callback;
-        pageFinishedReset();
-        scheduleTimeout();
-        web.loadUrl(url);
+        loadPending(() -> web.loadUrl(url), callback);
     }
 
     private void navigateBack(Callback callback) {
@@ -265,30 +264,38 @@ final class AgentBrowser {
     }
 
     private void loadPending(Runnable action, Callback callback) {
+        cancelTimers();
         pending = callback;
-        pageFinishedReset();
         scheduleTimeout();
         action.run();
     }
 
-    private void pageFinishedReset() {
-        // Reset happens implicitly with pending; pageFinished() checks it.
-    }
-
     private void pageFinished(String url) {
         if (pending == null) return;
+        if ("about:blank".equals(url)) return;
         cancelTimeout();
-        handler.postDelayed(() -> {
-            if (pending != null) collect(pending, false);
-        }, 250);
+        scheduleCollect(pending, 250);
     }
 
     private void failPending(String message) {
+        cancelTimers();
         if (pending == null) return;
         Callback cb = pending;
         pending = null;
-        cancelTimeout();
         cb.done(error(message));
+    }
+
+    private void scheduleCollect(Callback callback, int delayMs) {
+        if (pendingCollect != null) {
+            handler.removeCallbacks(pendingCollect);
+        }
+        pendingCollect = () -> {
+            pendingCollect = null;
+            if (pending == callback) {
+                collect(callback, false);
+            }
+        };
+        handler.postDelayed(pendingCollect, delayMs);
     }
 
     private void scheduleTimeout() {
@@ -306,7 +313,17 @@ final class AgentBrowser {
         }
     }
 
+    private void cancelTimers() {
+        cancelTimeout();
+        if (pendingCollect != null) {
+            handler.removeCallbacks(pendingCollect);
+            pendingCollect = null;
+        }
+    }
+
     private void close(Callback callback) {
+        cancelTimers();
+        pending = null;
         JSONObject result = new JSONObject();
         try {
             result.put("ok", true);
@@ -321,6 +338,7 @@ final class AgentBrowser {
             callback.done(error("Не указан селектор/текст ссылки"));
             return;
         }
+        pending = callback;
         String js = "(function(s){var el=null;try{el=document.querySelector(s);}catch(e){}"
                 + "if(!el){var all=document.querySelectorAll('a,button,input,[role=button]');"
                 + "for(var i=0;i<all.length;i++){var tx=(all[i].innerText||all[i].value||"
@@ -329,11 +347,13 @@ final class AgentBrowser {
                 + "if(!el)return false;try{el.scrollIntoView({block:'center'});}catch(e){}"
                 + "el.click();return true;})(" + JSONObject.quote(selector) + ")";
         web.evaluateJavascript(js, value -> {
+            if (pending != callback) return;
             if (!jsTrue(value)) {
+                pending = null;
                 callback.done(error("Элемент не найден: " + selector));
                 return;
             }
-            handler.postDelayed(() -> collect(callback, false), 900);
+            scheduleCollect(callback, 900);
         });
     }
 
@@ -343,6 +363,7 @@ final class AgentBrowser {
             callback.done(error("Формат: type|CSS-селектор|текст"));
             return;
         }
+        pending = callback;
         String selector = arg.substring(0, split).trim();
         String text = arg.substring(split + 1);
         String js = "(function(s,v){var el=document.querySelector(s);if(!el)return false;"
@@ -352,30 +373,36 @@ final class AgentBrowser {
                 + "el.dispatchEvent(new Event('change',{bubbles:true}));return true;})"
                 + "(" + JSONObject.quote(selector) + "," + JSONObject.quote(text) + ")";
         web.evaluateJavascript(js, value -> {
+            if (pending != callback) return;
             if (!jsTrue(value)) {
+                pending = null;
                 callback.done(error("Поле не найдено: " + selector));
                 return;
             }
-            handler.postDelayed(() -> collect(callback, false), 400);
+            scheduleCollect(callback, 400);
         });
     }
 
     private void scroll(String arg, Callback callback) {
+        pending = callback;
         String direction = arg.isEmpty() ? "down" : arg;
         String js = "(function(d){if(d==='top')window.scrollTo(0,0);"
                 + "else if(d==='bottom')window.scrollTo(0,document.body.scrollHeight);"
                 + "else if(d==='up')window.scrollBy(0,-Math.max(300,innerHeight*0.8));"
                 + "else window.scrollBy(0,Math.max(300,innerHeight*0.8));return true;})("
                 + JSONObject.quote(direction) + ")";
-        web.evaluateJavascript(js, value -> handler.postDelayed(
-                () -> collect(callback, false), 350));
+        web.evaluateJavascript(js, value -> {
+            if (pending != callback) return;
+            scheduleCollect(callback, 350);
+        });
     }
 
     private void collect(Callback callback, boolean withScreenshot) {
         if (callback == null) return;
-        pending = null;
-        cancelTimeout();
+        cancelTimers();
+        if (pending != callback) return;
         if (web == null) {
+            pending = null;
             callback.done(error("Браузер не создан"));
             return;
         }
@@ -387,6 +414,8 @@ final class AgentBrowser {
                 + "return JSON.stringify({url:location.href,title:document.title,"
                 + "text:t.slice(0,20000),links:links});})()";
         web.evaluateJavascript(js, value -> {
+            if (pending != callback) return;
+            pending = null;
             JSONObject result = new JSONObject();
             try {
                 Object decoded = new JSONTokener(value).nextValue();
@@ -410,19 +439,28 @@ final class AgentBrowser {
     }
 
     private String screenshotData() {
-        if (web == null || web.getWidth() <= 0 || web.getHeight() <= 0) return "";
+        if (web == null) return "";
+        int w = web.getWidth();
+        int h = web.getHeight();
+        if (w <= 0 || h <= 0) return "";
+        Bitmap bitmap = null;
         try {
-            Bitmap bitmap = Bitmap.createBitmap(web.getWidth(), web.getHeight(),
-                    Bitmap.Config.ARGB_8888);
+            int max = Math.max(w, h);
+            float scale = max > MAX_SCREENSHOT_SIDE ? (float) MAX_SCREENSHOT_SIDE / max : 1f;
+            int outW = Math.max(1, Math.round(w * scale));
+            int outH = Math.max(1, Math.round(h * scale));
+            bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(bitmap);
+            if (scale < 1f) canvas.scale(scale, scale);
             web.draw(canvas);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.PNG, 85, out);
-            bitmap.recycle();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 90, out);
             return "data:image/png;base64,"
                     + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
         } catch (Exception e) {
             return "";
+        } finally {
+            if (bitmap != null) bitmap.recycle();
         }
     }
 
@@ -431,6 +469,13 @@ final class AgentBrowser {
     }
 
     void destroy() {
+        cancelTimers();
+        handler.removeCallbacksAndMessages(null);
+        if (pending != null) {
+            Callback cb = pending;
+            pending = null;
+            cb.done(error("Браузер закрыт"));
+        }
         if (dialog != null) {
             dialog.setOnDismissListener(null);
             dialog.dismiss();

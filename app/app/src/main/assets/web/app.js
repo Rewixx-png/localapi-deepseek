@@ -45,7 +45,12 @@
     streamStage: null,
     lastContent: "",
     lastReasoning: "",
-    browserPending: {}
+    browserPending: {},
+    agentFiles: [],
+    agentSelection: {},
+    agentContents: {},
+    sandbox: {},
+    agentRoot: { configured: false, name: "" }
   };
 
   // ── native bridge ────────────────────────────────────────────────────
@@ -133,8 +138,10 @@
 
   function fatal(message) {
     show("screen-boot");
-    $(".boot-text").textContent = message;
-    $(".boot-mark").style.animation = "none";
+    var text = $(".boot-text");
+    if (text) text.textContent = message;
+    var mark = $(".boot-mark") || $("#screen-boot .hero-mark");
+    if (mark) mark.style.animation = "none";
   }
 
   // ── formatting ───────────────────────────────────────────────────────
@@ -505,8 +512,14 @@
     s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_, label, url) {
       return '<a href="' + url + '" rel="noopener">' + label + "</a>";
     });
-    s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)\].,;]+)/g, function (_, prefix, url) {
-      return prefix + '<a href="' + url + '" rel="noopener">' + url + "</a>";
+    s = s.replace(/(^|[\s(])(https?:\/\/[^\s<\]]+)/g, function (_, prefix, raw) {
+      var cut = raw.search(/&(?:lt|gt|quot);/);
+      var head = cut >= 0 ? raw.slice(0, cut) : raw;
+      var after = cut >= 0 ? raw.slice(cut) : "";
+      var clean = head.replace(/[.,;:!?)]+$/, "");
+      var punct = head.slice(clean.length);
+      if (!clean || /^https?:\/\/$/i.test(clean)) return prefix + raw;
+      return prefix + '<a href="' + clean + '" rel="noopener">' + clean + "</a>" + punct + after;
     });
     s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
@@ -653,7 +666,7 @@
   var SETTINGS_PANES = {
     token: "Авторизация и ключи",
     server: "Локальный API",
-    tunnel: "Cloudflare Туннель",
+    tunnel: "Cloudflare Tunnel",
     system: "О приложении",
     ui: "Интерфейс"
   };
@@ -958,7 +971,7 @@
     resetCheckButton();
     paintUpdateNote("У вас последняя версия");
     if (manual) {
-      toast("У вас последняя версия" + (S.version ? " — v" + S.version : ""));
+      toast("У вас последняя версия" + (S.version ? " (v" + S.version + ")" : ""));
     }
   };
 
@@ -1108,7 +1121,7 @@
       apiReasoningNote.textContent = S.thinking ? "DeepThink включён" : "Выключен";
     }
     var apiReasoningGroup = $("#api-reasoning-group");
-    if (apiReasoningGroup) apiReasoningGroup.classList.toggle("hidden", S.authMode === "web");
+    if (apiReasoningGroup) apiReasoningGroup.classList.toggle("hidden", web);
 
     var showEffort = S.thinking && !web;
     $("#model-block").classList.toggle("hidden", web);
@@ -1400,25 +1413,25 @@
   function startCfTunnel() {
     if (!S.server || !S.server.running) {
       paintTunnel({ state: "stopped" });
-      toast("Сначала запусти локальный API");
+      toast("Сначала включите локальный API");
       return;
     }
     var token = $("#cf-token").value.trim();
     var host = $("#cf-host").value.trim();
     if (S.cfMode === "token" && !token) {
       paintTunnel({ state: "stopped" });
-      toast("Вставь токен туннеля");
+      toast("Вставьте токен туннеля");
       return;
     }
     if (S.cfMode === "token" && !host) {
       paintTunnel({ state: "stopped" });
-      toast("Укажи публичный адрес из Cloudflare");
+      toast("Укажите публичный адрес из Cloudflare");
       return;
     }
     confirmDialog(
       "Cloudflare Tunnel",
       "Локальный API станет доступен из интернета по HTTPS. Любой, у кого есть ключ, " +
-      "сможет расходовать твой токен DeepSeek. Для постоянного адреса используй " +
+      "сможет расходовать ваш токен DeepSeek. Для постоянного адреса используйте " +
       "именованный туннель и Cloudflare Access.",
       "Включить"
     ).then(function (ok) {
@@ -1559,7 +1572,7 @@
       if (S.server.base_url) copyText(S.server.base_url);
     });
     $("#server-copy-model").addEventListener("click", function () {
-      copyText(S.model);
+      copyText(isWebMode() ? "deepseek-flash" : S.model);
     });
 
     $("#online-toggle").addEventListener("change", function () {
@@ -1603,13 +1616,13 @@
     $("#token-label").textContent = isWeb ? "userToken" : "API-ключ";
     $("#token-hint").textContent = TOKEN_HINTS[S.authMode];
     $("#token-lead").textContent = isWeb
-      ? "Вставьте userToken из chat.deepseek.com. Приложение проверит его запросом к /users/settings."
-      : "Вставьте API-ключ. Приложение проверит его запросом к /models и сохранит на устройстве.";
+      ? "Вставьте userToken с chat.deepseek.com. Проверим его запросом к /users/settings."
+      : "Вставьте API-ключ. Перед сохранением проверим его запросом к /models.";
     $("#token-input").placeholder = isWeb ? '{"value":"…"}' : "sk-…";
     $("#web-warning").classList.toggle("hidden", !isWeb);
-    $("#token-fine").innerHTML = isWeb
-      ? "DeepSeek может изменить протокол без предупреждения."
-      : "Ключ хранится в приватной папке приложения, права 0600.";
+    $("#token-fine").textContent = isWeb
+      ? "DeepSeek может изменить веб-протокол без предупреждения."
+      : "Ключ сохраняется локально в приватных данных приложения.";
 
     paintModel();
 
@@ -1866,11 +1879,14 @@
 
       var md = document.createElement("div");
       md.className = "content" + (opts.streaming ? " cursor" : "");
-      md.innerHTML = renderMarkdown(m.role === "assistant" ? stripAgentDirectives(m.content) : m.content);
+      var rawShown = (S.agentMode && m.role === "assistant")
+        ? stripAgentDirectives(m.content)
+        : m.content;
+      md.innerHTML = renderMarkdown(rawShown);
       enhanceCodeBlocks(md);
       bubble.appendChild(md);
 
-      if (!opts.streaming) {
+      if (!opts.streaming && S.agentMode) {
         appendAgentMedia(bubble, S.chat && S.chat.id, m.content);
         appendAgentBrowserLink(bubble, extractAgentBrowse(m.content));
       }
@@ -1887,7 +1903,9 @@
         copy.type = "button";
         copy.innerHTML = '<svg class="icon"><use href="#i-copy"></use></svg><span>Копировать</span>';
         copy.addEventListener("click", function () {
-          copyText(m.role === "assistant" ? stripAgentDirectives(m.content) : (m.content || ""));
+          copyText((S.agentMode && m.role === "assistant")
+            ? stripAgentDirectives(m.content)
+            : (m.content || ""));
         });
         meta.appendChild(copy);
         if (opts.usage && opts.usage.total_tokens) {
@@ -2375,13 +2393,9 @@
   }
 
   function extractAgentBrowser(text) {
-    var match = /\[\[(BROWSER|BROWSE):\s*([\s\S]*?)\]\]/i.exec(String(text || ""));
+    var match = /\[\[BROWSER:\s*([\s\S]*?)\]\]/i.exec(String(text || ""));
     if (!match) return null;
-    var kind = match[1].toUpperCase();
-    var raw = match[2].trim();
-    if (kind === "BROWSE") {
-      return { action: "open", arg: agentBrowserUrl(raw), label: raw };
-    }
+    var raw = match[1].trim();
     var split = raw.indexOf("|");
     if (split < 0) return { action: raw.toLowerCase(), arg: "", label: raw };
     return {
@@ -2796,7 +2810,10 @@
   function startAgentChat() {
     detachStream();
     S.titleRequested = "";
+    S.agentFiles = [];
+    S.agentSelection = {};
     S.agentContents = {};
+    S.agentContextInfo = null;
     try {
       S.chat = invoke("newChat", "agent");
     } catch (e) {
@@ -2821,7 +2838,7 @@
       return;
     }
     detachStream();
-    journalLine("mode", agent ? "Включён Agent mode" : "Выключен Agent mode");
+    journalLine("mode", agent ? "Включён режим агента" : "Выключен режим агента");
     S.agentMode = agent;
     S.chat = null;
     S.titleRequested = "";
@@ -2994,23 +3011,29 @@
       var m = messages[i];
       if (isHiddenToolMessage(m)) continue;
       if (m.role === "user") toolNumber = 0;
-      var command = m.role === "assistant" ? extractAgentExec(m.content) : "";
-      var visible = m.role === "assistant"
+      var command = (S.agentMode && m.role === "assistant") ? extractAgentExec(m.content) : "";
+      var browser = (!command && S.agentMode && m.role === "assistant")
+        ? extractAgentBrowser(m.content)
+        : null;
+      var hasTool = !!(command || browser);
+      var visible = (S.agentMode && m.role === "assistant")
         ? stripAgentDirectives(m.content).trim()
-        : "";
-      var media = m.role === "assistant" ? extractAgentMedia(m.content) : [];
-      var browse = m.role === "assistant" ? extractAgentBrowse(m.content) : "";
-      if (m.role === "assistant" && !command && !visible && !m.reasoning
+        : (m.content || "").trim();
+      var media = (S.agentMode && m.role === "assistant") ? extractAgentMedia(m.content) : [];
+      var browse = (S.agentMode && m.role === "assistant") ? extractAgentBrowse(m.content) : "";
+      if (m.role === "assistant" && !hasTool && !visible && !m.reasoning
           && !media.length && !browse) continue;
       box.appendChild(messageEl(m, { openReasoning: false }));
-      if (!command) continue;
+      if (!hasTool) continue;
       toolNumber++;
       var result = null;
       if (i + 1 < messages.length && isHiddenToolMessage(messages[i + 1])) {
         result = parseToolResultParts(messages[i + 1].content);
         i++;
       }
-      var block = toolBlockEl("Команда " + toolNumber, command,
+      var blockLabel = command ? ("Команда " + toolNumber) : ("Браузер · " + browser.action);
+      var blockCmd = command ? command : browser.arg;
+      var block = toolBlockEl(blockLabel, blockCmd,
         result ? result.output : "", result ? result.code : "?", !result);
       box.appendChild(block.row);
     }
@@ -3037,7 +3060,7 @@
     var hint = document.createElement("div");
     hint.className = "fine";
     hint.textContent = S.agentMode
-      ? "ZIP — через скрепку. Агент распакует его в /workspace и выполнит код в песочнице."
+      ? "ZIP прикрепляется скрепкой: агент сам распакует его в /workspace и выполнит код."
       : "Enter — отправить, Shift+Enter — новая строка.";
     wrap.appendChild(icon);
     wrap.appendChild(h);
@@ -3155,7 +3178,12 @@
       if (S.chat && S.chat.id === c.id) {
         detachStream();
         S.chat = null;
+        S.agentFiles = [];
+        S.agentSelection = {};
+        S.agentContents = {};
+        S.agentContextInfo = null;
         renderMessages();
+        refreshAgentFiles();
         $("#chat-title").textContent = "Новый чат";
       }
       refreshChats();
@@ -3172,7 +3200,10 @@
       return;
     }
     $("#chat-title").textContent = S.chat.title || "Чат";
+    S.agentFiles = [];
+    S.agentSelection = {};
     S.agentContents = {};
+    S.agentContextInfo = null;
     enterChat();
     renderMessages();
     refreshAgentFiles();
@@ -3330,6 +3361,9 @@
       return;
     }
     if (!S.online) {
+      if (fromNative && text && window.Native && Native.restoreComposerText) {
+        Native.restoreComposerText(text);
+      }
       toast("Нет доступа к интернету");
       return;
     }
@@ -3557,12 +3591,14 @@
         addToolRow("Занято", "Предыдущая команда ещё выполняется.");
         return;
       }
+      var browserChatId = S.chat && S.chat.id;
       S.agentBrowserCount++;
       S.agentToolBusy = true;
       var browserBlock = addToolBlock("Браузер · " + browser.action, browser.arg);
       journalLine("browser", browser.action + ": " + browser.arg);
       agentBrowserCommand(browser.action, browser.arg).then(function (result) {
         S.agentToolBusy = false;
+        if (!S.agentMode || !S.chat || S.chat.id !== browserChatId) return;
         var text = "URL: " + (result.url || "") + "\nTitle: " + (result.title || "")
           + "\n\n" + (result.text || "");
         if (result.links && result.links.length) {
@@ -3579,6 +3615,7 @@
         S.agentToolBusy = false;
         var message = e && e.message ? e.message : "Ошибка браузера";
         browserBlock.setResult(message, "?");
+        if (!S.agentMode || !S.chat || S.chat.id !== browserChatId) return;
         continueAgentWithTool(message, 1, []);
       });
       return;
@@ -3594,7 +3631,7 @@
     }
     refreshSandbox();
     if (!S.sandbox || !S.sandbox.running) {
-      addToolRow("Песочница", "Не запущена. Запустите Ubuntu в Agent mode.");
+      addToolRow("Песочница", "Не запущена. Откройте «Инструменты агента» → «Терминал Ubuntu».");
       return;
     }
     if (S.agentToolCount >= 6) {
@@ -3609,7 +3646,7 @@
     S.agentToolBusy = true;
     var id = "tool-" + Date.now() + "-" + S.agentToolCount;
     var block = addToolBlock("Команда " + S.agentToolCount, command);
-    S.agentPendingTool = { id: id, command: command, block: block };
+    S.agentPendingTool = { id: id, chatId: S.chat && S.chat.id, command: command, block: block };
     journalLine("agent", "exec: " + command);
     try {
       Native.sandboxExec(id, command);
@@ -3707,8 +3744,7 @@
         }
         var mediaChatId = (p && p.chat_id) || (S.chat && S.chat.id);
         appendAgentMedia(S.streamEl._bubble, mediaChatId, rawAgent);
-        // Browser actions run through the in-app WebView tool loop in
-        // maybeRunAgentTool(); do not launch the system browser here.
+        appendAgentBrowserLink(S.streamEl._bubble, extractAgentBrowse(rawAgent));
       }
       var sourceBox = sourcesEl(p.sources);
       if (sourceBox) S.streamEl._bubble.appendChild(sourceBox);
@@ -3761,6 +3797,8 @@
     S.firstTokenAt = 0;
     S.reasoningStartedAt = 0;
     S.reasoningEndedAt = 0;
+    S.agentToolBusy = false;
+    S.agentPendingTool = null;
     setStreaming(false);
   }
 
@@ -3975,6 +4013,10 @@
         S.online = S.status.online !== false;
         detachStream();
         S.chat = null;
+        S.agentMode = false;
+        refreshAgentUi();
+        renderMessages();
+        $("#chat-title").textContent = "Новый чат";
         localStorage.setItem("serverEnabled", "0");
         S.server = { running: false, port: 0, key: "", base_url: "" };
         showTokenScreen();
@@ -4063,6 +4105,8 @@
 
   window.__sandboxInstalled = function () {
     journalLine("sandbox", "Песочница установлена");
+    var el = $("#sandbox-progress");
+    if (el) el.textContent = "";
     refreshSandbox();
     toast("Песочница установлена");
   };
@@ -4112,6 +4156,7 @@
     var pending = S.agentPendingTool;
     S.agentPendingTool = null;
     S.agentToolBusy = false;
+    if (!S.agentMode || !S.chat || S.chat.id !== pending.chatId) return;
     if (pending.block) pending.block.setResult(output || "(пусто)", code);
     journalLine("agent", "exec result " + code + ": " + (output || "").slice(0, 500));
     refreshAgentFiles();
@@ -4119,6 +4164,11 @@
   };
 
   window.__sandboxExit = function (code, chatId) {
+    if (S.agentPendingTool && S.agentPendingTool.block) {
+      S.agentPendingTool.block.setResult("Песочница остановлена", code);
+    }
+    S.agentPendingTool = null;
+    S.agentToolBusy = false;
     journalLine("sandbox", "QEMU завершился, код " + code);
     var message = String(code) === "0"
       ? "Песочница остановлена"

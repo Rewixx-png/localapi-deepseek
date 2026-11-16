@@ -109,6 +109,7 @@ final class Updater {
 
     void onLaunch() {
         scheduleJob(activity);
+        if (pending().isEmpty()) cleanupApks(activity);
         SharedPreferences prefs = prefs(activity);
         if (Build.VERSION.SDK_INT >= 26 && !prefs.getBoolean(KEY_INSTALL_ASKED, false)) {
             prefs.edit().putBoolean(KEY_INSTALL_ASKED, true).apply();
@@ -168,6 +169,7 @@ final class Updater {
                             + JSONObject.quote(manifest.toString()) + "," + manual + ")");
                 } else {
                     clearPending(activity);
+                    cleanupApks(activity);
                     runJs("window.__updateNone && window.__updateNone(" + manual + ")");
                 }
             } catch (Exception e) {
@@ -279,6 +281,7 @@ final class Updater {
                     PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             params.setAppPackageName(activity.getPackageName());
             int sessionId = installer.createSession(params);
+            boolean committed = false;
             try (PackageInstaller.Session session = installer.openSession(sessionId)) {
                 try (OutputStream out = session.openWrite("base.apk", 0, apk.length());
                      InputStream in = new FileInputStream(apk)) {
@@ -299,6 +302,11 @@ final class Updater {
                 // successful install instead of leaving it dead in the background.
                 PendingIntent pending = PendingIntent.getActivity(activity, 1, result, flags);
                 session.commit(pending.getIntentSender());
+                committed = true;
+            } finally {
+                if (!committed) {
+                    try { installer.abandonSession(sessionId); } catch (Exception ignored) { }
+                }
             }
             runJs("window.__updateStatus && window.__updateStatus('installing')");
         } catch (Exception e) {
@@ -311,6 +319,7 @@ final class Updater {
 
     private void openInstallSettings() {
         activity.runOnUiThread(() -> {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
             Toast.makeText(activity, "Разрешите установку из неизвестных источников",
                     Toast.LENGTH_LONG).show();
             try {
@@ -399,6 +408,14 @@ final class Updater {
 
     static void clearPending(Context context) {
         prefs(context).edit().remove(KEY_PENDING).apply();
+    }
+
+    private static void cleanupApks(Context context) {
+        if (context == null) return;
+        //noinspection ResultOfMethodCallIgnored
+        new File(context.getCacheDir(), "update.apk").delete();
+        //noinspection ResultOfMethodCallIgnored
+        new File(context.getCacheDir(), "update.apk.part").delete();
     }
 
     static void setPrefs(Context context, boolean online, boolean remind) {
