@@ -255,11 +255,11 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973   # опциональн
 ./build.sh
 ```
 
-`build.sh` собирает `liblocalapi.so` под `arm64-v8a` и `x86_64`, кладёт их в
-`jniLibs` и запускает `gradlew assembleDebug`.
+`build.sh` автоматически скачивает `cloudflared` и набор библиотек QEMU
+(с проверкой SHA-256), собирает `liblocalapi.so` под `arm64-v8a` и `x86_64` и
+собирает APK (`./build.sh` — debug, `./build.sh release` — подписанный релизный APK).
 
-APK: `app/app/build/outputs/apk/debug/app-debug.apk` (debug-подпись).
-Готовый артефакт: `dist/localapi-deepseek-1.11.7-debug.apk`.
+Готовые релизные APK публикуются во вкладке [Releases](https://github.com/Rewixx-png/localapi-deepseek/releases).
 
 ## Обновления
 
