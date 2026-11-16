@@ -1,5 +1,11 @@
 target/
+dist/
 screenshots/
+*.apk
+*.aab
+*.apks
+*.keystore
+*.jks
 app/.gradle/
 app/build/
 app/app/build/
