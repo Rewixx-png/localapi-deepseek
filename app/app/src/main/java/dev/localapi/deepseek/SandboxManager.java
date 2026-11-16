@@ -608,50 +608,67 @@ final class SandboxManager {
 
     private static void unzip(File zip, File dir) throws IOException {
         List<File> written = new ArrayList<>();
-        try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(
-                new FileInputStream(zip)))) {
-            ZipEntry entry;
-            while ((entry = zin.getNextEntry()) != null) {
-                if (entry.isDirectory()) continue;
-                String name = entry.getName();
-                File target;
-                if (name.endsWith("vmlinuz-6.11.0-17-generic")
-                        || name.equals("vmlinuz")) {
-                    target = new File(dir, "vmlinuz");
-                } else if (name.endsWith("ubuntu-initramfs.cpio.gz")) {
-                    target = new File(dir, "initramfs.cpio.gz");
-                } else if (name.endsWith("rootfs.img")) {
-                    target = new File(dir, "rootfs.img");
-                } else if (name.startsWith("roms/")) {
-                    File qemuData = new File(dir, "qemu-data");
-                    if (!qemuData.isDirectory() && !qemuData.mkdirs()) {
-                        throw new IOException("Не удалось создать qemu-data");
+        boolean ok = false;
+        try {
+            try (ZipInputStream zin = new ZipInputStream(new BufferedInputStream(
+                    new FileInputStream(zip)))) {
+                ZipEntry entry;
+                while ((entry = zin.getNextEntry()) != null) {
+                    if (entry.isDirectory()) continue;
+                    String name = entry.getName().replace('\\', '/');
+                    while (name.startsWith("./")) name = name.substring(2);
+                    while (name.startsWith("/")) name = name.substring(1);
+                    int slash = name.lastIndexOf('/');
+                    String baseName = slash >= 0 ? name.substring(slash + 1) : name;
+                    if (baseName.isEmpty() || ".".equals(baseName) || "..".equals(baseName)) {
+                        continue;
                     }
-                    target = new File(qemuData, new File(name).getName());
-                } else {
-                    continue;
-                }
-                written.add(target);
-                try (OutputStream out = new FileOutputStream(target)) {
-                    byte[] buffer = new byte[64 * 1024];
-                    int read;
-                    while ((read = zin.read(buffer)) > 0) out.write(buffer, 0, read);
+                    File target;
+                    if (baseName.equals("vmlinuz") || baseName.startsWith("vmlinuz-")) {
+                        target = new File(dir, "vmlinuz");
+                    } else if (baseName.equals("ubuntu-initramfs.cpio.gz")
+                            || baseName.equals("initramfs.cpio.gz")) {
+                        target = new File(dir, "initramfs.cpio.gz");
+                    } else if (baseName.equals("rootfs.img")) {
+                        target = new File(dir, "rootfs.img");
+                    } else if (name.startsWith("roms/") || name.contains("/roms/")
+                            || name.startsWith("qemu-data/") || name.contains("/qemu-data/")
+                            || baseName.endsWith(".rom")) {
+                        File qemuData = new File(dir, "qemu-data");
+                        if (!qemuData.isDirectory() && !qemuData.mkdirs()) {
+                            throw new IOException("Не удалось создать qemu-data");
+                        }
+                        target = new File(qemuData, baseName);
+                    } else {
+                        continue;
+                    }
+                    written.add(target);
+                    try (OutputStream out = new FileOutputStream(target)) {
+                        byte[] buffer = new byte[64 * 1024];
+                        int read;
+                        while ((read = zin.read(buffer)) > 0) out.write(buffer, 0, read);
+                    }
                 }
             }
-        } catch (IOException e) {
-            for (File f : written) {
-                //noinspection ResultOfMethodCallIgnored
-                f.delete();
+            List<String> missing = new ArrayList<>();
+            if (!new File(dir, "vmlinuz").isFile()) missing.add("vmlinuz");
+            if (!new File(dir, "rootfs.img").isFile()) missing.add("rootfs.img");
+            if (!new File(dir, "qemu-data/efi-virtio.rom").isFile()) {
+                missing.add("ROM (efi-virtio.rom)");
             }
-            throw e;
-        }
-        if (!new File(dir, "vmlinuz").isFile()
-                || !new File(dir, "rootfs.img").isFile()
-                || !new File(dir, "qemu-data/efi-virtio.rom").isFile()) {
-            throw new IOException("В архиве нет vmlinuz/rootfs/ROM");
+            if (!missing.isEmpty()) {
+                throw new IOException("В архиве нет: " + String.join(", ", missing));
+            }
+            ok = true;
+        } finally {
+            if (!ok) {
+                for (File f : written) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
+            }
         }
     }
-
     private static String sha256(File file) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (InputStream in = new FileInputStream(file)) {
