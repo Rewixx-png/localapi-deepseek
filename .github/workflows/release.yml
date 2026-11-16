@@ -93,8 +93,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          VERSION_CODE=$(python3 -c "import re; s=open('app/app/build.gradle').read(); print(re.search(r'versionCode\s+(\d+)', s).group(1))")
-          VERSION_NAME=$(python3 -c "import re; s=open('app/app/build.gradle').read(); print(re.search(r\"versionName\s+'([^']+)'\", s).group(1))")
+          export VERSION_CODE=$(python3 -c "import re; s=open('app/app/build.gradle').read(); print(re.search(r'versionCode\s+(\d+)', s).group(1))")
+          export VERSION_NAME=$(python3 -c "import re; s=open('app/app/build.gradle').read(); print(re.search(r\"versionName\s+'([^']+)'\", s).group(1))")
 
           git fetch origin main
           git checkout -B main origin/main

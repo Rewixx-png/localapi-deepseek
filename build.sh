@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Fetches pinned native deps (cloudflared + QEMU arm64 libs), builds liblocalapi.so
-# for Android ABIs, and assembles debug or signed release APK.
 # Usage: ./build.sh [debug|release]
 set -euo pipefail
 
@@ -12,7 +10,6 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Locate Android SDK
 ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$ANDROID_HOME" ]; then
   for candidate in "$HOME/Android/Sdk" "/usr/local/lib/android/sdk" "/opt/android-sdk"; do
@@ -22,7 +19,7 @@ if [ -z "$ANDROID_HOME" ]; then
     fi
   done
 fi
-: "${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK (e.g. \$HOME/Android/Sdk)}"
+: "${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK}"
 export ANDROID_HOME
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
@@ -68,14 +65,12 @@ download_verified() {
 ensure_native_deps() {
   local jni_arm64="$ROOT/app/app/src/main/jniLibs/arm64-v8a"
   mkdir -p "$jni_arm64"
-
   local cf_bin="$jni_arm64/libcloudflared.so"
   if [ ! -f "$cf_bin" ] || [ "$(sha256_file "$cf_bin")" != "$CLOUDFLARED_SHA256" ]; then
     echo "==> Fetching cloudflared ${CLOUDFLARED_VERSION} (arm64)"
     download_verified "$CLOUDFLARED_URL" "$CLOUDFLARED_SHA256" "$cf_bin"
     chmod 755 "$cf_bin"
   fi
-
   local qemu_stamp="$jni_arm64/.qemu-libs.sha256"
   if [ ! -f "$jni_arm64/libqemu-system-aarch64.so" ] || [ ! -f "$qemu_stamp" ] || [ "$(cat "$qemu_stamp")" != "$QEMU_LIBS_SHA256" ]; then
     echo "==> Fetching QEMU arm64 libs (native-deps-v1)"
