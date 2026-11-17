@@ -59,7 +59,17 @@ final class Updater {
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 30000;
 
+    interface Listener {
+        void onUpdateAvailable(String manifestJson, boolean manual);
+        void onUpdateNone(boolean manual);
+        void onUpdateError(String message);
+        void onUpdateProgress(int percent);
+        void onUpdateStatus(String state);
+        void onShowPendingUpdate();
+    }
+
     private final Activity activity;
+    private volatile Listener listener;
     private final WebView web;
     private volatile boolean downloading;
     private boolean pendingDownload;
@@ -107,6 +117,14 @@ final class Updater {
         this.web = web;
     }
 
+    void setListener(Listener listener) {
+        this.listener = listener;
+    }
+
+    private void ui(Runnable r) {
+        activity.runOnUiThread(r);
+    }
+
     void onLaunch() {
         scheduleJob(activity);
         if (pending().isEmpty()) cleanupApks(activity);
@@ -124,6 +142,7 @@ final class Updater {
         if (intent != null && intent.getBooleanExtra("update_notification", false)) {
             intent.removeExtra("update_notification");
             runJs("window.__showPendingUpdate && window.__showPendingUpdate()");
+            ui(() -> { Listener l = listener; if (l != null) l.onShowPendingUpdate(); });
         }
         if (canInstall(activity)) {
             if (pendingDownload) {
@@ -156,6 +175,7 @@ final class Updater {
             if (manual) {
                 runJs("window.__updateError && window.__updateError("
                         + JSONObject.quote("Нет доступа к интернету") + ")");
+                ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Нет доступа к интернету"); });
             }
             return;
         }
@@ -167,15 +187,19 @@ final class Updater {
                     storePending(activity, manifest.toString());
                     runJs("window.__updateAvailable && window.__updateAvailable("
                             + JSONObject.quote(manifest.toString()) + "," + manual + ")");
+                    final String mStr = manifest.toString();
+                    ui(() -> { Listener l = listener; if (l != null) l.onUpdateAvailable(mStr, manual); });
                 } else {
                     clearPending(activity);
                     cleanupApks(activity);
                     runJs("window.__updateNone && window.__updateNone(" + manual + ")");
+                    ui(() -> { Listener l = listener; if (l != null) l.onUpdateNone(manual); });
                 }
             } catch (Exception e) {
                 if (manual) {
                     runJs("window.__updateError && window.__updateError("
                             + JSONObject.quote("Не удалось проверить обновления") + ")");
+                    ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Не удалось проверить обновления"); });
                 }
             }
         }, "update-check").start();
@@ -186,11 +210,13 @@ final class Updater {
         if (!online(activity)) {
             runJs("window.__updateError && window.__updateError("
                     + JSONObject.quote("Нет доступа к интернету") + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Нет доступа к интернету"); });
             return;
         }
         if (!canInstall(activity)) {
             pendingDownload = true;
             runJs("window.__updateStatus && window.__updateStatus('permission')");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateStatus("permission"); });
             openInstallSettings();
             return;
         }
@@ -200,6 +226,7 @@ final class Updater {
         } catch (Exception e) {
             runJs("window.__updateError && window.__updateError("
                     + JSONObject.quote("Нет данных об обновлении") + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Нет данных об обновлении"); });
             return;
         }
         downloading = true;
@@ -224,6 +251,7 @@ final class Updater {
             long read = 0;
             int lastPercent = -1;
             runJs("window.__updateProgress && window.__updateProgress(0)");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateProgress(0); });
             try (InputStream in = connection.getInputStream();
                  OutputStream out = new FileOutputStream(part)) {
                 byte[] buffer = new byte[64 * 1024];
@@ -237,6 +265,8 @@ final class Updater {
                             lastPercent = percent;
                             runJs("window.__updateProgress && window.__updateProgress("
                                     + percent + ")");
+                            final int pct = percent;
+                            ui(() -> { Listener l = listener; if (l != null) l.onUpdateProgress(pct); });
                         }
                     }
                 }
@@ -249,14 +279,17 @@ final class Updater {
             if (apk.exists() && !apk.delete()) throw new IOException("кэш занят");
             if (!part.renameTo(apk)) throw new IOException("не удалось сохранить APK");
             runJs("window.__updateProgress && window.__updateProgress(100)");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateProgress(100); });
             install(apk);
         } catch (Exception e) {
             //noinspection ResultOfMethodCallIgnored
             part.delete();
             String message = e.getMessage();
             if (message == null || message.isEmpty()) message = "ошибка сети";
+            final String dlErr = "Не удалось скачать обновление: " + message;
             runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote("Не удалось скачать обновление: " + message) + ")");
+                    + JSONObject.quote(dlErr) + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateError(dlErr); });
         } finally {
             if (connection != null) connection.disconnect();
             downloading = false;
@@ -267,11 +300,13 @@ final class Updater {
         if (!apk.exists()) {
             runJs("window.__updateError && window.__updateError("
                     + JSONObject.quote("Файл обновления не найден") + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Файл обновления не найден"); });
             return;
         }
         if (!canInstall(activity)) {
             pendingInstall = apk;
             runJs("window.__updateStatus && window.__updateStatus('permission')");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateStatus("permission"); });
             openInstallSettings();
             return;
         }
@@ -309,11 +344,14 @@ final class Updater {
                 }
             }
             runJs("window.__updateStatus && window.__updateStatus('installing')");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateStatus("installing"); });
         } catch (Exception e) {
             String message = e.getMessage();
             if (message == null || message.isEmpty()) message = "установка недоступна";
+            final String instErr = "Не удалось установить обновление: " + message;
             runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote("Не удалось установить обновление: " + message) + ")");
+                    + JSONObject.quote(instErr) + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onUpdateError(instErr); });
         }
     }
 

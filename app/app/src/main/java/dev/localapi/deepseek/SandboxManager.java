@@ -53,7 +53,19 @@ final class SandboxManager {
     private static final Pattern ANSI_PATTERN =
             Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
 
+    interface Listener {
+        void onProgress(int percent);
+        void onInstalled();
+        void onError(String message, String chatId);
+        void onStarted(String chatId);
+        void onOutput(String text);
+        void onExecChunk(String id, String chunk);
+        void onExecResult(String id, String output, int code);
+        void onExit(int code, String chatId);
+    }
+
     private final Activity activity;
+    private volatile Listener listener;
     private final WebView web;
     private volatile Process process;
     private volatile boolean installing;
@@ -67,6 +79,8 @@ final class SandboxManager {
     private final StringBuilder serial = new StringBuilder();
     private final Object execLock = new Object();
     private final Object writeLock = new Object();
+    private final Object ticketLock = new Object();
+    private volatile long execTicket = 0;
 
     private static final String PREFS = "sandbox_config";
     private static final String KEY_RAM = "ram_mb";
@@ -77,6 +91,14 @@ final class SandboxManager {
     SandboxManager(Activity activity, WebView web) {
         this.activity = activity;
         this.web = web;
+    }
+
+    void setListener(Listener listener) {
+        this.listener = listener;
+    }
+
+    private void ui(Runnable r) {
+        activity.runOnUiThread(r);
     }
 
     private static File dir(Context context) {
@@ -157,6 +179,7 @@ final class SandboxManager {
         if (installing) return;
         if (installed(activity)) {
             runJs("window.__sandboxInstalled && window.__sandboxInstalled()");
+            ui(() -> { Listener l = listener; if (l != null) l.onInstalled(); });
             return;
         }
         installing = true;
@@ -171,6 +194,7 @@ final class SandboxManager {
                 unzip(zip, dir(activity));
                 installing = false;
                 runJs("window.__sandboxInstalled && window.__sandboxInstalled()");
+                ui(() -> { Listener l = listener; if (l != null) l.onInstalled(); });
                 log("sandbox installed " + VERSION);
             } catch (Exception e) {
                 installing = false;
@@ -180,6 +204,7 @@ final class SandboxManager {
                 log("sandbox install error: " + message);
                 runJs("window.__sandboxError && window.__sandboxError("
                         + JSONObject.quote(message) + ")");
+                ui(() -> { Listener l = listener; if (l != null) l.onError(message, ""); });
             } finally {
                 //noinspection ResultOfMethodCallIgnored
                 zip.delete();
@@ -191,6 +216,7 @@ final class SandboxManager {
         if (!installed(activity)) {
             runJs("window.__sandboxError && window.__sandboxError("
                     + JSONObject.quote("Сначала скачайте песочницу") + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onError("Сначала скачайте песочницу", chatId == null ? "" : chatId); });
             return;
         }
         final Process started;
@@ -264,6 +290,8 @@ final class SandboxManager {
                 log("sandbox start error: " + message);
                 runJs("window.__sandboxError && window.__sandboxError("
                         + JSONObject.quote(message) + "," + JSONObject.quote(activeChatId) + ")");
+                final String errChat = activeChatId;
+                ui(() -> { Listener l = listener; if (l != null) l.onError(message, errChat); });
                 return;
             }
         }
@@ -271,6 +299,7 @@ final class SandboxManager {
         log("sandbox start " + VERSION + " chat=" + currentChat);
         runJs("window.__sandboxStarted && window.__sandboxStarted("
                 + JSONObject.quote(currentChat) + ")");
+        ui(() -> { Listener l = listener; if (l != null) l.onStarted(currentChat); });
 
         new Thread(() -> {
             File logFile = rotateLogIfNeeded(new File(activity.getCacheDir(), "sandbox.log"));
@@ -297,6 +326,7 @@ final class SandboxManager {
                     maybeConfigureNetwork(started);
                     runJs("window.__sandboxOutput && window.__sandboxOutput("
                             + JSONObject.quote(text) + ")");
+                    ui(() -> { Listener l = listener; if (l != null) l.onOutput(text); });
                 }
             } catch (Exception e) {
                 log("sandbox output error: " + e.getMessage());
@@ -323,6 +353,8 @@ final class SandboxManager {
             log("sandbox exit code=" + code);
             runJs("window.__sandboxExit && window.__sandboxExit(" + code + ","
                     + JSONObject.quote(exitedChat) + ")");
+            final int exitCode = code;
+            ui(() -> { Listener l = listener; if (l != null) l.onExit(exitCode, exitedChat); });
         }, "sandbox-output").start();
     }
 
@@ -332,10 +364,18 @@ final class SandboxManager {
             runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                     + JSONObject.quote(id) + "," + JSONObject.quote(
                     "Песочница не запущена") + ",-1)");
+            ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница не запущена", -1); });
             return;
+        }
+        final long myTicket;
+        synchronized (ticketLock) {
+            myTicket = ++execTicket;
         }
         new Thread(() -> {
             synchronized (execLock) {
+                if (myTicket != execTicket) {
+                    return;
+                }
                 if (!running || process != proc) {
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                             + JSONObject.quote(id) + "," + JSONObject.quote(
@@ -343,24 +383,38 @@ final class SandboxManager {
                     return;
                 }
 
-                // Wait for the guest OS + network setup to finish before pushing
-                // commands into the serial console.
-                long bootDeadline = System.currentTimeMillis() + 60_000L;
-                synchronized (serialLock) {
-                    while (!shellReady && running && process == proc
-                            && System.currentTimeMillis() < bootDeadline) {
+                long bootStart = System.currentTimeMillis();
+                long bootDeadline = bootStart + 25_000L;
+                boolean nudged = false;
+                while (!shellReady && running && process == proc
+                        && myTicket == execTicket
+                        && System.currentTimeMillis() < bootDeadline) {
+                    if (!nudged && !networkConfigured
+                            && System.currentTimeMillis() - bootStart > 4_000L) {
+                        nudged = true;
                         try {
-                            serialLock.wait(250);
+                            synchronized (writeLock) {
+                                proc.getOutputStream().write('\n');
+                                proc.getOutputStream().flush();
+                            }
+                        } catch (Exception ignored) { }
+                    }
+                    synchronized (serialLock) {
+                        if (shellReady) break;
+                        try {
+                            serialLock.wait(200);
                         } catch (InterruptedException ignored) {
                             Thread.currentThread().interrupt();
                             break;
                         }
                     }
                 }
+                if (myTicket != execTicket) return;
                 if (!running || process != proc) {
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                             + JSONObject.quote(id) + "," + JSONObject.quote(
                             "Песочница остановлена") + ",-1)");
+                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница остановлена", -1); });
                     return;
                 }
 
@@ -401,7 +455,7 @@ final class SandboxManager {
                     int code = -1;
                     String lastChunk = "";
 
-                    while (running && process == proc && System.currentTimeMillis() < deadline) {
+                    while (running && process == proc && myTicket == execTicket && System.currentTimeMillis() < deadline) {
                         String partial = null;
                         synchronized (serialLock) {
                             String buffer = serial.toString();
@@ -438,12 +492,15 @@ final class SandboxManager {
                                 runJs("window.__sandboxExecChunk && window.__sandboxExecChunk("
                                         + JSONObject.quote(id) + ","
                                         + JSONObject.quote(chunk) + ")");
+                                final String cOut = chunk;
+                                ui(() -> { Listener l = listener; if (l != null) l.onExecChunk(id, cOut); });
                             }
                         }
                     }
 
+                    boolean preempted = (myTicket != execTicket);
                     boolean timedOut = (endAt < 0 && running && process == proc);
-                    if (timedOut) {
+                    if (timedOut || preempted) {
                         // Interrupt the stuck foreground job so subsequent execs
                         // get a clean prompt back.
                         try {
@@ -472,6 +529,10 @@ final class SandboxManager {
                         }
                     }
                     output = cleanShellOutput(output.replace(begin, "").replace(end, ""));
+                    if (endAt >= 0) {
+                        shellReady = true;
+                    }
+                    if (preempted) return;
                     if (timedOut) {
                         output = (output.isEmpty() ? "" : output + "\n")
                                 + "[таймаут выполнения команды]";
@@ -482,11 +543,14 @@ final class SandboxManager {
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                             + JSONObject.quote(id) + "," + JSONObject.quote(output)
                             + "," + code + ")");
+                    final String fOut = output; final int fCode = code;
+                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, fOut, fCode); });
                 } catch (Exception e) {
+                    final String errMsg = e.getMessage() == null ? "exec error" : e.getMessage();
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                            + JSONObject.quote(id) + "," + JSONObject.quote(
-                            e.getMessage() == null ? "exec error" : e.getMessage())
+                            + JSONObject.quote(id) + "," + JSONObject.quote(errMsg)
                             + ",-1)");
+                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, errMsg, -1); });
                 }
             }
         }, "sandbox-exec").start();
@@ -507,16 +571,20 @@ final class SandboxManager {
     private void maybeConfigureNetwork(Process proc) {
         if (networkConfigured || proc == null) return;
         synchronized (serialLock) {
-            String tail = serial.length() > 8
-                    ? serial.substring(serial.length() - 8) : serial.toString();
+            int len = serial.length();
+            String rawTail = len > 64 ? serial.substring(len - 64) : serial.toString();
+            String tail = ANSI_PATTERN.matcher(rawTail).replaceAll("").replace("\r", "");
             if (!tail.endsWith("# ") && !tail.endsWith("#")) return;
+            if (serial.indexOf("Run /init") < 0 && serial.indexOf("can't access tty") < 0
+                    && len < 1024) {
+                return;
+            }
             if (networkConfigured) return;
             networkConfigured = true;
         }
         SimpleDateFormat utc = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
         utc.setTimeZone(TimeZone.getTimeZone("UTC"));
         String date = utc.format(new Date());
-        // Split the marker string in printf so the tty echo doesn't trigger shellReady early.
         String setup = "/bin/busybox ifconfig lo up 2>/dev/null\n"
                 + "/bin/busybox ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
                 + "/bin/busybox route add default gw 10.0.2.2 eth0 2>/dev/null\n"
@@ -530,7 +598,7 @@ final class SandboxManager {
                 + "printf 'Acquire::http::Proxy \"http://10.0.2.2:18991\";\\n"
                 + "Acquire::https::Proxy \"http://10.0.2.2:18991\";\\n' > /etc/apt/apt.conf.d/99proxy\n"
                 + "cd /workspace 2>/dev/null || true\n"
-                + "printf '__LOCALAPI_' 'NET_READY__\\n'\n";
+                + "printf '%s%s\\n' '__LOCALAPI_' 'NET_READY__'\n";
         try {
             synchronized (writeLock) {
                 proc.getOutputStream().write(setup.getBytes(StandardCharsets.UTF_8));
@@ -542,7 +610,6 @@ final class SandboxManager {
             log("sandbox network setup error: " + e.getMessage());
         }
     }
-
     void stop() {
         Process p;
         synchronized (startLock) {
@@ -598,6 +665,8 @@ final class SandboxManager {
                         lastPercent = percent;
                         runJs("window.__sandboxProgress && window.__sandboxProgress("
                                 + percent + ")");
+                        final int pct = percent;
+                        ui(() -> { Listener l = listener; if (l != null) l.onProgress(pct); });
                     }
                 }
             }

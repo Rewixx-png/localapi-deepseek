@@ -37,7 +37,16 @@ final class CloudflareTunnel {
 
     private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
+    interface Listener {
+        void onTunnelStatus(String statusJson);
+    }
+
     private WeakReference<WebView> webView = new WeakReference<>(null);
+    private volatile Listener listener;
+
+    void setListener(Listener listener) {
+        this.listener = listener;
+    }
 
     private Process process;
     private Thread reader;
@@ -494,11 +503,15 @@ final class CloudflareTunnel {
     }
 
     private void notifyStatus() {
+        String payload = statusJson();
+        Listener l = listener;
+        if (l != null) {
+            main.post(() -> l.onTunnelStatus(payload));
+        }
         WebView view = webView.get();
         if (view == null) {
             return;
         }
-        String payload = statusJson();
         main.post(() -> {
             try {
                 view.evaluateJavascript("window.__tunnelStatus(" + JSONObject.quote(payload) + ")", null);
