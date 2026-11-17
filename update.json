@@ -1,7 +1,7 @@
 {
-  "versionCode": 70,
-  "versionName": "1.11.9",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.9/LocalApiDeepSeek.apk",
-  "sha256": "41ab0cb524f532fda4709f32b608b3d723698c366b5783d04eca35dc7c72faf6",
+  "versionCode": 71,
+  "versionName": "1.11.10",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.10/LocalApiDeepSeek.apk",
+  "sha256": "ddaf2a833fb615d334db15d7126889edc9540547d3d02d10699b0d9c798e6384",
   "notes": "LaTeX-формулы рендерятся локальным KaTeX (\\(...\\), \\[...\\], $...$, $$...$$). Модель может выбирать шрифт слов через [[font:serif|...]], sans, mono, cursive, condensed, light, black; инструкция добавлена в каждый запрос."
 }
