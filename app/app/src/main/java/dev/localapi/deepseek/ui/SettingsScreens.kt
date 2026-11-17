@@ -98,7 +98,7 @@ fun SettingsScreen(state: AppState) {
                         Icon(Icons.Rounded.Close, contentDescription = "Закрыть")
                     }
                 },
-                colors = TopAppBarDefaults.largeTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
                 ),

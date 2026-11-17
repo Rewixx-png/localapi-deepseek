@@ -4,7 +4,6 @@ import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.graphics.Color
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
@@ -62,8 +61,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun pickAgentZip() {
-                    runCatching { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed")) }
-                        .onFailure { appState.showToast("Нет приложения для выбора ZIP") }
+                    runCatching {
+                        zipPicker.launch(arrayOf("*/*"))
+                    }.onFailure { appState.showToast("Нет приложения для выбора ZIP") }
                 }
 
                 override fun chooseAgentRoot() {
@@ -161,6 +161,8 @@ class MainActivity : ComponentActivity() {
         appState.onResume()
     }
 
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         appState.refreshPermissions()
@@ -209,14 +211,11 @@ class MainActivity : ComponentActivity() {
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.domStorageEnabled = false
-            settings.databaseEnabled = false
             settings.setSupportZoom(true)
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.mediaPlaybackRequiresUserGesture = true
             settings.javaScriptCanOpenWindowsAutomatically = false
-            settings.allowFileAccessFromFileURLs = false
-            settings.allowUniversalAccessFromFileURLs = false
             setBackgroundColor(Color.BLACK)
             overScrollMode = View.OVER_SCROLL_NEVER
             webViewClient = object : WebViewClient() {

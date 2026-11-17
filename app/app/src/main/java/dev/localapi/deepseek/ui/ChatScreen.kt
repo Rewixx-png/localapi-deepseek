@@ -108,7 +108,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,6 +115,11 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private val PARTIAL_DIRECTIVE_RE = Regex(
+    "(?:`\\s*)?\\[\\[(?:EXEC|SEND|BROWSER|BROWSE):[\\s\\S]*$",
+    RegexOption.IGNORE_CASE
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,9 +140,16 @@ fun ChatScreen(state: AppState) {
         else if (drawerState.isOpen) scope.launch { drawerState.close() }
     }
 
-    LaunchedEffect(state.messages.size, state.streaming, state.streamContent.length) {
+    LaunchedEffect(state.messages.size, state.streaming) {
         val total = state.messages.size + if (state.streaming) 1 else 0
-        if (total > 0 && !listState.isScrollInProgress && !canScrollDown) {
+        if (total > 0 && !listState.isScrollInProgress) {
+            listState.scrollToItem(total - 1)
+        }
+    }
+
+    LaunchedEffect(state.streamContent.length, state.streamReasoning.length) {
+        val total = state.messages.size + if (state.streaming) 1 else 0
+        if (total > 0 && state.streaming && !listState.isScrollInProgress && !canScrollDown) {
             listState.scrollToItem(total - 1)
         }
     }
@@ -277,9 +288,8 @@ fun ChatScreen(state: AppState) {
                                 overflow = TextOverflow.Ellipsis
                             )
                             val tokens = state.estimateContextTokens()
-                            val sub = "${state.modelShortLabel()} · ≈ ${formatSpaceInt(tokens)} ток."
                             Text(
-                                sub,
+                                "${state.modelShortLabel()} · ≈ ${formatSpaceInt(tokens)} ток.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
@@ -637,8 +647,13 @@ private fun UserMessageBubble(m: ChatMessage, state: AppState) {
 private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Boolean) {
     val scale = LocalTextScale.current
     var reasoningOpen by remember(m.ts, streaming) { mutableStateOf(streaming) }
-    val shownText = remember(m.content, state.agentMode) {
-        if (state.agentMode) AppState.stripDirectives(m.content) else m.content
+    val shownText = remember(m.content, state.agentMode, streaming) {
+        if (state.agentMode) {
+            val cleaned = AppState.stripDirectives(m.content)
+            if (streaming) cleaned.replace(PARTIAL_DIRECTIVE_RE, "").trim() else cleaned
+        } else {
+            m.content
+        }
     }
     val browseQuery = remember(m.content, state.agentMode, streaming) {
         if (!streaming && state.agentMode) AppState.extractBrowse(m.content) else ""
@@ -664,12 +679,15 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
                 Spacer(Modifier.width(10.dp))
                 ExpressiveLoader(size = 16.dp)
                 Spacer(Modifier.width(6.dp))
+                val stageText = when {
+                    state.streamStage == "uploading" -> "Загрузка…"
+                    state.search && state.streamStage == "searching" && state.streamReasoning.isEmpty() && state.streamContent.isEmpty() -> "Ищу в сети…"
+                    state.streamReasoning.isNotEmpty() && state.streamContent.isEmpty() -> "Размышляю…"
+                    state.streamStage == "reasoning" && state.streamContent.isEmpty() -> "Размышляю…"
+                    else -> "Отвечаю…"
+                }
                 Text(
-                    when (state.streamStage) {
-                        "searching" -> "Ищу в сети…"
-                        "uploading" -> "Загрузка…"
-                        else -> "Отвечаю…"
-                    },
+                    stageText,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -716,7 +734,7 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
             }
         }
 
-        if (shownText.isNotEmpty() || streaming) {
+        if (shownText.isNotEmpty() || (streaming && m.reasoning.isEmpty())) {
             MarkdownMessageContent(
                 rawText = shownText,
                 textScale = scale,
@@ -757,7 +775,7 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
                     m.sources.forEach { s ->
                         Text(
                             s.title.ifEmpty { s.url },
-                            style = MaterialTheme.typography.bodySmall.copy(textDecoration = TextDecoration.Underline),
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.clickable { state.openUrl(s.url) }
                         )
@@ -771,17 +789,20 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
             Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
 
-        if (!streaming) {
+        // Copy & metrics appear only on final completed responses, never on intermediate tool-calling steps
+        if (!streaming && !m.hasToolCall && (shownText.isNotEmpty() || m.cancelled)) {
             Row(
                 modifier = Modifier.padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TonalActionPill(
-                    label = "Копировать",
-                    icon = Icons.Rounded.ContentCopy,
-                    onClick = { state.copyText(shownText) }
-                )
+                if (shownText.isNotEmpty()) {
+                    TonalActionPill(
+                        label = "Копировать",
+                        icon = Icons.Rounded.ContentCopy,
+                        onClick = { state.copyText(shownText) }
+                    )
+                }
                 if (m.elapsedMs > 0) {
                     Text(
                         AppState.formatDuration(m.elapsedMs),
@@ -843,7 +864,7 @@ private fun ToolExecutionCard(tb: ToolBlockData) {
                         color = if (ok) Color(0xFF173A26) else Color(0xFF421A1D)
                     ) {
                         Text(
-                            "exit ${tb.exitCode}",
+                            if (tb.exitCode == "—") "прервано" else "exit ${tb.exitCode}",
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = if (ok) Color(0xFF7BD88F) else Color(0xFFFF9B9B)

@@ -1,5 +1,10 @@
 package dev.localapi.deepseek
 
+import android.annotation.SuppressLint
+import android.graphics.Color as AndroidColor
+import android.view.View
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -7,9 +12,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -31,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -51,6 +61,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import org.json.JSONObject
 
 private sealed interface MdBlock {
     data class Paragraph(val text: String) : MdBlock
@@ -75,7 +87,6 @@ fun MarkdownMessageContent(
 ) {
     val blocks = remember(rawText) { parseMarkdown(rawText) }
     val primary = MaterialTheme.colorScheme.primary
-    val codeBg = MaterialTheme.colorScheme.surfaceContainerHighest
     val bodySize = (15.5f * textScale).sp
     val bodyLine = (23f * textScale).sp
 
@@ -84,10 +95,20 @@ fun MarkdownMessageContent(
             blocks.forEachIndexed { idx, block ->
                 val cursor = if (streaming && idx == blocks.lastIndex) " ▍" else ""
                 when (block) {
-                    is MdBlock.Paragraph -> Text(
-                        text = buildInlineAnnotated(block.text + cursor, primary, codeBg, onOpenUrl),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = bodySize, lineHeight = bodyLine)
-                    )
+                    is MdBlock.Paragraph -> {
+                        if (!streaming && containsLatexMath(block.text)) {
+                            KatexRichBlock(
+                                htmlBody = inlineMarkdownToSafeHtml(block.text),
+                                textScale = textScale,
+                                isDisplay = false
+                            )
+                        } else {
+                            Text(
+                                text = buildInlineAnnotated(block.text + cursor, primary, onOpenUrl),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = bodySize, lineHeight = bodyLine)
+                            )
+                        }
+                    }
                     is MdBlock.Heading -> {
                         val size = when (block.level) {
                             1 -> 21.sp * textScale
@@ -96,7 +117,7 @@ fun MarkdownMessageContent(
                             else -> 15.5.sp * textScale
                         }
                         Text(
-                            text = buildInlineAnnotated(block.text + cursor, primary, codeBg, onOpenUrl),
+                            text = buildInlineAnnotated(block.text + cursor, primary, onOpenUrl),
                             style = MaterialTheme.typography.titleMedium.copy(fontSize = size, fontWeight = FontWeight.SemiBold),
                             modifier = Modifier.padding(top = 4.dp)
                         )
@@ -104,19 +125,20 @@ fun MarkdownMessageContent(
                     is MdBlock.Quote -> Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f))
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
                             .padding(10.dp)
                     ) {
                         Box(
                             modifier = Modifier
                                 .width(3.dp)
-                                .height(20.dp)
+                                .fillMaxHeight()
                                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = buildInlineAnnotated(block.text + cursor, primary, codeBg, onOpenUrl),
+                            text = buildInlineAnnotated(block.text + cursor, primary, onOpenUrl),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = bodySize * 0.94f, lineHeight = bodyLine * 0.94f),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -128,11 +150,21 @@ fun MarkdownMessageContent(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(end = 8.dp)
                         )
-                        Text(
-                            text = buildInlineAnnotated(block.text + cursor, primary, codeBg, onOpenUrl),
-                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = bodySize, lineHeight = bodyLine),
-                            modifier = Modifier.weight(1f)
-                        )
+                        if (!streaming && containsLatexMath(block.text)) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                KatexRichBlock(
+                                    htmlBody = inlineMarkdownToSafeHtml(block.text),
+                                    textScale = textScale,
+                                    isDisplay = false
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = buildInlineAnnotated(block.text + cursor, primary, onOpenUrl),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = bodySize, lineHeight = bodyLine),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                     is MdBlock.Rule -> HorizontalDivider(
                         modifier = Modifier.padding(vertical = 4.dp),
@@ -140,20 +172,24 @@ fun MarkdownMessageContent(
                     )
                     is MdBlock.DisplayMath -> Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = beautifyLatex(block.expr),
-                            modifier = Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontFamily = FontFamily.Serif,
-                                fontSize = (16.5f * textScale).sp
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+                            if (streaming) {
+                                Text(
+                                    text = block.expr,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                KatexRichBlock(
+                                    htmlBody = "\\[${escapeHtml(block.expr)}\\]",
+                                    textScale = textScale,
+                                    isDisplay = true
+                                )
+                            }
+                        }
                     }
                     is MdBlock.Code -> CodeBlockCard(
                         lang = block.lang,
@@ -162,7 +198,7 @@ fun MarkdownMessageContent(
                         onCopy = { onCopy(block.code) },
                         onPreviewHtml = { onPreviewHtml(block.code) }
                     )
-                    is MdBlock.Table -> MarkdownTableCard(block, textScale, primary, codeBg, onOpenUrl)
+                    is MdBlock.Table -> MarkdownTableCard(block, textScale, primary, onOpenUrl)
                 }
             }
             if (blocks.isEmpty() && streaming) {
@@ -170,6 +206,146 @@ fun MarkdownMessageContent(
             }
         }
     }
+}
+
+private class KatexHeightBridge(private val onHeightPx: (Float) -> Unit) {
+    @JavascriptInterface
+    fun setHeight(px: Float) {
+        onHeightPx(px)
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun KatexRichBlock(
+    htmlBody: String,
+    textScale: Float,
+    isDisplay: Boolean
+) {
+    val textColorHex = colorToHex(MaterialTheme.colorScheme.onSurface)
+    val codeColorHex = colorToHex(MaterialTheme.colorScheme.primary)
+    val linkColorHex = colorToHex(MaterialTheme.colorScheme.primary)
+    val fontSizePx = 15.5f * textScale
+    var heightDp by remember(htmlBody, textScale) {
+        mutableFloatStateOf(if (isDisplay) 52f else 28f)
+    }
+
+    val documentHtml = remember(htmlBody, textColorHex, codeColorHex, linkColorHex, fontSizePx) {
+        val bodyJson = JSONObject.quote(htmlBody)
+        """
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+        <link rel="stylesheet" href="katex/katex.min.css">
+        <style>
+          html, body {
+            margin: 0; padding: 0;
+            background: transparent;
+            color: $textColorHex;
+            font-family: Roboto, system-ui, sans-serif;
+            font-size: ${fontSizePx}px;
+            line-height: 1.48;
+            overflow-x: hidden;
+            overflow-y: hidden;
+            word-wrap: break-word;
+          }
+          #root { width: 100%; }
+          code {
+            font-family: ui-monospace, "Roboto Mono", monospace;
+            font-size: 0.9em;
+            color: $codeColorHex;
+            font-weight: 500;
+          }
+          a { color: $linkColorHex; text-decoration: underline; }
+          .katex-display {
+            margin: 2px 0 !important;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 2px 0;
+          }
+          .katex { color: inherit; }
+        </style>
+        </head>
+        <body>
+        <div id="root"></div>
+        <script src="katex/katex.min.js"></script>
+        <script src="katex/contrib/auto-render.min.js"></script>
+        <script>
+          (function () {
+            var root = document.getElementById("root");
+            root.innerHTML = $bodyJson;
+            try {
+              if (window.renderMathInElement) {
+                window.renderMathInElement(root, {
+                  delimiters: [
+                    { left: "$$", right: "$$", display: true },
+                    { left: "\\[", right: "\\]", display: true },
+                    { left: "\\(", right: "\\)", display: false },
+                    { left: "$", right: "$", display: false }
+                  ],
+                  ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+                  throwOnError: false,
+                  strict: false,
+                  errorColor: "#ffb4ab"
+                });
+              }
+            } catch (e) {}
+            function report() {
+              try {
+                var h = Math.ceil(root.getBoundingClientRect().height);
+                if (h > 0 && window.KatexBridge) window.KatexBridge.setHeight(h);
+              } catch (e) {}
+            }
+            report();
+            if (document.fonts && document.fonts.ready) {
+              document.fonts.ready.then(report);
+            }
+            setTimeout(report, 60);
+            setTimeout(report, 220);
+          })();
+        </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            WebView(ctx).apply {
+                setBackgroundColor(AndroidColor.TRANSPARENT)
+                overScrollMode = View.OVER_SCROLL_NEVER
+                isVerticalScrollBarEnabled = false
+                isHorizontalScrollBarEnabled = false
+                settings.javaScriptEnabled = true
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                settings.domStorageEnabled = false
+                settings.setSupportZoom(false)
+                settings.textZoom = 100
+                addJavascriptInterface(
+                    KatexHeightBridge { px ->
+                        post {
+                            if (px > 4f) heightDp = px + 2f
+                        }
+                    },
+                    "KatexBridge"
+                )
+            }
+        },
+        update = { web ->
+            if (web.tag != documentHtml) {
+                web.tag = documentHtml
+                web.loadDataWithBaseURL("file:///android_asset/web/", documentHtml, "text/html", "utf-8", null)
+            }
+        },
+        onRelease = { web ->
+            web.removeJavascriptInterface("KatexBridge")
+            web.destroy()
+        },
+        modifier = Modifier.fillMaxWidth().height(heightDp.dp)
+    )
 }
 
 @Composable
@@ -236,9 +412,15 @@ private fun CodeBlockCard(
             AnimatedVisibility(visible = expanded) {
                 val fontSize = (12.5f * textScale).sp
                 val lineHeight = (18.5f * textScale).sp
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
+                        .padding(vertical = 10.dp)
+                ) {
                     Text(
                         text = (1..lines.size).joinToString("\n"),
+                        softWrap = false,
                         modifier = Modifier.padding(start = 12.dp, end = 10.dp),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = FontFamily.Monospace,
@@ -251,11 +433,12 @@ private fun CodeBlockCard(
                     Box(
                         modifier = Modifier
                             .width(1.dp)
-                            .height((lines.size * 18.5f * textScale).dp.coerceAtLeast(18.dp))
+                            .fillMaxHeight()
                             .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     )
                     Text(
                         text = highlighted,
+                        softWrap = false,
                         modifier = Modifier
                             .weight(1f)
                             .horizontalScroll(rememberScrollState())
@@ -277,41 +460,79 @@ private fun MarkdownTableCard(
     table: MdBlock.Table,
     textScale: Float,
     primary: Color,
-    codeBg: Color,
     onOpenUrl: (String) -> Unit
 ) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
-    ) {
-        Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            Row(modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                table.headers.forEachIndexed { idx, h ->
-                    Text(
-                        text = buildInlineAnnotated(h, primary, codeBg, onOpenUrl),
-                        modifier = Modifier.width(128.dp).padding(horizontal = 10.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.labelMedium.copy(fontSize = (13 * textScale).sp),
-                        textAlign = table.aligns.getOrElse(idx) { TextAlign.Start }
-                    )
-                }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val availWidth = maxWidth
+        val colCount = table.headers.size
+        val colWidths = remember(table, textScale, availWidth) {
+            val natural = (0 until colCount).map { col ->
+                val headerLen = table.headers[col].length
+                val maxCellLen = table.rows.maxOfOrNull { row ->
+                    val cell = row.getOrElse(col) { "" }
+                    // Estimate reasonable single-line or readable column width
+                    val longestToken = cell.split(Regex("\\s+")).maxOfOrNull { it.length } ?: 0
+                    maxOf(minOf(cell.length, 32), minOf(longestToken + 2, 34))
+                } ?: 0
+                val chars = maxOf(headerLen + 2, maxCellLen)
+                (chars * 8.2f * textScale + 22f).coerceIn(92f, 240f).dp
             }
-            table.rows.forEachIndexed { rIdx, row ->
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            val total = natural.fold(0.dp) { acc, w -> acc + w }
+            if (total < availWidth && total.value > 0f) {
+                val factor = availWidth / total
+                natural.map { it * factor }
+            } else {
+                natural
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
+        ) {
+            Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 Row(
-                    modifier = Modifier.background(
-                        if (rIdx % 2 == 1) MaterialTheme.colorScheme.surfaceContainer else Color.Transparent
-                    )
+                    modifier = Modifier
+                        .height(IntrinsicSize.Min)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 ) {
-                    row.forEachIndexed { idx, cell ->
+                    table.headers.forEachIndexed { idx, h ->
                         Text(
-                            text = buildInlineAnnotated(cell, primary, codeBg, onOpenUrl),
-                            modifier = Modifier.width(128.dp).padding(horizontal = 10.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = (13 * textScale).sp),
+                            text = buildInlineAnnotated(h, primary, onOpenUrl),
+                            modifier = Modifier
+                                .width(colWidths[idx])
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = (13f * textScale).sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
                             textAlign = table.aligns.getOrElse(idx) { TextAlign.Start }
                         )
+                    }
+                }
+                table.rows.forEachIndexed { rIdx, row ->
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    Row(
+                        modifier = Modifier
+                            .height(IntrinsicSize.Min)
+                            .background(if (rIdx % 2 == 1) MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f) else Color.Transparent)
+                    ) {
+                        row.forEachIndexed { idx, cell ->
+                            Text(
+                                text = buildInlineAnnotated(cell, primary, onOpenUrl),
+                                modifier = Modifier
+                                    .width(colWidths[idx])
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = (13f * textScale).sp,
+                                    lineHeight = (19f * textScale).sp
+                                ),
+                                textAlign = table.aligns.getOrElse(idx) { TextAlign.Start }
+                            )
+                        }
                     }
                 }
             }
@@ -327,6 +548,50 @@ private fun lineCountLabel(n: Int): String {
         else -> "$n строк"
     }
 }
+
+private fun containsLatexMath(text: String): Boolean {
+    if (text.contains("\\(") || text.contains("\\[") || text.contains("$$")) return true
+    val dollarMatch = Regex("\\$([^$\\n]{1,180})\\$").find(text) ?: return false
+    val inner = dollarMatch.groupValues[1]
+    return inner.contains('\\') || inner.contains('^') || inner.contains('_') ||
+        inner.contains('=') || inner.contains('+') || inner.contains('/') ||
+        Regex("^[a-zA-Z0-9\\s.,()*+-]+$").matches(inner)
+}
+
+private fun escapeHtml(s: String): String = s
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+    .replace("\"", "&quot;")
+
+private fun inlineMarkdownToSafeHtml(text: String): String {
+    val mathTokens = mutableListOf<String>()
+    val mathRe = Regex("\\\\\\[[\\s\\S]*?\\\\\\]|\\\\\\([\\s\\S]*?\\\\\\)|\\$\\$[\\s\\S]*?\\$\\$|\\$[^$\\n]+\\$")
+    val protectedMath = mathRe.replace(text) { m ->
+        val token = "@@M_${mathTokens.size}@@"
+        mathTokens.add(m.value)
+        token
+    }
+    var s = escapeHtml(protectedMath)
+    val codeTokens = mutableListOf<String>()
+    s = Regex("`([^`\\n]+)`").replace(s) { m ->
+        val token = "@@C_${codeTokens.size}@@"
+        codeTokens.add("<code>${m.groupValues[1]}</code>")
+        token
+    }
+    s = Regex("\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)").replace(s) { m ->
+        "<a href=\"${m.groupValues[2]}\">${m.groupValues[1]}</a>"
+    }
+    s = Regex("\\*\\*([^*\\n]+)\\*\\*").replace(s, "<strong>$1</strong>")
+    s = Regex("__([^_\\n]+)__").replace(s, "<strong>$1</strong>")
+    s = Regex("\\*([^*\\n]+)\\*").replace(s, "<em>$1</em>")
+    s = s.replace("\n", "<br>")
+    s = Regex("@@C_(\\d+)@@").replace(s) { m -> codeTokens.getOrElse(m.groupValues[1].toInt()) { "" } }
+    s = Regex("@@M_(\\d+)@@").replace(s) { m -> escapeHtml(mathTokens.getOrElse(m.groupValues[1].toInt()) { "" }) }
+    return s
+}
+
+private fun colorToHex(color: Color): String = String.format("#%06X", 0xFFFFFF and color.toArgb())
 
 private fun parseMarkdown(raw: String): List<MdBlock> {
     if (raw.isEmpty()) return emptyList()
@@ -447,13 +712,12 @@ private fun parseTableAt(lines: List<String>, start: Int): Pair<MdBlock.Table, I
 }
 
 private val INLINE_TOKEN_RE = Regex(
-    "`([^`\\n]+)`|\\[\\[font:([a-z-]+)\\|([\\s\\S]*?)\\]\\]|\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)|\\\\\\((.+?)\\\\\\)|\\$([^$\\n]+)\\$|\\*\\*([^*\n]+)\\*\\*|__([^_\n]+)__|~~([^~\n]+)~~|\\*([^*\n]+)\\*|(https?://[^\\s<\\]]+)"
+    "`([^`\\n]+)`|\\[\\[font:([a-z-]+)\\|([\\s\\S]*?)\\]\\]|\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)|\\*\\*([^*\n]+)\\*\\*|__([^_\n]+)__|~~([^~\n]+)~~|\\*([^*\n]+)\\*|(https?://[^\\s<\\]]+)"
 )
 
 private fun buildInlineAnnotated(
     text: String,
-    linkColor: Color,
-    codeBg: Color,
+    accentColor: Color,
     onOpenUrl: (String) -> Unit
 ): AnnotatedString = buildAnnotatedString {
     var idx = 0
@@ -462,8 +726,9 @@ private fun buildInlineAnnotated(
         val v = m.groupValues
         when {
             v[1].isNotEmpty() -> {
-                pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg, fontWeight = FontWeight.Medium))
-                append(" ${v[1]} ")
+                // Clean inline monospace without jagged per-line dark rectangles
+                pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = accentColor, fontWeight = FontWeight.Medium))
+                append(v[1])
                 pop()
             }
             v[2].isNotEmpty() -> {
@@ -480,35 +745,29 @@ private fun buildInlineAnnotated(
             }
             v[4].isNotEmpty() && v[5].isNotEmpty() -> {
                 val url = v[5]
-                pushLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))) { onOpenUrl(url) })
+                pushLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = accentColor, textDecoration = TextDecoration.Underline))) { onOpenUrl(url) })
                 append(v[4])
                 pop()
             }
             v[6].isNotEmpty() || v[7].isNotEmpty() -> {
-                val math = beautifyLatex(v[6].ifEmpty { v[7] })
-                pushStyle(SpanStyle(fontFamily = FontFamily.Serif, fontStyle = FontStyle.Italic, background = codeBg.copy(alpha = 0.55f)))
-                append(math)
+                pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                append(v[6].ifEmpty { v[7] })
                 pop()
             }
-            v[8].isNotEmpty() || v[9].isNotEmpty() -> {
-                pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                append(v[8].ifEmpty { v[9] })
+            v[8].isNotEmpty() -> {
+                pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+                append(v[8])
+                pop()
+            }
+            v[9].isNotEmpty() -> {
+                pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                append(v[9])
                 pop()
             }
             v[10].isNotEmpty() -> {
-                pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
-                append(v[10])
-                pop()
-            }
-            v[11].isNotEmpty() -> {
-                pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                append(v[11])
-                pop()
-            }
-            v[12].isNotEmpty() -> {
-                val clean = v[12].trimEnd('.', ',', ';', ':', '!', '?', ')')
-                val tail = v[12].removePrefix(clean)
-                pushLink(LinkAnnotation.Url(clean, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))) { onOpenUrl(clean) })
+                val clean = v[10].trimEnd('.', ',', ';', ':', '!', '?', ')')
+                val tail = v[10].removePrefix(clean)
+                pushLink(LinkAnnotation.Url(clean, TextLinkStyles(SpanStyle(color = accentColor, textDecoration = TextDecoration.Underline))) { onOpenUrl(clean) })
                 append(clean)
                 pop()
                 append(tail)
@@ -518,28 +777,6 @@ private fun buildInlineAnnotated(
         idx = m.range.last + 1
     }
     if (idx < text.length) append(text.substring(idx))
-}
-
-private fun beautifyLatex(raw: String): String {
-    var s = raw
-    val map = listOf(
-        "\\alpha" to "α", "\\beta" to "β", "\\gamma" to "γ", "\\delta" to "δ",
-        "\\epsilon" to "ε", "\\theta" to "θ", "\\lambda" to "λ", "\\mu" to "μ",
-        "\\pi" to "π", "\\sigma" to "σ", "\\phi" to "φ", "\\omega" to "ω",
-        "\\Delta" to "Δ", "\\Sigma" to "Σ", "\\Omega" to "Ω", "\\Pi" to "Π",
-        "\\times" to "×", "\\div" to "÷", "\\cdot" to "·", "\\pm" to "±",
-        "\\leq" to "≤", "\\le" to "≤", "\\geq" to "≥", "\\ge" to "≥",
-        "\\neq" to "≠", "\\ne" to "≠", "\\approx" to "≈", "\\equiv" to "≡",
-        "\\infty" to "∞", "\\rightarrow" to "→", "\\to" to "→", "\\leftarrow" to "←",
-        "\\Rightarrow" to "⇒", "\\in" to "∈", "\\notin" to "∉", "\\subset" to "⊂",
-        "\\forall" to "∀", "\\exists" to "∃", "\\partial" to "∂", "\\nabla" to "∇",
-        "\\sum" to "∑", "\\prod" to "∏", "\\int" to "∫", "\\sqrt" to "√"
-    )
-    map.forEach { (k, v) -> s = s.replace(k, v) }
-    s = s.replace(Regex("\\\\frac\\{([^}]*)\\}\\{([^}]*)\\}"), "($1)/($2)")
-    s = s.replace(Regex("\\\\text\\{([^}]*)\\}"), "$1")
-    s = s.replace("^2", "²").replace("^3", "³").replace("^n", "ⁿ")
-    return s.replace("{", "").replace("}", "")
 }
 
 private val KEYWORDS = setOf(

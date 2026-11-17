@@ -31,7 +31,6 @@ import androidx.compose.runtime.setValue
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.InputStream
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -65,6 +64,7 @@ data class ChatMessage(
     val tokPerSec: Double = 0.0,
     val cancelled: Boolean = false,
     val error: String? = null,
+    val hasToolCall: Boolean = false,
     val toolBlock: ToolBlockData? = null,
     val notice: SandboxNotice? = null
 )
@@ -196,6 +196,8 @@ class AppState(private val activity: Activity) {
     private var agentToolCount = 0
     private var agentBrowserCount = 0
     private var agentToolBusy = false
+    private var lastExecCommand = ""
+    private var repeatExecCount = 0
     private var activeToolId: String? = null
     private var activeToolChatId: String? = null
     private var activeToolBlockIndex: Int = -1
@@ -403,11 +405,12 @@ class AppState(private val activity: Activity) {
         } catch (_: Exception) { }
 
         val openRes = parseEnvelope(Rust.nativeOpen(activity.filesDir.absolutePath))
-        if (!openRes.ok) {
+        val openData = openRes.data as? JSONObject
+        if (!openRes.ok || openData == null) {
             bootError = openRes.errorMessage
             return
         }
-        applyStatus(openRes.data as JSONObject)
+        applyStatus(openData)
         refreshPermissions()
         refreshAgentRoot()
         refreshServerStatus()
@@ -536,11 +539,12 @@ class AppState(private val activity: Activity) {
             val env = parseEnvelope(Rust.nativeSetToken(clean, authMode))
             main.post {
                 tokenChecking = false
-                if (!env.ok) {
+                val data = env.data as? JSONObject
+                if (!env.ok || data == null) {
                     tokenError = env.errorMessage
                     return@post
                 }
-                applyStatus(env.data as JSONObject)
+                applyStatus(data)
                 stopLocalService()
                 refreshServerStatus()
                 tokenVerified = true
@@ -558,8 +562,9 @@ class AppState(private val activity: Activity) {
             val env = parseEnvelope(Rust.nativeRevalidate())
             main.post {
                 tokenChecking = false
-                if (env.ok) {
-                    applyStatus(env.data as JSONObject)
+                val data = env.data as? JSONObject
+                if (env.ok && data != null) {
+                    applyStatus(data)
                     showToast("Ключ действителен")
                 } else {
                     showToast(env.errorMessage)
@@ -570,8 +575,9 @@ class AppState(private val activity: Activity) {
 
     fun clearToken() {
         val env = parseEnvelope(Rust.nativeClearToken())
-        if (!env.ok) { showToast(env.errorMessage); return }
-        applyStatus(env.data as JSONObject)
+        val data = env.data as? JSONObject
+        if (!env.ok || data == null) { showToast(env.errorMessage); return }
+        applyStatus(data)
         stopLocalService()
         stopCfTunnel()
         prefs.edit().putBoolean("serverEnabled", false).apply()
@@ -593,8 +599,9 @@ class AppState(private val activity: Activity) {
 
     fun setOnlineEnabled(value: Boolean) {
         val env = parseEnvelope(Rust.nativeSetOnline(value))
-        if (!env.ok) { showToast(env.errorMessage); return }
-        applyStatus(env.data as JSONObject)
+        val data = env.data as? JSONObject
+        if (!env.ok || data == null) { showToast(env.errorMessage); return }
+        applyStatus(data)
         Updater.setPrefs(activity, online, updateRemind)
         if (!value) {
             detachStream()
@@ -645,14 +652,16 @@ class AppState(private val activity: Activity) {
     fun newDraftChat(isAgent: Boolean = agentMode) {
         detachStream()
         titleRequestedForChat = ""
+        lastExecCommand = ""
+        repeatExecCount = 0
         agentFiles.clear()
         agentFileCache.clear()
         agentContextInfo = null
         messages.clear()
         if (isAgent) {
             val env = parseEnvelope(Rust.nativeNewChat("agent"))
-            if (env.ok) {
-                val c = env.data as JSONObject
+            val c = env.data as? JSONObject
+            if (env.ok && c != null) {
                 currentChatId = c.optString("id")
                 currentChatTitle = "Агент"
                 refreshAgentFiles()
@@ -684,8 +693,8 @@ class AppState(private val activity: Activity) {
     fun loadChat(id: String) {
         detachStream()
         val env = parseEnvelope(Rust.nativeGetChat(id))
-        if (!env.ok) { showToast(env.errorMessage); return }
-        val conv = env.data as JSONObject
+        val conv = env.data as? JSONObject
+        if (!env.ok || conv == null) { showToast(env.errorMessage); return }
         currentChatId = conv.optString("id")
         currentChatTitle = conv.optString("title").ifEmpty { if (agentMode) "Агент" else "Чат" }
         parseConversationMessages(conv)
@@ -709,12 +718,17 @@ class AppState(private val activity: Activity) {
         var toolNum = 0
         var i = 0
         while (i < arr.length()) {
-            val m = arr.optJSONObject(i); if (m == null) { i++; continue }
+            val m = arr.optJSONObject(i)
+            if (m == null) {
+                i++
+                continue
+            }
             val role = m.optString("role", "user")
             val content = m.optString("content", "")
             val reasoning = m.optString("reasoning", "")
             if (role == "user" && content.startsWith("[TOOL_RESULT]")) {
-                i++; continue
+                i++
+                continue
             }
             if (role == "user") toolNum = 0
 
@@ -740,7 +754,8 @@ class AppState(private val activity: Activity) {
             val visible = if (agentMode && role == "assistant") stripDirectives(content) else content
             if (role == "assistant" && !hasTool && visible.isEmpty() && reasoning.isEmpty()
                 && extractMedia(content).isEmpty() && extractBrowse(content).isEmpty()) {
-                i++; continue
+                i++
+                continue
             }
             messages.add(
                 ChatMessage(
@@ -749,14 +764,14 @@ class AppState(private val activity: Activity) {
                     reasoning = reasoning,
                     sources = srcs,
                     images = imgs,
-                    ts = m.optLong("ts", System.currentTimeMillis())
+                    ts = m.optLong("ts", System.currentTimeMillis()),
+                    hasToolCall = hasTool
                 )
             )
             if (hasTool) {
                 toolNum++
-                var resOut = ""
-                var resCode = "?"
-                var running = true
+                var resOut = "(прервано)"
+                var resCode = "—"
                 if (i + 1 < arr.length()) {
                     val next = arr.optJSONObject(i + 1)
                     if (next != null && next.optString("role") == "user"
@@ -764,7 +779,6 @@ class AppState(private val activity: Activity) {
                         val parsed = parseToolResult(next.optString("content"))
                         resOut = parsed.first
                         resCode = parsed.second
-                        running = false
                         i++
                     }
                 }
@@ -780,7 +794,7 @@ class AppState(private val activity: Activity) {
                             command = cmdText,
                             output = resOut,
                             exitCode = resCode,
-                            running = running
+                            running = false
                         )
                     )
                 )
@@ -826,6 +840,8 @@ class AppState(private val activity: Activity) {
         agentToolCount = 0
         agentBrowserCount = 0
         agentToolBusy = false
+        lastExecCommand = ""
+        repeatExecCount = 0
         activeToolId = null
 
         val userMsg = ChatMessage(role = "user", content = text, images = images)
@@ -859,7 +875,8 @@ class AppState(private val activity: Activity) {
                 thinking, search, JSONArray(images).toString(), fullSystem
             )
         )
-        if (!res.ok) {
+        val start = res.data as? JSONObject
+        if (!res.ok || start == null) {
             if (!isToolContinuation && messages.lastOrNull()?.role == "user") {
                 messages.removeAt(messages.lastIndex)
                 composerDraft = text
@@ -868,13 +885,12 @@ class AppState(private val activity: Activity) {
             showToast(res.errorMessage)
             return
         }
-        val start = res.data as JSONObject
         val conv = start.getJSONObject("chat")
         currentChatId = conv.optString("id")
         currentChatTitle = conv.optString("title").ifEmpty { if (agentMode) "Агент" else "Чат" }
         activeStreamId = start.optLong("stream_id")
         streaming = true
-        streamStage = if (search) "searching" else "writing"
+        streamStage = if (search) "searching" else if (thinking) "reasoning" else "writing"
         streamReasoning = ""
         streamContent = ""
         streamStartedMs = SystemClock.elapsedRealtime()
@@ -891,19 +907,27 @@ class AppState(private val activity: Activity) {
             override fun run() {
                 if (activeStreamId != streamId || !streaming) return
                 val env = parseEnvelope(Rust.nativePoll(streamId))
-                if (!env.ok) {
+                val p = env.data as? JSONObject
+                if (!env.ok || p == null) {
                     finishStream(JSONObject().put("error", env.errorMessage).put("done", true))
                     return
                 }
-                val p = env.data as JSONObject
                 val rText = p.optString("reasoning", "")
                 val cText = p.optString("content", "")
-                streamStage = p.optString("stage").takeIf { it.isNotEmpty() && !p.isNull("stage") }
+                val rawStage = if (p.isNull("stage")) null else p.optString("stage").takeIf { it.isNotEmpty() }
                 if (rText.isNotEmpty() || cText.isNotEmpty()) {
                     val now = SystemClock.elapsedRealtime()
                     if (firstTokenMs == 0L) firstTokenMs = now
                     if (rText.isNotEmpty() && reasoningStartMs == 0L) reasoningStartMs = now
                     if (cText.isNotEmpty() && reasoningStartMs != 0L && reasoningEndMs == 0L) reasoningEndMs = now
+                }
+                streamStage = when {
+                    cText.isNotEmpty() -> "writing"
+                    rText.isNotEmpty() -> "reasoning"
+                    rawStage == "uploading" -> "uploading"
+                    search && rawStage == "searching" -> "searching"
+                    thinking -> "reasoning"
+                    else -> "writing"
                 }
                 streamReasoning = rText
                 streamContent = cText
@@ -946,6 +970,7 @@ class AppState(private val activity: Activity) {
             }
         }
 
+        val hasTool = agentMode && (extractExec(content).isNotEmpty() || extractBrowser(content) != null)
         messages.add(
             ChatMessage(
                 role = "assistant",
@@ -957,7 +982,8 @@ class AppState(private val activity: Activity) {
                 reasoningMs = reasoningMs,
                 tokPerSec = tps,
                 cancelled = cancelled,
-                error = error ?: if (content.isEmpty() && !cancelled) "Модель вернула пустой ответ." else null
+                error = error ?: if (content.isEmpty() && !cancelled && !hasTool) "Модель вернула пустой ответ." else null,
+                hasToolCall = hasTool
             )
         )
 
@@ -967,7 +993,7 @@ class AppState(private val activity: Activity) {
         streamReasoning = ""
         streamContent = ""
 
-        if (!foreground && !cancelled && error == null) {
+        if (!foreground && !cancelled && error == null && !hasTool) {
             postFinishedNotification(currentChatTitle)
         }
 
@@ -1023,7 +1049,11 @@ class AppState(private val activity: Activity) {
         if (!agentMode || content.isEmpty()) return
         val browserCmd = extractBrowser(content)
         if (browserCmd != null) {
-            if (agentBrowserCount >= 16 || agentToolBusy) return
+            if (agentBrowserCount >= 16) {
+                messages.add(ChatMessage(role = "notice", content = "Лимит действий браузера (16)", notice = SandboxNotice("Лимит браузера (16)", "error")))
+                return
+            }
+            if (agentToolBusy) return
             val chatId = currentChatId
             agentBrowserCount++
             agentToolBusy = true
@@ -1078,7 +1108,21 @@ class AppState(private val activity: Activity) {
             messages.add(ChatMessage(role = "notice", content = "Песочница не запущена. Откройте Ubuntu и запустите её.", notice = SandboxNotice("Песочница не запущена", "error")))
             return
         }
-        if (agentToolCount >= 6 || agentToolBusy) return
+        if (cmd == lastExecCommand) {
+            repeatExecCount++
+            if (repeatExecCount >= 2) {
+                messages.add(ChatMessage(role = "notice", content = "Цикл остановлен: повтор одной и той же команды", notice = SandboxNotice("Повтор команды остановлен", "error")))
+                return
+            }
+        } else {
+            lastExecCommand = cmd
+            repeatExecCount = 0
+        }
+        if (agentToolCount >= 8) {
+            messages.add(ChatMessage(role = "notice", content = "Достигнут лимит команд за один ответ (8)", notice = SandboxNotice("Лимит команд (8)", "error")))
+            return
+        }
+        if (agentToolBusy) return
         agentToolCount++
         agentToolBusy = true
         val id = "tool-${System.currentTimeMillis()}-$agentToolCount"
@@ -1199,8 +1243,10 @@ class AppState(private val activity: Activity) {
 
     fun readAgentMediaBitmap(content: String): List<Pair<String, Bitmap>> {
         if (!agentMode || currentChatId.isEmpty()) return emptyList()
+        val names = extractMedia(content)
+        if (names.isEmpty()) return emptyList()
         val out = mutableListOf<Pair<String, Bitmap>>()
-        extractMedia(content).forEach { name ->
+        names.forEach { name ->
             try {
                 val item = AgentWorkspace.readMedia(activity, currentChatId, name, 12 * 1024 * 1024)
                 val mime = item.optString("mime").lowercase()
@@ -1293,8 +1339,8 @@ class AppState(private val activity: Activity) {
 
     private fun startLocalServer() {
         val env = parseEnvelope(Rust.nativeStartServer(8787))
-        if (!env.ok) { showToast(env.errorMessage); return }
-        val o = env.data as JSONObject
+        val o = env.data as? JSONObject
+        if (!env.ok || o == null) { showToast(env.errorMessage); return }
         serverInfo = ServerInfo(o.optBoolean("running"), o.optInt("port"), o.optString("base_url"), o.optString("key"))
         prefs.edit().putBoolean("serverEnabled", true).apply()
         ensureLocalService()
@@ -1304,7 +1350,7 @@ class AppState(private val activity: Activity) {
         if (!serverInfo.running || serverInfo.port <= 0) return
         try {
             val intent = Intent(activity, ServerService::class.java).putExtra("port", serverInfo.port)
-            if (Build.VERSION.SDK_INT >= 26) activity.startForegroundService(intent) else activity.startService(intent)
+            activity.startForegroundService(intent)
         } catch (_: Exception) { }
     }
 
@@ -1572,14 +1618,12 @@ class AppState(private val activity: Activity) {
         if (Build.VERSION.SDK_INT >= 33 && !notifGranted) return
         try {
             val nm = activity.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-            if (Build.VERSION.SDK_INT >= 26) {
-                nm.createNotificationChannel(NotificationChannel("replies", "Ответы", NotificationManager.IMPORTANCE_DEFAULT))
-            }
+            nm.createNotificationChannel(NotificationChannel("replies", "Ответы", NotificationManager.IMPORTANCE_DEFAULT))
             val open = Intent(activity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
             val pending = PendingIntent.getActivity(activity, 0, open, flags)
-            val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(activity, "replies") else Notification.Builder(activity)
-            val notif = builder.setSmallIcon(R.drawable.ic_stat_reply)
+            val notif = Notification.Builder(activity, "replies")
+                .setSmallIcon(R.drawable.ic_stat_reply)
                 .setContentTitle("Ответ готов")
                 .setContentText(title)
                 .setContentIntent(pending)
@@ -1628,13 +1672,16 @@ class AppState(private val activity: Activity) {
     }
 
     companion object {
+        private val WRAPPED_DIRECTIVE_RE = Regex("`\\s*\\[\\[(?:EXEC|SEND|BROWSER|BROWSE):[\\s\\S]*?\\]\\]\\s*`", RegexOption.IGNORE_CASE)
         private val DIRECTIVE_RE = Regex("\\[\\[(?:EXEC|SEND|BROWSER|BROWSE):[\\s\\S]*?\\]\\]", RegexOption.IGNORE_CASE)
         private val EXEC_RE = Regex("\\[\\[EXEC:\\s*([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE)
         private val BROWSE_RE = Regex("\\[\\[BROWSE:\\s*([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE)
         private val BROWSER_RE = Regex("\\[\\[BROWSER:\\s*([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE)
         private val SEND_RE = Regex("\\[\\[SEND:\\s*([^\\]\\n]+)\\]\\]", RegexOption.IGNORE_CASE)
 
-        fun stripDirectives(text: String): String = text.replace(DIRECTIVE_RE, "").trim()
+        fun stripDirectives(text: String): String =
+            text.replace(WRAPPED_DIRECTIVE_RE, "").replace(DIRECTIVE_RE, "").trim()
+
         fun extractExec(text: String): String = EXEC_RE.find(text)?.groupValues?.get(1)?.trim().orEmpty()
         fun extractBrowse(text: String): String = BROWSE_RE.find(text)?.groupValues?.get(1)?.trim()?.take(512).orEmpty()
         fun extractBrowser(text: String): Pair<String, String>? {

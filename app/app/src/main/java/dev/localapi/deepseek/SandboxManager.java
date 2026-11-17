@@ -35,9 +35,6 @@ import java.util.zip.ZipInputStream;
 /**
  * Downloads the Ubuntu Base/QEMU guest assets and launches QEMU with the
  * app-private agent workspace shared over 9p.
- *
- * QEMU itself is packaged in jniLibs (arm64-v8a). There is no KVM on Android,
- * so the guest runs under TCG and is slow.
  */
 final class SandboxManager {
     static final String VERSION = "ubuntu-disk-1";
@@ -65,8 +62,8 @@ final class SandboxManager {
     }
 
     private final Activity activity;
-    private volatile Listener listener;
     private final WebView web;
+    private volatile Listener listener;
     private volatile Process process;
     private volatile boolean installing;
     private volatile boolean running;
@@ -358,6 +355,28 @@ final class SandboxManager {
         }, "sandbox-output").start();
     }
 
+    /**
+     * Paces bytes into QEMU PL011 ttyAMA0 (16/32-byte RX FIFO, no RTS/CTS)
+     * so long scripts never drop characters under TCG emulation.
+     */
+    private static void writeUartSafe(OutputStream out, byte[] bytes) throws IOException {
+        int off = 0;
+        while (off < bytes.length) {
+            int len = Math.min(24, bytes.length - off);
+            out.write(bytes, off, len);
+            out.flush();
+            off += len;
+            if (off < bytes.length) {
+                try {
+                    Thread.sleep(2);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted");
+                }
+            }
+        }
+    }
+
     void exec(String id, String command) {
         final Process proc = process;
         if (!running || proc == null) {
@@ -373,13 +392,12 @@ final class SandboxManager {
         }
         new Thread(() -> {
             synchronized (execLock) {
-                if (myTicket != execTicket) {
-                    return;
-                }
+                if (myTicket != execTicket) return;
                 if (!running || process != proc) {
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                             + JSONObject.quote(id) + "," + JSONObject.quote(
                             "Песочница не запущена") + ",-1)");
+                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница не запущена", -1); });
                     return;
                 }
 
@@ -423,6 +441,7 @@ final class SandboxManager {
                 String begin = "__LOCALAPI_BEGIN_" + rawId + "__";
                 String end = "__LOCALAPI_END_" + rawId + "__";
                 String tmpFile = "/tmp/.cmd_" + rawId + ".sh";
+                String b64File = tmpFile + ".b64";
                 String cmdText = command == null ? "" : command;
                 String b64 = Base64.encodeToString(
                         cmdText.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
@@ -432,20 +451,29 @@ final class SandboxManager {
                 }
 
                 try {
-                    // Run via a base64-decoded temporary script in a subshell so
-                    // multi-line scripts, quotes, '#' comments, 'set -e' or 'exit'
-                    // never break or kill PID 1, while preserving 'cd' via trap.
-                    String script = "printf '%s' '" + b64 + "' | "
-                            + "(base64 -d 2>/dev/null || /bin/busybox base64 -d) > " + tmpFile
-                            + " && printf '\\n" + begin + "\\n'"
-                            + " && ( trap 'pwd > /tmp/.localapi_cwd 2>/dev/null' EXIT; . " + tmpFile + " )"
-                            + "; __rc=$?; rm -f " + tmpFile
-                            + "; [ -f /tmp/.localapi_cwd ] && cd \"$(cat /tmp/.localapi_cwd)\" 2>/dev/null"
-                            + "; printf '\\n" + end + "%s\\n' \"$__rc\"\n";
+                    // Chunk base64 into short <=240-char lines so neither PL011 RX FIFO
+                    // nor Linux n_tty 4096-byte canonical line buffer ever drops data.
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("rm -f ").append(b64File).append(' ').append(tmpFile).append('\n');
+                    for (int off = 0; off < b64.length(); off += 240) {
+                        int endOff = Math.min(b64.length(), off + 240);
+                        sb.append("printf '%s' '").append(b64, off, endOff)
+                                .append("' >> ").append(b64File).append('\n');
+                    }
+                    sb.append("(base64 -d ").append(b64File)
+                            .append(" 2>/dev/null || /bin/busybox base64 -d ")
+                            .append(b64File).append(") > ").append(tmpFile)
+                            .append(" && rm -f ").append(b64File)
+                            .append(" && printf '\\n").append(begin).append("\\n'")
+                            .append(" && ( trap 'pwd > /tmp/.localapi_cwd 2>/dev/null' EXIT; . ")
+                            .append(tmpFile).append(" )")
+                            .append("; __rc=$?; rm -f ").append(tmpFile)
+                            .append("; [ -f /tmp/.localapi_cwd ] && cd \"$(cat /tmp/.localapi_cwd)\" 2>/dev/null")
+                            .append("; printf '\\n").append(end).append("%s\\n' \"$__rc\"\n");
 
                     synchronized (writeLock) {
-                        proc.getOutputStream().write(script.getBytes(StandardCharsets.UTF_8));
-                        proc.getOutputStream().flush();
+                        writeUartSafe(proc.getOutputStream(),
+                                sb.toString().getBytes(StandardCharsets.UTF_8));
                     }
 
                     long timeoutMs = (cmdText.contains("install-base")
@@ -455,7 +483,8 @@ final class SandboxManager {
                     int code = -1;
                     String lastChunk = "";
 
-                    while (running && process == proc && myTicket == execTicket && System.currentTimeMillis() < deadline) {
+                    while (running && process == proc && myTicket == execTicket
+                            && System.currentTimeMillis() < deadline) {
                         String partial = null;
                         synchronized (serialLock) {
                             String buffer = serial.toString();
@@ -501,11 +530,9 @@ final class SandboxManager {
                     boolean preempted = (myTicket != execTicket);
                     boolean timedOut = (endAt < 0 && running && process == proc);
                     if (timedOut || preempted) {
-                        // Interrupt the stuck foreground job so subsequent execs
-                        // get a clean prompt back.
                         try {
                             synchronized (writeLock) {
-                                proc.getOutputStream().write(new byte[]{3, '\n'});
+                                proc.getOutputStream().write(new byte[]{3, 4, '\n'});
                                 proc.getOutputStream().flush();
                             }
                         } catch (Exception ignored) {
@@ -543,13 +570,13 @@ final class SandboxManager {
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
                             + JSONObject.quote(id) + "," + JSONObject.quote(output)
                             + "," + code + ")");
-                    final String fOut = output; final int fCode = code;
+                    final String fOut = output;
+                    final int fCode = code;
                     ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, fOut, fCode); });
                 } catch (Exception e) {
                     final String errMsg = e.getMessage() == null ? "exec error" : e.getMessage();
                     runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                            + JSONObject.quote(id) + "," + JSONObject.quote(errMsg)
-                            + ",-1)");
+                            + JSONObject.quote(id) + "," + JSONObject.quote(errMsg) + ",-1)");
                     ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, errMsg, -1); });
                 }
             }
@@ -601,8 +628,7 @@ final class SandboxManager {
                 + "printf '%s%s\\n' '__LOCALAPI_' 'NET_READY__'\n";
         try {
             synchronized (writeLock) {
-                proc.getOutputStream().write(setup.getBytes(StandardCharsets.UTF_8));
-                proc.getOutputStream().flush();
+                writeUartSafe(proc.getOutputStream(), setup.getBytes(StandardCharsets.UTF_8));
             }
             log("sandbox network configured (slirp 10.0.2.15)");
         } catch (Exception e) {
@@ -610,6 +636,7 @@ final class SandboxManager {
             log("sandbox network setup error: " + e.getMessage());
         }
     }
+
     void stop() {
         Process p;
         synchronized (startLock) {
@@ -630,8 +657,7 @@ final class SandboxManager {
         if (p == null || text == null) return;
         try {
             synchronized (writeLock) {
-                p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
-                p.getOutputStream().flush();
+                writeUartSafe(p.getOutputStream(), text.getBytes(StandardCharsets.UTF_8));
             }
         } catch (Exception e) {
             log("sandbox stdin error: " + e.getMessage());
@@ -738,6 +764,7 @@ final class SandboxManager {
             }
         }
     }
+
     private static String sha256(File file) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (InputStream in = new FileInputStream(file)) {
