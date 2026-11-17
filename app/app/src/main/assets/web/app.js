@@ -23,6 +23,7 @@
     thinking: localStorage.getItem("thinking") !== "0",
     search: localStorage.getItem("search") === "1",
     theme: localStorage.getItem("theme") || "system",
+    palette: localStorage.getItem("palette") || "dynamic",
     textZoom: Math.max(85, Math.min(150, parseInt(localStorage.getItem("textZoom") || "100", 10))),
     appliedZoom: 0,
     cfMode: localStorage.getItem("cfMode") === "token" ? "token" : "quick",
@@ -93,7 +94,9 @@
     requestNotifications: function () { return Native.requestNotifications(); },
     requestBattery: function () { return Native.requestBattery(); },
     readClipboard: function () { return Native.readClipboard(); },
-    appInfo: function () { return Native.appInfo(); }
+    appInfo: function () { return Native.appInfo(); },
+    dynamicPalette: function (light) { return Native.dynamicPalette(light); },
+    setPalette: function (json, light) { return Native.setPalette(json, light); }
   };
 
   function invoke(name) {
@@ -1149,6 +1152,87 @@
     }
   }
 
+  var M3_PALETTES = {
+    blue: {
+      dark: { "--surface": "#111318", "--surface-container-high": "#282a2f", "--surface-container-highest": "#33353a", "--on-surface": "#e2e2e9", "--on-surface-variant": "#c4c6d0", "--primary": "#aac7ff", "--on-primary": "#0a305f", "--error": "#ffb4ab", "--on-error": "#690005" },
+      light: { "--surface": "#f9f9ff", "--surface-container-high": "#e7e8ee", "--surface-container-highest": "#e1e2e8", "--on-surface": "#191c20", "--on-surface-variant": "#44474e", "--primary": "#415f91", "--on-primary": "#ffffff", "--error": "#ba1a1a", "--on-error": "#ffffff" }
+    },
+    violet: {
+      dark: { "--surface": "#141218", "--surface-container-high": "#2b2930", "--surface-container-highest": "#36343b", "--on-surface": "#e6e0e9", "--on-surface-variant": "#cac4d0", "--primary": "#cfbcff", "--on-primary": "#362266", "--error": "#ffb4ab", "--on-error": "#690005" },
+      light: { "--surface": "#fef7ff", "--surface-container-high": "#ece6f0", "--surface-container-highest": "#e6e0e9", "--on-surface": "#1d1b20", "--on-surface-variant": "#49454f", "--primary": "#665297", "--on-primary": "#ffffff", "--error": "#ba1a1a", "--on-error": "#ffffff" }
+    },
+    emerald: {
+      dark: { "--surface": "#0f1512", "--surface-container-high": "#262b28", "--surface-container-highest": "#303632", "--on-surface": "#dfe4df", "--on-surface-variant": "#c0c9c2", "--primary": "#8bd8b0", "--on-primary": "#003824", "--error": "#ffb4ab", "--on-error": "#690005" },
+      light: { "--surface": "#f5fbf6", "--surface-container-high": "#e4eae5", "--surface-container-highest": "#dfe4df", "--on-surface": "#171d1a", "--on-surface-variant": "#404943", "--primary": "#1a6b4b", "--on-primary": "#ffffff", "--error": "#ba1a1a", "--on-error": "#ffffff" }
+    },
+    rose: {
+      dark: { "--surface": "#191113", "--surface-container-high": "#312829", "--surface-container-highest": "#3c3234", "--on-surface": "#efdfe1", "--on-surface-variant": "#d6c2c4", "--primary": "#ffb2be", "--on-primary": "#660424", "--error": "#ffb4ab", "--on-error": "#690005" },
+      light: { "--surface": "#fff8f8", "--surface-container-high": "#f4e4e6", "--surface-container-highest": "#efdfe1", "--on-surface": "#22191b", "--on-surface-variant": "#524345", "--primary": "#a33751", "--on-primary": "#ffffff", "--error": "#ba1a1a", "--on-error": "#ffffff" }
+    },
+    mono: {
+      dark: { "--surface": "#101012", "--surface-container-high": "#27272c", "--surface-container-highest": "#323238", "--on-surface": "#e4e4e7", "--on-surface-variant": "#b4b4bc", "--primary": "#d4d4d8", "--on-primary": "#18181b", "--error": "#ffb4ab", "--on-error": "#690005" },
+      light: { "--surface": "#fafafa", "--surface-container-high": "#e8e8ec", "--surface-container-highest": "#e2e2e7", "--on-surface": "#18181b", "--on-surface-variant": "#52525b", "--primary": "#3f3f46", "--on-primary": "#ffffff", "--error": "#ba1a1a", "--on-error": "#ffffff" }
+    }
+  };
+
+  function clearDynamicCssVars() {
+    var rootStyle = document.documentElement.style;
+    for (var i = rootStyle.length - 1; i >= 0; i--) {
+      var prop = rootStyle[i];
+      if (prop && prop.indexOf("--") === 0) rootStyle.removeProperty(prop);
+    }
+  }
+
+  function applyPalette(light) {
+    var choice = S.palette || "dynamic";
+    var dynSupported = false;
+    var dynVars = null;
+    if (window.Native && Native.dynamicPalette) {
+      try {
+        var parsed = JSON.parse(Native.dynamicPalette(light));
+        if (parsed && parsed.available) {
+          dynSupported = true;
+          dynVars = parsed;
+        }
+      } catch (e) { /* ignore */ }
+    }
+    var dynBtn = $('#palette-select button[data-palette-choice="dynamic"]');
+    if (dynBtn) dynBtn.classList.toggle("hidden", !dynSupported);
+
+    var effective = choice;
+    if (choice === "dynamic" && !dynSupported) effective = "blue";
+    document.documentElement.setAttribute("data-palette", effective);
+
+    var nativePayload = null;
+    if (effective === "dynamic" && dynVars) {
+      Object.keys(dynVars).forEach(function (k) {
+        if (k.indexOf("--") === 0) document.documentElement.style.setProperty(k, dynVars[k]);
+      });
+      try {
+        localStorage.setItem(light ? "dynPalLight" : "dynPalDark", JSON.stringify(dynVars));
+      } catch (e) { /* ignore */ }
+      nativePayload = dynVars;
+    } else {
+      clearDynamicCssVars();
+      var preset = M3_PALETTES[effective] || M3_PALETTES.blue;
+      nativePayload = preset[light ? "light" : "dark"];
+    }
+    try {
+      if (window.Native && Native.setPalette && nativePayload) {
+        Native.setPalette(JSON.stringify(nativePayload), light);
+      }
+    } catch (e) { /* ignore */ }
+    $$("#palette-select button").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-palette-choice") === (dynSupported || choice !== "dynamic" ? choice : "blue"));
+    });
+    var pnote = $("#palette-note");
+    if (pnote) {
+      pnote.textContent = (effective === "dynamic")
+        ? "Цвета обоев устройства (Material You)"
+        : "Фиксированная цветовая тема M3";
+    }
+  }
+
   function paintTheme() {
     var light = S.theme === "light";
     if (S.theme === "system") {
@@ -1159,6 +1243,7 @@
       if (window.Native && window.Native.setBars) window.Native.setBars(light);
       if (NATIVE_COMPOSER) Native.setComposerTheme(light);
     } catch (e) { /* bridge unavailable in tests */ }
+    applyPalette(light);
     $$("#theme-select button").forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-theme-choice") === S.theme);
     });
@@ -1491,6 +1576,14 @@
       b.addEventListener("click", function () {
         S.theme = b.getAttribute("data-theme-choice");
         localStorage.setItem("theme", S.theme);
+        paintTheme();
+      });
+    });
+
+    $$("#palette-select button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        S.palette = b.getAttribute("data-palette-choice") || "blue";
+        localStorage.setItem("palette", S.palette);
         paintTheme();
       });
     });
@@ -2141,7 +2234,28 @@
     var row = $("#sandbox-command-row");
     if (row) row.classList.toggle("hidden", !running);
     if (S.sandbox.log) sandboxSetLog(S.sandbox.log);
+    paintAgentSandboxPill();
     return S.sandbox;
+  }
+
+  function paintAgentSandboxPill() {
+    var pill = $("#agent-sandbox-btn");
+    var label = $("#agent-sandbox-label");
+    if (!pill || !label) return;
+    pill.classList.remove("idle", "ready", "running", "installing");
+    if (S.sandbox && S.sandbox.installing) {
+      pill.classList.add("installing");
+      label.textContent = "Загрузка…";
+    } else if (S.sandbox && S.sandbox.running) {
+      pill.classList.add("running");
+      label.textContent = "Ubuntu · вкл";
+    } else if (S.sandbox && S.sandbox.installed) {
+      pill.classList.add("ready");
+      label.textContent = "Ubuntu · готова";
+    } else {
+      pill.classList.add("idle");
+      label.textContent = "Ubuntu · скачать";
+    }
   }
 
   function openSandbox() {
@@ -2801,7 +2915,9 @@
     var rightTools = $("#right-agent-tools");
     if (rightTools) rightTools.classList.toggle("hidden", !S.agentMode);
     try { Native.setComposerAgent(!!S.agentMode); } catch (e) { /* old bridge */ }
-    if (!S.agentMode) {
+    if (S.agentMode) {
+      refreshSandbox();
+    } else {
       var files = $("#agent-files");
       if (files) files.classList.add("hidden");
     }
@@ -3090,6 +3206,8 @@
   function onMessagesScroll() {
     var box = $("#messages");
     if (!box) return;
+    var bar = $("#screen-chat .app-bar");
+    if (bar) bar.classList.toggle("scrolled", box.scrollTop > 6);
     var distance = box.scrollHeight - box.scrollTop - box.clientHeight;
     if (distance <= 6) {
       S.stick = true;
@@ -3239,6 +3357,12 @@
     $("#agent-mode").addEventListener("click", function () {
       setAgentMode(!S.agentMode);
     });
+    var sbBtn = $("#agent-sandbox-btn");
+    if (sbBtn) sbBtn.addEventListener("click", openSandbox);
+    var termBtn = $("#agent-terminal-btn");
+    if (termBtn) termBtn.addEventListener("click", openTerminal);
+    var folderBtn = $("#agent-folder-btn");
+    if (folderBtn) folderBtn.addEventListener("click", openWorkspaceDialog);
     $("#right-agent-tools").addEventListener("click", openTools);
     $("#tools-close").addEventListener("click", closeTools);
     $("#tools-journal").addEventListener("click", openAgentJournal);
@@ -4059,7 +4183,42 @@
         enterChat();
       }
     }
+    wireBottomSheets();
     maybeStartLocalServer();
+  }
+
+  function wireBottomSheets() {
+    var closers = {
+      "model-scrim": closeModelSheet,
+      "tools-scrim": closeTools,
+      "workspace-scrim": closeWorkspaceDialog,
+      "sandbox-scrim": closeSandbox,
+      "journal-scrim": closeAgentJournal
+    };
+    $$(".sheet-scrim").forEach(function (scrim) {
+      var sheet = scrim.querySelector(".bottom-sheet");
+      var handle = scrim.querySelector(".sheet-handle");
+      if (!sheet || !handle) return;
+      var startY = 0;
+      var dy = 0;
+      handle.addEventListener("touchstart", function (e) {
+        if (!e.touches || !e.touches[0]) return;
+        startY = e.touches[0].clientY;
+        dy = 0;
+        sheet.style.transition = "none";
+      }, { passive: true });
+      handle.addEventListener("touchmove", function (e) {
+        if (!e.touches || !e.touches[0]) return;
+        dy = Math.max(0, e.touches[0].clientY - startY);
+        sheet.style.transform = "translateY(" + dy + "px)";
+      }, { passive: true });
+      handle.addEventListener("touchend", function () {
+        sheet.style.transition = "";
+        sheet.style.transform = "";
+        if (dy > 80 && closers[scrim.id]) closers[scrim.id]();
+        dy = 0;
+      });
+    });
   }
 
   window.__nativeComposerReady = function () {

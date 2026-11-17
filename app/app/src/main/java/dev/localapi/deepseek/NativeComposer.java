@@ -72,6 +72,16 @@ final class NativeComposer {
     private boolean visible;
     private boolean sendShown;
     private ValueAnimator sendAnimator;
+    private int cSurface = Color.parseColor("#111318");
+    private int cInputSurface = Color.parseColor("#282A2F");
+    private int cOutlineVariant = Color.parseColor("#44474E");
+    private int cText = Color.parseColor("#E2E2E9");
+    private int cHint = Color.parseColor("#C4C6D0");
+    private int cPrimary = Color.parseColor("#AAC7FF");
+    private int cOnPrimary = Color.parseColor("#0A305F");
+    private int cError = Color.parseColor("#FFB4AB");
+    private int cOnError = Color.parseColor("#690005");
+    private int cChipBg = Color.parseColor("#33353A");
 
     NativeComposer(Activity activity, WebView web) {
         this.activity = activity;
@@ -82,8 +92,9 @@ final class NativeComposer {
         bar.setVisibility(View.GONE);
 
         divider = new View(activity);
+        divider.setVisibility(View.GONE);
         bar.addView(divider, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+                LinearLayout.LayoutParams.MATCH_PARENT, 0));
 
         attachmentScroll = new HorizontalScrollView(activity);
         attachmentScroll.setHorizontalScrollBarEnabled(false);
@@ -100,8 +111,8 @@ final class NativeComposer {
 
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(6), dp(12), dp(8));
+        row.setGravity(Gravity.BOTTOM);
+        row.setPadding(dp(10), dp(4), dp(10), dp(10));
         bar.addView(row, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -126,13 +137,14 @@ final class NativeComposer {
         inputWrap = new LinearLayout(activity);
         inputWrap.setOrientation(LinearLayout.HORIZONTAL);
         inputWrap.setGravity(Gravity.CENTER_VERTICAL);
-        inputWrap.setPadding(dp(16), dp(4), dp(4), dp(4));
+        inputWrap.setPadding(dp(16), dp(2), dp(14), dp(2));
 
         input = new EditText(activity);
         input.setBackground(null);
         input.setHint("Сообщение");
         input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        input.setMaxLines(6);
+        input.setMaxLines(5);
+        input.setMinHeight(dp(44));
         input.setSingleLine(false);
         input.setInputType(InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
@@ -161,8 +173,7 @@ final class NativeComposer {
                 updateSendButton();
             }
         });
-        // Fixed height: the bar must not re-layout on every typed line.
-        inputWrap.addView(input, new LinearLayout.LayoutParams(0, dp(56), 1f));
+        inputWrap.addView(input, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         LinearLayout.LayoutParams inputWrapParams =
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         inputWrapParams.setMarginStart(dp(4));
@@ -279,9 +290,44 @@ final class NativeComposer {
     }
 
     void setTheme(boolean light) {
+        setPalette(light, null);
+    }
+
+    void setPalette(boolean light, String paletteJson) {
         this.light = light;
+        cSurface = Color.parseColor(light ? "#F8F9FF" : "#111318");
+        cInputSurface = Color.parseColor(light ? "#ECEEF5" : "#24272E");
+        cOutlineVariant = Color.parseColor(light ? "#C4C6D0" : "#44474E");
+        cText = Color.parseColor(light ? "#191C20" : "#E3E2E8");
+        cHint = Color.parseColor(light ? "#44474E" : "#C4C6D0");
+        cPrimary = Color.parseColor(light ? "#3C5BA9" : "#ADC6FF");
+        cOnPrimary = Color.parseColor(light ? "#FFFFFF" : "#002E69");
+        cError = Color.parseColor(light ? "#BA1A1A" : "#FFB4AB");
+        cOnError = Color.parseColor(light ? "#FFFFFF" : "#690005");
+        cChipBg = Color.parseColor(light ? "#E1E2E9" : "#33353A");
+        if (paletteJson != null && !paletteJson.isEmpty()) {
+            try {
+                JSONObject o = new JSONObject(paletteJson);
+                cSurface = parseHex(o.optString("surface", ""), cSurface);
+                cInputSurface = parseHex(o.optString("surfaceContainerHigh", ""), cInputSurface);
+                cOutlineVariant = parseHex(o.optString("outlineVariant", ""), cOutlineVariant);
+                cText = parseHex(o.optString("onSurface", ""), cText);
+                cHint = parseHex(o.optString("onSurfaceVariant", ""), cHint);
+                cPrimary = parseHex(o.optString("primary", ""), cPrimary);
+                cOnPrimary = parseHex(o.optString("onPrimary", ""), cOnPrimary);
+                cError = parseHex(o.optString("error", ""), cError);
+                cOnError = parseHex(o.optString("onError", ""), cOnError);
+                cChipBg = parseHex(o.optString("surfaceContainerHighest", ""), cChipBg);
+            } catch (Exception ignored) {
+            }
+        }
         applyTheme();
         updateSendButton();
+    }
+
+    private int parseHex(String hex, int fallback) {
+        if (hex == null || hex.isEmpty()) return fallback;
+        try { return Color.parseColor(hex); } catch (Exception e) { return fallback; }
     }
 
     void setTextZoom(int percent) {
@@ -301,8 +347,6 @@ final class NativeComposer {
 
     void restoreDraft(String text) {
         if (text == null || text.isEmpty() || input.getText().length() > 0) return;
-        // Never rewrite the editor while Gboard owns a composing region: the
-        // IME would drop its pending characters.
         if (BaseInputConnection.getComposingSpanStart(input.getText()) >= 0) return;
         input.setText(text);
         input.setSelection(input.getText().length());
@@ -310,8 +354,6 @@ final class NativeComposer {
     }
 
     void clear() {
-        // send() already emptied the field synchronously. Clearing it again here
-        // would wipe whatever the user typed while the send was in flight.
         for (Pending item : new ArrayList<>(sentPending)) {
             if (pending.remove(item)) attachmentStrip.removeView(item.holder);
         }
@@ -383,8 +425,6 @@ final class NativeComposer {
             JSONObject payload = new JSONObject();
             payload.put("text", text);
             payload.put("images", images);
-            // Snapshot and clear before the async bridge call so a draft typed
-            // after the tap is not wiped when JS acknowledges the send.
             sentPending.clear();
             sentPending.addAll(pending);
             input.setText("");
@@ -482,38 +522,27 @@ final class NativeComposer {
     }
 
     private void updateAttachTint() {
-        attach.setColorFilter(pending.isEmpty()
-                ? Color.parseColor(light ? "#44474E" : "#C4C6D0")
-                : Color.parseColor(light ? "#415F91" : "#AAC7FF"));
+        attach.setColorFilter(pending.isEmpty() ? cHint : cPrimary);
     }
 
     private void updateSendButton() {
-        int primary = Color.parseColor(light ? "#415F91" : "#AAC7FF");
-        int onPrimary = Color.parseColor(light ? "#FFFFFF" : "#0A305F");
-        int error = Color.parseColor(light ? "#BA1A1A" : "#FFB4AB");
-        int onError = Color.parseColor(light ? "#FFFFFF" : "#690005");
         boolean hasText = input.getText().toString().trim().length() > 0;
         if (streaming) {
             send.setImageResource(R.drawable.ic_stop_native);
-            send.setBackground(rounded(error, 16));
-            send.setColorFilter(onError);
+            send.setBackground(rounded(cError, 16));
+            send.setColorFilter(cOnError);
             send.setContentDescription("Остановить");
             send.setEnabled(true);
         } else {
             send.setImageResource(R.drawable.ic_send_native);
-            send.setBackground(rounded(primary, 16));
-            send.setColorFilter(onPrimary);
+            send.setBackground(rounded(cPrimary, 24));
+            send.setColorFilter(cOnPrimary);
             send.setContentDescription("Отправить");
             send.setEnabled(online && (hasText || !pending.isEmpty()));
         }
         setSendVisible(streaming || hasText || !pending.isEmpty());
     }
 
-    /**
-     * Spring-reveals the send button on the first character and collapses the
-     * slot again when the draft becomes empty. The width is animated alongside
-     * alpha/scale so the input expands into the vacated space without a jump.
-     */
     private void setSendVisible(boolean show) {
         if (sendShown == show) return;
         sendShown = show;
@@ -575,23 +604,18 @@ final class NativeComposer {
     }
 
     private void applyTheme() {
-        int surface = Color.parseColor(light ? "#F9F9FF" : "#111318");
-        int outline = Color.parseColor(light ? "#C4C6D0" : "#44474E");
-        int inputSurface = Color.parseColor(light ? "#E7E8EE" : "#282A2F");
-        int text = Color.parseColor(light ? "#191C20" : "#E2E2E9");
-        int hint = Color.parseColor(light ? "#74777F" : "#C4C6D0");
-        int removeBackground = Color.parseColor(light ? "#E7E8EE" : "#33353A");
-        int removeTint = Color.parseColor(light ? "#191C20" : "#E2E2E9");
-
-        bar.setBackgroundColor(surface);
-        divider.setBackgroundColor(outline);
-        inputWrap.setBackground(rounded(inputSurface, 28));
-        input.setTextColor(text);
-        input.setHintTextColor(hint);
+        bar.setBackgroundColor(cSurface);
+        GradientDrawable capsule = rounded(cInputSurface, 26);
+        int stroke = Color.argb(68, Color.red(cOutlineVariant),
+                Color.green(cOutlineVariant), Color.blue(cOutlineVariant));
+        capsule.setStroke(dp(1), stroke);
+        inputWrap.setBackground(capsule);
+        input.setTextColor(cText);
+        input.setHintTextColor(cHint);
         for (Pending item : pending) {
-            item.thumb.setBackground(rounded(inputSurface, 12));
-            item.remove.setBackground(rounded(removeBackground, 12));
-            item.remove.setColorFilter(removeTint);
+            item.thumb.setBackground(rounded(cInputSurface, 14));
+            item.remove.setBackground(rounded(cChipBg, 12));
+            item.remove.setColorFilter(cText);
         }
         updateAttachTint();
     }

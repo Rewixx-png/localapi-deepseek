@@ -10,8 +10,8 @@ android {
         applicationId 'dev.localapi.deepseek'
         minSdk 26
         targetSdk 35
-        versionCode 70
-        versionName '1.11.9'
+        versionCode 71
+        versionName '1.11.10'
     }
 
     signingConfigs {
@@ -46,6 +46,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            keepDebugSymbols.add('**/*.so')
         }
     }
 

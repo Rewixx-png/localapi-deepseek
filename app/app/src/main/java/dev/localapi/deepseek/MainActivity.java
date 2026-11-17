@@ -406,6 +406,110 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private String hexColor(int color) {
+        return String.format(java.util.Locale.US, "#%06X", 0xFFFFFF & color);
+    }
+
+    private int mixColor(int c1, int c2, float t) {
+        int r = Math.round(Color.red(c1) + (Color.red(c2) - Color.red(c1)) * t);
+        int g = Math.round(Color.green(c1) + (Color.green(c2) - Color.green(c1)) * t);
+        int b = Math.round(Color.blue(c1) + (Color.blue(c2) - Color.blue(c1)) * t);
+        return Color.rgb(r, g, b);
+    }
+
+    private String buildDynamicPalette(boolean light) {
+        if (Build.VERSION.SDK_INT < 31) return "";
+        try {
+            JSONObject o = new JSONObject();
+            if (Build.VERSION.SDK_INT >= 34) {
+                o.put("primary", hexColor(getColor(light ? android.R.color.system_primary_light : android.R.color.system_primary_dark)));
+                o.put("onPrimary", hexColor(getColor(light ? android.R.color.system_on_primary_light : android.R.color.system_on_primary_dark)));
+                o.put("primaryContainer", hexColor(getColor(light ? android.R.color.system_primary_container_light : android.R.color.system_primary_container_dark)));
+                o.put("onPrimaryContainer", hexColor(getColor(light ? android.R.color.system_on_primary_container_light : android.R.color.system_on_primary_container_dark)));
+                o.put("secondary", hexColor(getColor(light ? android.R.color.system_secondary_light : android.R.color.system_secondary_dark)));
+                o.put("onSecondary", hexColor(getColor(light ? android.R.color.system_on_secondary_light : android.R.color.system_on_secondary_dark)));
+                o.put("secondaryContainer", hexColor(getColor(light ? android.R.color.system_secondary_container_light : android.R.color.system_secondary_container_dark)));
+                o.put("onSecondaryContainer", hexColor(getColor(light ? android.R.color.system_on_secondary_container_light : android.R.color.system_on_secondary_container_dark)));
+                o.put("tertiary", hexColor(getColor(light ? android.R.color.system_tertiary_light : android.R.color.system_tertiary_dark)));
+                o.put("onTertiary", hexColor(getColor(light ? android.R.color.system_on_tertiary_light : android.R.color.system_on_tertiary_dark)));
+                o.put("tertiaryContainer", hexColor(getColor(light ? android.R.color.system_tertiary_container_light : android.R.color.system_tertiary_container_dark)));
+                o.put("onTertiaryContainer", hexColor(getColor(light ? android.R.color.system_on_tertiary_container_light : android.R.color.system_on_tertiary_container_dark)));
+                o.put("error", hexColor(getColor(light ? android.R.color.system_error_light : android.R.color.system_error_dark)));
+                o.put("onError", hexColor(getColor(light ? android.R.color.system_on_error_light : android.R.color.system_on_error_dark)));
+                o.put("errorContainer", hexColor(getColor(light ? android.R.color.system_error_container_light : android.R.color.system_error_container_dark)));
+                o.put("onErrorContainer", hexColor(getColor(light ? android.R.color.system_on_error_container_light : android.R.color.system_on_error_container_dark)));
+                o.put("surface", hexColor(getColor(light ? android.R.color.system_surface_light : android.R.color.system_surface_dark)));
+                o.put("background", hexColor(getColor(light ? android.R.color.system_surface_light : android.R.color.system_surface_dark)));
+                o.put("surfaceDim", hexColor(getColor(light ? android.R.color.system_surface_dim_light : android.R.color.system_surface_dim_dark)));
+                o.put("surfaceBright", hexColor(getColor(light ? android.R.color.system_surface_bright_light : android.R.color.system_surface_bright_dark)));
+                o.put("surfaceContainerLowest", hexColor(getColor(light ? android.R.color.system_surface_container_lowest_light : android.R.color.system_surface_container_lowest_dark)));
+                o.put("surfaceContainerLow", hexColor(getColor(light ? android.R.color.system_surface_container_low_light : android.R.color.system_surface_container_low_dark)));
+                o.put("surfaceContainer", hexColor(getColor(light ? android.R.color.system_surface_container_light : android.R.color.system_surface_container_dark)));
+                o.put("surfaceContainerHigh", hexColor(getColor(light ? android.R.color.system_surface_container_high_light : android.R.color.system_surface_container_high_dark)));
+                o.put("surfaceContainerHighest", hexColor(getColor(light ? android.R.color.system_surface_container_highest_light : android.R.color.system_surface_container_highest_dark)));
+                o.put("onSurface", hexColor(getColor(light ? android.R.color.system_on_surface_light : android.R.color.system_on_surface_dark)));
+                o.put("onBackground", hexColor(getColor(light ? android.R.color.system_on_surface_light : android.R.color.system_on_surface_dark)));
+                o.put("onSurfaceVariant", hexColor(getColor(light ? android.R.color.system_on_surface_variant_light : android.R.color.system_on_surface_variant_dark)));
+                o.put("outline", hexColor(getColor(light ? android.R.color.system_outline_light : android.R.color.system_outline_dark)));
+                o.put("outlineVariant", hexColor(getColor(light ? android.R.color.system_outline_variant_light : android.R.color.system_outline_variant_dark)));
+                o.put("inverseSurface", hexColor(getColor(light ? android.R.color.system_surface_dark : android.R.color.system_surface_light)));
+                o.put("inverseOnSurface", hexColor(getColor(light ? android.R.color.system_on_surface_dark : android.R.color.system_on_surface_light)));
+                return o.toString();
+            }
+            int n0 = getColor(android.R.color.system_neutral1_0);
+            int n10 = getColor(android.R.color.system_neutral1_10);
+            int n50 = getColor(android.R.color.system_neutral1_50);
+            int n100 = getColor(android.R.color.system_neutral1_100);
+            int n800 = getColor(android.R.color.system_neutral1_800);
+            int n900 = getColor(android.R.color.system_neutral1_900);
+            int n1000 = getColor(android.R.color.system_neutral1_1000);
+            int nv100 = getColor(android.R.color.system_neutral2_100);
+            int nv200 = getColor(android.R.color.system_neutral2_200);
+            int nv400 = getColor(android.R.color.system_neutral2_400);
+            int nv500 = getColor(android.R.color.system_neutral2_500);
+            int nv700 = getColor(android.R.color.system_neutral2_700);
+            int nv800 = getColor(android.R.color.system_neutral2_800);
+            int nv900 = getColor(android.R.color.system_neutral2_900);
+
+            o.put("primary", hexColor(getColor(light ? android.R.color.system_accent1_600 : android.R.color.system_accent1_200)));
+            o.put("onPrimary", hexColor(getColor(light ? android.R.color.system_accent1_0 : android.R.color.system_accent1_800)));
+            o.put("primaryContainer", hexColor(getColor(light ? android.R.color.system_accent1_100 : android.R.color.system_accent1_700)));
+            o.put("onPrimaryContainer", hexColor(getColor(light ? android.R.color.system_accent1_900 : android.R.color.system_accent1_100)));
+            o.put("secondary", hexColor(getColor(light ? android.R.color.system_accent2_600 : android.R.color.system_accent2_200)));
+            o.put("onSecondary", hexColor(getColor(light ? android.R.color.system_accent2_0 : android.R.color.system_accent2_800)));
+            o.put("secondaryContainer", hexColor(getColor(light ? android.R.color.system_accent2_100 : android.R.color.system_accent2_700)));
+            o.put("onSecondaryContainer", hexColor(getColor(light ? android.R.color.system_accent2_900 : android.R.color.system_accent2_100)));
+            o.put("tertiary", hexColor(getColor(light ? android.R.color.system_accent3_600 : android.R.color.system_accent3_200)));
+            o.put("onTertiary", hexColor(getColor(light ? android.R.color.system_accent3_0 : android.R.color.system_accent3_800)));
+            o.put("tertiaryContainer", hexColor(getColor(light ? android.R.color.system_accent3_100 : android.R.color.system_accent3_700)));
+            o.put("onTertiaryContainer", hexColor(getColor(light ? android.R.color.system_accent3_900 : android.R.color.system_accent3_100)));
+            o.put("error", light ? "#BA1A1A" : "#FFB4AB");
+            o.put("onError", light ? "#FFFFFF" : "#690005");
+            o.put("errorContainer", light ? "#FFDAD6" : "#93000A");
+            o.put("onErrorContainer", light ? "#410002" : "#FFDAD6");
+            int surf = light ? mixColor(n50, n10, 0.75f) : mixColor(n1000, n900, 0.6f);
+            o.put("surface", hexColor(surf));
+            o.put("background", hexColor(surf));
+            o.put("surfaceDim", hexColor(light ? mixColor(n100, n50, 0.4f) : surf));
+            o.put("surfaceBright", hexColor(light ? surf : mixColor(n800, nv700, 0.4f)));
+            o.put("surfaceContainerLowest", hexColor(light ? n0 : mixColor(n1000, n900, 0.4f)));
+            o.put("surfaceContainerLow", hexColor(light ? mixColor(n50, n10, 0.25f) : n900));
+            o.put("surfaceContainer", hexColor(light ? mixColor(n100, n50, 0.8f) : mixColor(n900, nv800, 0.25f)));
+            o.put("surfaceContainerHigh", hexColor(light ? mixColor(nv100, n50, 0.4f) : mixColor(nv900, nv800, 0.7f)));
+            o.put("surfaceContainerHighest", hexColor(light ? nv100 : mixColor(nv800, nv700, 0.2f)));
+            o.put("onSurface", hexColor(light ? n900 : n100));
+            o.put("onBackground", hexColor(light ? n900 : n100));
+            o.put("onSurfaceVariant", hexColor(light ? nv700 : nv200));
+            o.put("outline", hexColor(light ? nv500 : nv400));
+            o.put("outlineVariant", hexColor(light ? nv200 : nv700));
+            o.put("inverseSurface", hexColor(light ? n800 : n100));
+            o.put("inverseOnSurface", hexColor(light ? n50 : n900));
+            return o.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
@@ -1008,9 +1112,27 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String dynamicPalette(boolean light) {
+            return buildDynamicPalette(light);
+        }
+
+        @JavascriptInterface
         public String setBars(boolean light) {
+            return setThemePalette(light, "");
+        }
+
+        @JavascriptInterface
+        public String setThemePalette(boolean light, String paletteJson) {
             runOnUiThread(() -> {
-                int background = Color.parseColor(light ? "#F9F9FF" : "#111318");
+                int background = Color.parseColor(light ? "#F8F9FF" : "#111318");
+                if (paletteJson != null && !paletteJson.isEmpty()) {
+                    try {
+                        JSONObject obj = new JSONObject(paletteJson);
+                        String surf = obj.optString("surface", "");
+                        if (!surf.isEmpty()) background = Color.parseColor(surf);
+                    } catch (Exception ignored) {
+                    }
+                }
                 Window window = getWindow();
                 window.setStatusBarColor(background);
                 window.setNavigationBarColor(background);
@@ -1018,7 +1140,7 @@ public final class MainActivity extends Activity {
                     root.setBackgroundColor(background);
                 }
                 if (composer != null) {
-                    composer.setTheme(light);
+                    composer.setPalette(light, paletteJson);
                 }
                 if (Build.VERSION.SDK_INT >= 30) {
                     android.view.WindowInsetsController controller = window.getInsetsController();
@@ -1042,7 +1164,6 @@ public final class MainActivity extends Activity {
             });
             return "{}";
         }
-
         @JavascriptInterface
         public String setTextZoom(int percent) {
             int clamped = Math.max(70, Math.min(200, percent));

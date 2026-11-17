@@ -156,7 +156,18 @@
   <div id="context-meter" class="context-meter" aria-live="polite">Контекст ≈ 0 токенов</div>
 
   <div id="agent-bar" class="agent-bar hidden">
-    <div class="agent-bar-text"><b>Агент</b><span>workspace · ZIP через скрепку</span></div>
+    <div class="agent-bar-text"><b>Агент</b><span id="agent-bar-sub">workspace · ZIP скрепкой</span></div>
+    <div class="agent-actions">
+      <button id="agent-sandbox-btn" class="agent-pill idle" type="button" aria-label="Песочница Ubuntu">
+        <span class="sandbox-dot"></span><span id="agent-sandbox-label">Ubuntu</span>
+      </button>
+      <button id="agent-terminal-btn" class="icon-btn small-icon-btn" type="button" aria-label="Терминал Ubuntu" title="Терминал">
+        <svg class="icon"><use href="#i-code"></use></svg>
+      </button>
+      <button id="agent-folder-btn" class="icon-btn small-icon-btn" type="button" aria-label="Папка workspace" title="Папка">
+        <svg class="icon"><use href="#i-tune"></use></svg>
+      </button>
+    </div>
   </div>
   <div id="agent-files" class="agent-files hidden" aria-live="polite"></div>
 
@@ -250,8 +261,9 @@
     <button id="system-save" class="btn filled wide" type="button">Сохранить</button>
   </aside>
 
-  <div id="sandbox-scrim" class="dialog-scrim hidden">
-    <div class="dialog sandbox-dialog" role="dialog" aria-modal="true" aria-labelledby="sandbox-title">
+  <div id="sandbox-scrim" class="dialog-scrim sheet-scrim hidden">
+    <div class="dialog bottom-sheet sandbox-dialog" role="dialog" aria-modal="true" aria-labelledby="sandbox-title">
+      <div class="sheet-handle" aria-hidden="true"><span></span></div>
       <div class="model-head">
         <h2 id="sandbox-title">Песочница Ubuntu</h2>
         <button id="sandbox-close" class="icon-btn" aria-label="Закрыть" type="button">
@@ -285,8 +297,9 @@
     </div>
   </div>
 
-  <div id="journal-scrim" class="dialog-scrim hidden">
-    <div class="dialog journal-dialog" role="dialog" aria-modal="true" aria-labelledby="journal-title">
+  <div id="journal-scrim" class="dialog-scrim sheet-scrim hidden">
+    <div class="dialog bottom-sheet journal-dialog" role="dialog" aria-modal="true" aria-labelledby="journal-title">
+      <div class="sheet-handle" aria-hidden="true"><span></span></div>
       <div class="model-head">
         <h2 id="journal-title">Журнал агента</h2>
         <button id="journal-close" class="icon-btn" aria-label="Закрыть" type="button">
@@ -301,8 +314,9 @@
     </div>
   </div>
 
-  <div id="workspace-scrim" class="dialog-scrim hidden">
-    <div class="dialog workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+  <div id="workspace-scrim" class="dialog-scrim sheet-scrim hidden">
+    <div class="dialog bottom-sheet workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+      <div class="sheet-handle" aria-hidden="true"><span></span></div>
       <div class="model-head">
         <h2 id="workspace-title">Workspace</h2>
         <button id="workspace-close" class="icon-btn" aria-label="Закрыть" type="button">
@@ -321,8 +335,9 @@
     </div>
   </div>
 
-  <div id="tools-scrim" class="dialog-scrim hidden">
-    <div class="dialog tools-dialog" role="dialog" aria-modal="true" aria-labelledby="tools-title">
+  <div id="tools-scrim" class="dialog-scrim sheet-scrim hidden">
+    <div class="dialog bottom-sheet tools-dialog" role="dialog" aria-modal="true" aria-labelledby="tools-title">
+      <div class="sheet-handle" aria-hidden="true"><span></span></div>
       <div class="model-head">
         <h2 id="tools-title">Инструменты агента</h2>
         <button id="tools-close" class="icon-btn" aria-label="Закрыть" type="button">
@@ -336,8 +351,9 @@
     </div>
   </div>
 
-  <div id="model-scrim" class="dialog-scrim hidden">
-    <div class="dialog model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-title">
+  <div id="model-scrim" class="dialog-scrim sheet-scrim hidden">
+    <div class="dialog bottom-sheet model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-title">
+      <div class="sheet-handle" aria-hidden="true"><span></span></div>
       <div class="model-head">
         <h2 id="model-title">Модель и ИИ</h2>
         <button id="model-close" class="icon-btn" aria-label="Закрыть" type="button">
@@ -671,6 +687,31 @@
                 <button type="button" data-theme-choice="system">Системная</button>
                 <button type="button" data-theme-choice="dark">Тёмная</button>
                 <button type="button" data-theme-choice="light">Светлая</button>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="list-item column" id="palette-setting">
+              <div class="primary">Палитра (Material You)</div>
+              <div class="supporting" id="palette-note">Цвета интерфейса и поля ввода</div>
+              <div class="palette-grid" id="palette-select">
+                <button type="button" data-palette-choice="dynamic" class="palette-card">
+                  <span class="palette-dots"><i></i><i></i><i></i></span><span>Система</span>
+                </button>
+                <button type="button" data-palette-choice="blue" class="palette-card">
+                  <span class="palette-dots"><i></i><i></i><i></i></span><span>DeepSeek</span>
+                </button>
+                <button type="button" data-palette-choice="violet" class="palette-card">
+                  <span class="palette-dots"><i></i><i></i><i></i></span><span>Ирис</span>
+                </button>
+                <button type="button" data-palette-choice="emerald" class="palette-card">
+                  <span class="palette-dots"><i></i><i></i><i></i></span><span>Изумруд</span>
+                </button>
+                <button type="button" data-palette-choice="rose" class="palette-card">
+                  <span class="palette-dots"><i></i><i></i><i></i></span><span>Коралл</span>
+                </button>
+                <button type="button" data-palette-choice="mono" class="palette-card">
+                  <span class="palette-dots"><i></i><i></i><i></i></span><span>Моно</span>
+                </button>
               </div>
             </div>
             <div class="divider"></div>
