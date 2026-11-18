@@ -1,14 +1,23 @@
 package dev.localapi.deepseek
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
+import android.os.Handler
+import android.os.Looper
+import android.util.LruCache
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -21,6 +30,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +46,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,9 +66,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,9 +79,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -81,11 +100,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import org.json.JSONObject
+import java.lang.ref.WeakReference
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -206,6 +228,7 @@ private val KATEX_SHELL_HTML = """
 </head>
 <body>
 <div id="root"></div>
+<div id="font-warmup" style="position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;font-size:16px"></div>
 <script src="katex/katex.min.js"></script>
 <script src="katex/contrib/auto-render.min.js"></script>
 <script>
@@ -217,52 +240,41 @@ private val KATEX_SHELL_HTML = """
     var lastSentH = 0;
     var currentIsDisplay = false;
 
-    function measureAndReport(seq) {
-      if (seq !== renderSeq) return;
-      try {
-        var rect = root.getBoundingClientRect();
-        var minTop = rect.top;
-        var maxBottom = rect.bottom;
-        var minLeft = rect.left;
-        var maxRight = rect.right;
-        var els = root.querySelectorAll(".katex, .katex-html, .katex-display");
-        for (var i = 0; i < els.length; i++) {
-          var r = els[i].getBoundingClientRect();
-          if (r.height > 0 && r.width > 0) {
-            if (r.top < minTop) minTop = r.top;
-            if (r.bottom > maxBottom) maxBottom = r.bottom;
-            if (r.left < minLeft) minLeft = r.left;
-            if (r.right > maxRight) maxRight = r.right;
-          }
+    try {
+      var warmup = document.getElementById("font-warmup");
+      if (warmup && window.katex) {
+        warmup.innerHTML = window.katex.renderToString("\\int_0^1 \\frac{\\sum \\mathbb{C} \\mathbf{A}}{\\sqrt[3]{x_n^2}} \\, dx", { throwOnError: false, displayMode: true });
+      }
+    } catch (e) {}
+
+    function measureRoot(seq) {
+      var rect = root.getBoundingClientRect();
+      var minTop = rect.top;
+      var maxBottom = rect.bottom;
+      var minLeft = rect.left;
+      var maxRight = rect.right;
+      var els = root.querySelectorAll(".katex, .katex-html, .katex-display");
+      for (var i = 0; i < els.length; i++) {
+        var r = els[i].getBoundingClientRect();
+        if (r.height > 0 && r.width > 0) {
+          if (r.top < minTop) minTop = r.top;
+          if (r.bottom > maxBottom) maxBottom = r.bottom;
+          if (r.left < minLeft) minLeft = r.left;
+          if (r.right > maxRight) maxRight = r.right;
         }
-        var cssH = Math.ceil(Math.max(rect.height, root.scrollHeight, maxBottom - minTop));
-        var cssW = currentIsDisplay
-          ? Math.ceil(Math.max(rect.width, maxRight - minLeft))
-          : Math.ceil(rect.width);
-        var dpr = window.devicePixelRatio || 1;
-        var physW = Math.ceil(cssW * dpr);
-        var physH = Math.ceil(cssH * dpr);
-        if (physH > 0 && physW > 0 && (physW !== lastSentW || physH !== lastSentH)) {
-          lastSentW = physW;
-          lastSentH = physH;
-          if (window.KatexBridge) {
-            window.KatexBridge.setSize(physW, physH);
-          }
-        }
-      } catch (e) {}
+      }
+      var cssH = Math.ceil(Math.max(rect.height, root.scrollHeight, maxBottom - minTop));
+      var cssW = currentIsDisplay
+        ? Math.ceil(Math.max(rect.width, maxRight - minLeft))
+        : Math.ceil(rect.width);
+      var dpr = window.devicePixelRatio || 1;
+      return {
+        physW: Math.ceil(cssW * dpr),
+        physH: Math.ceil(cssH * dpr)
+      };
     }
 
-    if (window.ResizeObserver) {
-      try {
-        new ResizeObserver(function () { measureAndReport(renderSeq); }).observe(root);
-      } catch (e) {}
-    }
-
-    window.__renderLatex = function (bodyHtml, cfgJson) {
-      renderSeq++;
-      var seq = renderSeq;
-      lastSentW = 0;
-      lastSentH = 0;
+    function applyConfigAndMath(bodyHtml, cfgJson) {
       var cfg = {};
       try { cfg = JSON.parse(cfgJson); } catch (e) {}
       currentIsDisplay = !!cfg.isDisplay;
@@ -296,7 +308,37 @@ private val KATEX_SHELL_HTML = """
           });
         }
       } catch (e) {}
+    }
 
+    function measureAndReport(seq) {
+      if (seq !== renderSeq) return;
+      try {
+        var m = measureRoot(seq);
+        if (m.physH > 0 && m.physW > 0 && (m.physW !== lastSentW || m.physH !== lastSentH)) {
+          lastSentW = m.physW;
+          lastSentH = m.physH;
+          if (window.KatexBridge) {
+            window.KatexBridge.setSize(m.physW, m.physH);
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (window.ResizeObserver) {
+      try {
+        new ResizeObserver(function () {
+          if (window.KatexBridge) measureAndReport(renderSeq);
+        }).observe(root);
+      } catch (e) {}
+    }
+
+    // Live-View mode (used for blocks with hyperlinks or oversized dimensions)
+    window.__renderLatex = function (bodyHtml, cfgJson) {
+      renderSeq++;
+      var seq = renderSeq;
+      lastSentW = 0;
+      lastSentH = 0;
+      applyConfigAndMath(bodyHtml, cfgJson);
       measureAndReport(seq);
       if (window.requestAnimationFrame) {
         requestAnimationFrame(function () { measureAndReport(seq); });
@@ -307,11 +349,356 @@ private val KATEX_SHELL_HTML = """
       setTimeout(function () { measureAndReport(seq); }, 45);
       setTimeout(function () { measureAndReport(seq); }, 180);
     };
+
+    // Shared Offscreen Bitmap Renderer mode (fast 120fps LazyColumn scrolling)
+    window.__renderBitmap = function (jobId, bodyHtml, cfgJson) {
+      renderSeq++;
+      var seq = renderSeq;
+      applyConfigAndMath(bodyHtml, cfgJson);
+
+      var finish = function () {
+        if (seq !== renderSeq) return;
+        requestAnimationFrame(function () {
+          if (seq !== renderSeq) return;
+          try {
+            var m = measureRoot(seq);
+            if (window.KatexBmpBridge) {
+              window.KatexBmpBridge.onReady(jobId, m.physW, m.physH);
+            }
+          } catch (e) {
+            if (window.KatexBmpBridge) window.KatexBmpBridge.onReady(jobId, 0, 0);
+          }
+        });
+      };
+
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(finish);
+      } else {
+        finish();
+      }
+    };
   })();
 </script>
 </body>
 </html>
 """.trimIndent()
+
+// ── Shared Single-WebView Bitmap Renderer + Byte-Bounded LruCache ───────────
+
+data class CachedKatexBmp(
+    val image: ImageBitmap,
+    val widthPx: Int,
+    val heightPx: Int,
+    val byteCount: Int
+)
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+object KatexBitmapRenderer {
+    private const val MAX_CACHE_BYTES = 24 * 1024 * 1024
+    private const val MAX_BMP_DIM = 2400
+    private const val JOB_TIMEOUT_MS = 1800L
+
+    private class RenderJob(
+        val renderKey: String,
+        val htmlBody: String,
+        val cfgJson: String,
+        val availWidthPx: Int
+    ) {
+        var seq: Long = 0L
+        val listeners = LinkedHashSet<(CachedKatexBmp?) -> Unit>()
+    }
+
+    private class BmpBridge {
+        @JavascriptInterface
+        fun onReady(jobId: Long, physW: Int, physH: Int) {
+            mainHandler.post { handleMeasured(jobId, physW, physH) }
+        }
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val cache = object : LruCache<String, CachedKatexBmp>(MAX_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: CachedKatexBmp): Int = value.byteCount
+    }
+    private val failedKeys = HashSet<String>()
+    private val pendingJobs = LinkedHashMap<String, RenderJob>()
+    private val lifoOrder = ArrayList<String>()
+
+    private var hostRef: WeakReference<Activity>? = null
+    private var webView: WebView? = null
+    private var shellLoaded = false
+    private var activeJob: RenderJob? = null
+    private var jobSeq = 0L
+    private var layoutListener: View.OnLayoutChangeListener? = null
+    private var timeoutRunnable: Runnable? = null
+
+    fun getCached(renderKey: String): CachedKatexBmp? = cache.get(renderKey)
+    fun isFailed(renderKey: String): Boolean = failedKeys.contains(renderKey)
+
+    fun warmup(context: Context) {
+        val act = context.findActivity() ?: return
+        ensureWebView(act)
+    }
+
+    fun request(
+        context: Context,
+        renderKey: String,
+        htmlBody: String,
+        cfgJson: String,
+        availWidthPx: Int,
+        listener: (CachedKatexBmp?) -> Unit
+    ): () -> Unit {
+        cache.get(renderKey)?.let {
+            listener(it)
+            return {}
+        }
+        if (failedKeys.contains(renderKey)) {
+            listener(null)
+            return {}
+        }
+        val act = context.findActivity()
+        if (act == null || act.isFinishing || act.isDestroyed) {
+            listener(null)
+            return {}
+        }
+        ensureWebView(act)
+
+        val current = activeJob
+        if (current != null && current.renderKey == renderKey) {
+            current.listeners.add(listener)
+            return { current.listeners.remove(listener) }
+        }
+
+        val job = pendingJobs.getOrPut(renderKey) {
+            RenderJob(renderKey, htmlBody, cfgJson, availWidthPx)
+        }
+        job.listeners.add(listener)
+        lifoOrder.remove(renderKey)
+        lifoOrder.add(renderKey)
+
+        if (activeJob == null && shellLoaded) {
+            startNext()
+        }
+        return {
+            job.listeners.remove(listener)
+            if (job.listeners.isEmpty() && activeJob !== job) {
+                pendingJobs.remove(renderKey)
+                lifoOrder.remove(renderKey)
+            }
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun ensureWebView(activity: Activity) {
+        val existingHost = hostRef?.get()
+        if (webView != null && existingHost === activity) return
+        destroyWebViewOnly()
+        val contentRoot = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+        hostRef = WeakReference(activity)
+        shellLoaded = false
+
+        val web = WebView(activity).apply {
+            alpha = 0.01f
+            isClickable = false
+            isFocusable = false
+            isFocusableInTouchMode = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            setBackgroundColor(AndroidColor.TRANSPARENT)
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            settings.javaScriptEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.domStorageEnabled = false
+            settings.setSupportZoom(false)
+            settings.textZoom = 100
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    if (url == "about:blank" || view !== webView) return
+                    shellLoaded = true
+                    if (activeJob == null) startNext()
+                }
+            }
+            addJavascriptInterface(BmpBridge(), "KatexBmpBridge")
+        }
+        contentRoot.addView(web, 0, FrameLayout.LayoutParams(900, 160))
+        webView = web
+        web.loadDataWithBaseURL("file:///android_asset/web/", KATEX_SHELL_HTML, "text/html", "utf-8", null)
+    }
+
+    private fun startNext() {
+        val web = webView ?: return
+        if (!shellLoaded || activeJob != null) return
+        val act = hostRef?.get()
+        if (act == null || act.isFinishing || act.isDestroyed) {
+            destroy()
+            return
+        }
+
+        var next: RenderJob? = null
+        while (lifoOrder.isNotEmpty()) {
+            val key = lifoOrder.removeAt(lifoOrder.lastIndex)
+            val candidate = pendingJobs.remove(key) ?: continue
+            if (candidate.listeners.isNotEmpty()) {
+                next = candidate
+                break
+            }
+        }
+        val job = next ?: return
+        val seq = ++jobSeq
+        job.seq = seq
+        activeJob = job
+
+        scheduleTimeout(seq)
+
+        val initW = job.availWidthPx.coerceIn(64, MAX_BMP_DIM)
+        val initH = 120
+        val runJs = {
+            if (activeJob === job && job.seq == seq && webView === web) {
+                val js = "window.__renderBitmap && window.__renderBitmap($seq, ${JSONObject.quote(job.htmlBody)}, ${JSONObject.quote(job.cfgJson)});"
+                web.evaluateJavascript(js, null)
+            }
+        }
+        if (web.width == initW && web.height == initH) {
+            runJs()
+        } else {
+            resizeAndThen(web, initW, initH, seq, runJs)
+        }
+    }
+
+    private fun handleMeasured(seq: Long, physW: Int, physH: Int) {
+        val job = activeJob ?: return
+        val web = webView ?: return
+        if (job.seq != seq) return
+
+        if (physW <= 0 || physH <= 0 || physW > MAX_BMP_DIM || physH > MAX_BMP_DIM) {
+            finishJob(job, null, markFailed = true)
+            return
+        }
+
+        val capture = {
+            if (activeJob === job && job.seq == seq && webView === web) {
+                web.scrollTo(0, 0)
+                web.postVisualStateCallback(seq, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        if (activeJob !== job || job.seq != seq || webView !== web) return
+                        try {
+                            val bmp = Bitmap.createBitmap(physW, physH, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bmp)
+                            web.draw(canvas)
+                            val cached = CachedKatexBmp(
+                                image = bmp.asImageBitmap(),
+                                widthPx = physW,
+                                heightPx = physH,
+                                byteCount = bmp.allocationByteCount
+                            )
+                            cache.put(job.renderKey, cached)
+                            finishJob(job, cached, markFailed = false)
+                        } catch (e: Throwable) {
+                            finishJob(job, null, markFailed = true)
+                        }
+                    }
+                })
+            }
+        }
+
+        if (web.width == physW && web.height == physH) {
+            capture()
+        } else {
+            resizeAndThen(web, physW, physH, seq, capture)
+        }
+    }
+
+    private fun resizeAndThen(
+        web: WebView,
+        w: Int,
+        h: Int,
+        seq: Long,
+        then: () -> Unit
+    ) {
+        clearLayoutListener(web)
+        val listener = object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View?, left: Int, top: Int, right: Int, bottom: Int,
+                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
+            ) {
+                if ((right - left) == w && (bottom - top) == h) {
+                    web.removeOnLayoutChangeListener(this)
+                    if (layoutListener === this) layoutListener = null
+                    if (activeJob?.seq == seq) mainHandler.post(then)
+                }
+            }
+        }
+        layoutListener = listener
+        web.addOnLayoutChangeListener(listener)
+        web.layoutParams = FrameLayout.LayoutParams(w, h)
+        web.requestLayout()
+    }
+
+    private fun clearLayoutListener(web: WebView) {
+        layoutListener?.let {
+            web.removeOnLayoutChangeListener(it)
+            layoutListener = null
+        }
+    }
+
+    private fun scheduleTimeout(seq: Long) {
+        cancelTimeout()
+        val r = Runnable {
+            val job = activeJob
+            if (job != null && job.seq == seq) {
+                finishJob(job, null, markFailed = true)
+            }
+        }
+        timeoutRunnable = r
+        mainHandler.postDelayed(r, JOB_TIMEOUT_MS)
+    }
+
+    private fun cancelTimeout() {
+        timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        timeoutRunnable = null
+    }
+
+    private fun finishJob(job: RenderJob, result: CachedKatexBmp?, markFailed: Boolean) {
+        cancelTimeout()
+        webView?.let { clearLayoutListener(it) }
+        if (markFailed) failedKeys.add(job.renderKey)
+        activeJob = null
+        val cbs = job.listeners.toList()
+        job.listeners.clear()
+        cbs.forEach { it(result) }
+        startNext()
+    }
+
+    private fun destroyWebViewOnly() {
+        cancelTimeout()
+        val web = webView
+        webView = null
+        shellLoaded = false
+        activeJob = null
+        if (web != null) {
+            clearLayoutListener(web)
+            web.removeJavascriptInterface("KatexBmpBridge")
+            (web.parent as? ViewGroup)?.removeView(web)
+            web.destroy()
+        }
+    }
+
+    fun destroy() {
+        pendingJobs.clear()
+        lifoOrder.clear()
+        failedKeys.clear()
+        cache.evictAll()
+        destroyWebViewOnly()
+        hostRef = null
+    }
+}
 
 @Composable
 fun MarkdownMessageContent(
@@ -321,8 +708,12 @@ fun MarkdownMessageContent(
     onCopy: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     onPreviewHtml: (String) -> Unit,
+    viewportTopProvider: () -> Float = { 0f },
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { KatexBitmapRenderer.warmup(context) }
+
     val blocks = remember(rawText) { parseMarkdown(rawText) }
     val primary = MaterialTheme.colorScheme.primary
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
@@ -492,13 +883,15 @@ fun MarkdownMessageContent(
                         code = block.code,
                         textScale = textScale,
                         onCopy = { onCopy(block.code) },
-                        onPreviewHtml = { onPreviewHtml(block.code) }
+                        onPreviewHtml = { onPreviewHtml(block.code) },
+                        viewportTopProvider = viewportTopProvider
                     )
                     is MdBlock.Table -> MarkdownTableCard(
                         table = block,
                         textScale = textScale,
                         streaming = blockStreaming,
                         primary = primary,
+                        onCopy = onCopy,
                         onOpenUrl = onOpenUrl
                     )
                 }
@@ -582,7 +975,6 @@ private fun KatexRichBlock(
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun KatexRichBlockInner(
     htmlBody: String,
@@ -596,6 +988,7 @@ private fun KatexRichBlockInner(
     allowTouchOverride: Boolean?,
     onOpenUrl: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val uiScale = LocalUiScale.current
@@ -610,29 +1003,16 @@ private fun KatexRichBlockInner(
     }
     val cssFontWeight = if (isBold) "600" else "400"
     val availWidthVal = availWidthDp.value.coerceAtLeast(40f)
-    val widthBucket = if (isDisplay) 0 else (availWidthVal * density.density / 8f).roundToInt()
+    val availWidthPx = (availWidthVal * density.density).roundToInt().coerceAtLeast(48)
+    val widthBucket = if (isDisplay) 0 else (availWidthPx / 8)
     val scaleBucket = (fontSizeCssPx * 10f).roundToInt()
+
     val cacheKey = remember(htmlBody, scaleBucket, widthBucket, isDisplay, cssTextAlign, cssFontWeight) {
         "${htmlBody.hashCode()}:${htmlBody.length}:$scaleBucket:$widthBucket:$isDisplay:$cssTextAlign:$cssFontWeight"
     }
     val renderKey = remember(cacheKey, textColorHex, accentHex) {
         "$cacheKey:$textColorHex:$accentHex"
     }
-    val cached = katexSizeCache[cacheKey]
-    val initialHeight = cached?.second ?: ((if (isDisplay) 44f else 24f) * textScale).coerceAtLeast(22f)
-    val initialWidth = cached?.first ?: (if (isDisplay) availWidthVal.coerceAtMost(240f) else availWidthVal)
-
-    var heightDp by remember(cacheKey) { mutableFloatStateOf(initialHeight) }
-    var widthDp by remember(cacheKey) { mutableFloatStateOf(initialWidth) }
-    var measured by remember(cacheKey) { mutableStateOf(cached != null) }
-    val alphaAnim by animateFloatAsState(
-        targetValue = if (measured) 1f else 0f,
-        animationSpec = tween(durationMillis = 180),
-        label = "katex_alpha"
-    )
-    val hasLinks = remember(htmlBody) { htmlBody.contains("<a href=") }
-    val allowTouch = allowTouchOverride ?: hasLinks
-
     val cfgJson = remember(textColorHex, accentHex, fontSizeCssPx, isDisplay, cssTextAlign, cssFontWeight) {
         JSONObject()
             .put("color", textColorHex)
@@ -643,6 +1023,116 @@ private fun KatexRichBlockInner(
             .put("fontWeight", cssFontWeight)
             .toString()
     }
+
+    val hasLinks = remember(htmlBody) { htmlBody.contains("<a href=") }
+    var useLiveFallback by remember(renderKey) {
+        mutableStateOf(hasLinks || KatexBitmapRenderer.isFailed(renderKey))
+    }
+
+    if (useLiveFallback) {
+        KatexLiveWebView(
+            htmlBody = htmlBody,
+            cfgJson = cfgJson,
+            cacheKey = cacheKey,
+            renderKey = renderKey,
+            textScale = textScale,
+            isDisplay = isDisplay,
+            availWidthVal = availWidthVal,
+            allowTouch = allowTouchOverride ?: hasLinks,
+            onOpenUrl = onOpenUrl
+        )
+        return
+    }
+
+    var cachedBmp by remember(renderKey) {
+        mutableStateOf(KatexBitmapRenderer.getCached(renderKey))
+    }
+
+    DisposableEffect(renderKey) {
+        val current = KatexBitmapRenderer.getCached(renderKey)
+        if (current != null) {
+            cachedBmp = current
+            onDispose { }
+        } else {
+            val cancel = KatexBitmapRenderer.request(
+                context = context,
+                renderKey = renderKey,
+                htmlBody = htmlBody,
+                cfgJson = cfgJson,
+                availWidthPx = availWidthPx
+            ) { result ->
+                if (result != null) {
+                    cachedBmp = result
+                } else {
+                    useLiveFallback = true
+                }
+            }
+            onDispose { cancel() }
+        }
+    }
+
+    val bmp = cachedBmp
+    val cachedDim = katexSizeCache[cacheKey]
+    val targetW = when {
+        bmp != null && isDisplay -> (bmp.widthPx / density.density)
+        isDisplay -> cachedDim?.first ?: availWidthVal.coerceAtMost(240f)
+        else -> availWidthVal
+    }
+    val targetH = when {
+        bmp != null -> (bmp.heightPx / density.density)
+        else -> cachedDim?.second ?: ((if (isDisplay) 44f else 24f) * textScale).coerceAtLeast(20f)
+    }
+    val alphaAnim by animateFloatAsState(
+        targetValue = if (bmp != null) 1f else 0.15f,
+        animationSpec = tween(durationMillis = 160),
+        label = "katex_bmp_alpha"
+    )
+
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.image,
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier
+                .width(targetW.dp)
+                .height(targetH.dp)
+                .graphicsLayer { alpha = alphaAnim }
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .width(targetW.dp)
+                .height(targetH.dp)
+        )
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun KatexLiveWebView(
+    htmlBody: String,
+    cfgJson: String,
+    cacheKey: String,
+    renderKey: String,
+    textScale: Float,
+    isDisplay: Boolean,
+    availWidthVal: Float,
+    allowTouch: Boolean,
+    onOpenUrl: (String) -> Unit
+) {
+    val density = LocalDensity.current
+    val cached = katexSizeCache[cacheKey]
+    val initialHeight = cached?.second ?: ((if (isDisplay) 44f else 24f) * textScale).coerceAtLeast(22f)
+    val initialWidth = cached?.first ?: (if (isDisplay) availWidthVal.coerceAtMost(240f) else availWidthVal)
+
+    var heightDp by remember(cacheKey) { mutableFloatStateOf(initialHeight) }
+    var widthDp by remember(cacheKey) { mutableFloatStateOf(initialWidth) }
+    var measured by remember(cacheKey) { mutableStateOf(cached != null) }
+    val alphaAnim by animateFloatAsState(
+        targetValue = if (measured) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "katex_live_alpha"
+    )
 
     val boxModifier = if (isDisplay) {
         Modifier
@@ -751,7 +1241,8 @@ private fun CodeBlockCard(
     code: String,
     textScale: Float,
     onCopy: () -> Unit,
-    onPreviewHtml: () -> Unit
+    onPreviewHtml: () -> Unit,
+    viewportTopProvider: () -> Float
 ) {
     var expanded by remember { mutableStateOf(true) }
     var copied by remember { mutableStateOf(false) }
@@ -767,6 +1258,10 @@ private fun CodeBlockCard(
     val copyInteraction = remember { MutableInteractionSource() }
     val runInteraction = remember { MutableInteractionSource() }
 
+    val cardTopWindowY = remember { mutableFloatStateOf(0f) }
+    val cardHeightPx = remember { mutableIntStateOf(0) }
+    val headerHeightPx = remember { mutableIntStateOf(0) }
+
     LaunchedEffect(copied) {
         if (copied) {
             delay(1400)
@@ -779,92 +1274,117 @@ private fun CodeBlockCard(
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         modifier = Modifier
             .fillMaxWidth()
+            .onGloballyPositioned { coords ->
+                cardTopWindowY.floatValue = coords.positionInWindow().y
+                cardHeightPx.intValue = coords.size.height
+            }
             .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 420f))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .zIndex(2f)
+                    .onGloballyPositioned { coords ->
+                        headerHeightPx.intValue = coords.size.height
+                    }
+                    .offset {
+                        if (!expanded || cardHeightPx.intValue <= headerHeightPx.intValue * 2) {
+                            IntOffset.Zero
+                        } else {
+                            val scrolledPast = (viewportTopProvider() - cardTopWindowY.floatValue).roundToInt()
+                            val maxOffset = (cardHeightPx.intValue - headerHeightPx.intValue).coerceAtLeast(0)
+                            IntOffset(0, scrolledPast.coerceIn(0, maxOffset))
+                        }
+                    }
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable { expanded = !expanded }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    lang.ifEmpty { "code" }.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    lineCountLabel(lines.size),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.weight(1f))
-                if (canRun) {
-                    Surface(
-                        onClick = onPreviewHtml,
-                        interactionSource = runInteraction,
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier.springBounce(runInteraction).padding(end = 6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(14.dp))
-                            Text("Открыть", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                        }
-                    }
-                }
-                Surface(
-                    onClick = {
-                        onCopy()
-                        copied = true
-                    },
-                    interactionSource = copyInteraction,
-                    shape = CircleShape,
-                    color = copyBg,
-                    modifier = Modifier.springBounce(copyInteraction)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AnimatedContent(
-                        targetState = copied,
-                        transitionSpec = {
-                            (fadeIn(tween(150)) + scaleIn(initialScale = 0.9f)) togetherWith
-                                (fadeOut(tween(110)) + scaleOut(targetScale = 0.9f))
-                        },
-                        label = "code_copy_anim"
-                    ) { isCopied ->
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    Text(
+                        lang.ifEmpty { "code" }.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        lineCountLabel(lines.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (canRun) {
+                        Surface(
+                            onClick = onPreviewHtml,
+                            interactionSource = runInteraction,
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.springBounce(runInteraction).padding(end = 6.dp)
                         ) {
-                            Icon(
-                                if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                                contentDescription = null,
-                                tint = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                if (isCopied) "Скопировано" else "Копировать",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(14.dp))
+                                Text("Открыть", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
                         }
                     }
+                    Surface(
+                        onClick = {
+                            onCopy()
+                            copied = true
+                        },
+                        interactionSource = copyInteraction,
+                        shape = CircleShape,
+                        color = copyBg,
+                        modifier = Modifier.springBounce(copyInteraction)
+                    ) {
+                        AnimatedContent(
+                            targetState = copied,
+                            transitionSpec = {
+                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.9f)) togetherWith
+                                    (fadeOut(tween(110)) + scaleOut(targetScale = 0.9f))
+                            },
+                            label = "code_copy_anim"
+                        ) { isCopied ->
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                    contentDescription = null,
+                                    tint = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    if (isCopied) "Скопировано" else "Копировать",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        Icons.Rounded.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp).rotate(chevronRot)
+                    )
                 }
-                Spacer(Modifier.width(6.dp))
-                Icon(
-                    Icons.Rounded.ExpandMore,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp).rotate(chevronRot)
-                )
+                if (expanded) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                }
             }
             AnimatedVisibility(visible = expanded) {
                 val fontSize = (12.5f * textScale).sp
@@ -918,8 +1438,25 @@ private fun MarkdownTableCard(
     textScale: Float,
     streaming: Boolean,
     primary: Color,
+    onCopy: (String) -> Unit,
     onOpenUrl: (String) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(true) }
+    var copied by remember { mutableStateOf(false) }
+    val chevronRot by animateFloatAsState(if (expanded) 180f else 0f, ExpressiveSpring, label = "table_chev")
+    val copyBg by animateColorAsState(
+        if (copied) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+        label = "table_copy_bg"
+    )
+    val copyInteraction = remember { MutableInteractionSource() }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1400)
+            copied = false
+        }
+    }
+
     val cellFontSp = 13.5f
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val availWidth = maxWidth
@@ -957,60 +1494,134 @@ private fun MarkdownTableCard(
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             modifier = Modifier
                 .fillMaxWidth()
+                .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 420f))
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(scrollState)
-            ) {
-                Column(modifier = Modifier.width(totalWidth)) {
-                    Row(
-                        modifier = Modifier
-                            .width(totalWidth)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                        verticalAlignment = Alignment.CenterVertically
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable { expanded = !expanded }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "ТАБЛИЦА",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${table.rows.size} × ${table.headers.size}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Surface(
+                        onClick = {
+                            onCopy(tableToMarkdown(table))
+                            copied = true
+                        },
+                        interactionSource = copyInteraction,
+                        shape = CircleShape,
+                        color = copyBg,
+                        modifier = Modifier.springBounce(copyInteraction)
                     ) {
-                        table.headers.forEachIndexed { idx, h ->
-                            TableCellContent(
-                                text = h,
-                                width = colWidths[idx],
-                                align = table.aligns.getOrElse(idx) { TextAlign.Start },
-                                fontSp = cellFontSp,
-                                textScale = textScale,
-                                isHeader = true,
-                                streaming = streaming,
-                                primary = primary,
-                                onOpenUrl = onOpenUrl
-                            )
+                        AnimatedContent(
+                            targetState = copied,
+                            transitionSpec = {
+                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.9f)) togetherWith
+                                    (fadeOut(tween(110)) + scaleOut(targetScale = 0.9f))
+                            },
+                            label = "table_copy_anim"
+                        ) { isCopied ->
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                    contentDescription = null,
+                                    tint = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    if (isCopied) "Скопировано" else "Копировать",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
-                    table.rows.forEachIndexed { rIdx, row ->
-                        HorizontalDivider(
-                            modifier = Modifier.width(totalWidth),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-                        )
-                        Row(
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        Icons.Rounded.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp).rotate(chevronRot)
+                    )
+                }
+
+                AnimatedVisibility(visible = expanded) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        Box(
                             modifier = Modifier
-                                .width(totalWidth)
-                                .background(
-                                    if (rIdx % 2 == 1) MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f)
-                                    else Color.Transparent
-                                ),
-                            verticalAlignment = Alignment.CenterVertically
+                                .fillMaxWidth()
+                                .horizontalScroll(scrollState)
                         ) {
-                            row.forEachIndexed { idx, cell ->
-                                TableCellContent(
-                                    text = cell,
-                                    width = colWidths[idx],
-                                    align = table.aligns.getOrElse(idx) { TextAlign.Start },
-                                    fontSp = cellFontSp,
-                                    textScale = textScale,
-                                    isHeader = false,
-                                    streaming = streaming,
-                                    primary = primary,
-                                    onOpenUrl = onOpenUrl
-                                )
+                            Column(modifier = Modifier.width(totalWidth)) {
+                                Row(
+                                    modifier = Modifier
+                                        .width(totalWidth)
+                                        .background(MaterialTheme.colorScheme.surfaceContainer),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    table.headers.forEachIndexed { idx, h ->
+                                        TableCellContent(
+                                            text = h,
+                                            width = colWidths[idx],
+                                            align = table.aligns.getOrElse(idx) { TextAlign.Start },
+                                            fontSp = cellFontSp,
+                                            textScale = textScale,
+                                            isHeader = true,
+                                            streaming = streaming,
+                                            primary = primary,
+                                            onOpenUrl = onOpenUrl
+                                        )
+                                    }
+                                }
+                                table.rows.forEachIndexed { rIdx, row ->
+                                    HorizontalDivider(
+                                        modifier = Modifier.width(totalWidth),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .width(totalWidth)
+                                            .background(
+                                                if (rIdx % 2 == 1) MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f)
+                                                else Color.Transparent
+                                            ),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        row.forEachIndexed { idx, cell ->
+                                            TableCellContent(
+                                                text = cell,
+                                                width = colWidths[idx],
+                                                align = table.aligns.getOrElse(idx) { TextAlign.Start },
+                                                fontSp = cellFontSp,
+                                                textScale = textScale,
+                                                isHeader = false,
+                                                streaming = streaming,
+                                                primary = primary,
+                                                onOpenUrl = onOpenUrl
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1019,6 +1630,20 @@ private fun MarkdownTableCard(
         }
     }
 }
+
+private fun tableToMarkdown(table: MdBlock.Table): String = buildString {
+    append("| ").append(table.headers.joinToString(" | ")).append(" |\n")
+    append("| ").append(table.aligns.joinToString(" | ") {
+        when (it) {
+            TextAlign.Center -> ":---:"
+            TextAlign.End -> "---:"
+            else -> "---"
+        }
+    }).append(" |\n")
+    table.rows.forEach { row ->
+        append("| ").append(row.joinToString(" | ")).append(" |\n")
+    }
+}.trimEnd()
 
 @Composable
 private fun TableCellContent(

@@ -64,6 +64,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Image
@@ -79,7 +80,6 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WifiOff
-import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -110,6 +110,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -124,6 +125,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -149,6 +152,7 @@ fun ChatScreen(state: AppState) {
     var showSystemSheet by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<ChatSummaryItem?>(null) }
     var stickToBottom by remember(state.currentChatId) { mutableStateOf(true) }
+    val viewportTopWindowY = remember { mutableFloatStateOf(0f) }
 
     val isScrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 16 } }
     val canScrollDown by remember { derivedStateOf { listState.canScrollForward } }
@@ -453,7 +457,12 @@ fun ChatScreen(state: AppState) {
                     } else {
                         LazyColumn(
                             state = listState,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .onGloballyPositioned { coords ->
+                                    viewportTopWindowY.floatValue = coords.positionInWindow().y
+                                },
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(itemGap)
                         ) {
@@ -483,7 +492,8 @@ fun ChatScreen(state: AppState) {
                                             m = msg,
                                             state = state,
                                             streaming = false,
-                                            isLatest = isLastMsg && !state.streaming
+                                            isLatest = isLastMsg && !state.streaming,
+                                            viewportTopProvider = { viewportTopWindowY.floatValue }
                                         )
                                     }
                                 }
@@ -500,13 +510,15 @@ fun ChatScreen(state: AppState) {
                                         }
                                         AssistantMessageBlock(
                                             m = ChatMessage(
+                                                uid = -1L,
                                                 role = "assistant",
                                                 content = state.streamContent,
                                                 reasoning = state.streamReasoning
                                             ),
                                             state = state,
                                             streaming = true,
-                                            isLatest = true
+                                            isLatest = true,
+                                            viewportTopProvider = { viewportTopWindowY.floatValue }
                                         )
                                     }
                                 }
@@ -862,10 +874,11 @@ private fun AssistantMessageBlock(
     m: ChatMessage,
     state: AppState,
     streaming: Boolean,
-    isLatest: Boolean
+    isLatest: Boolean,
+    viewportTopProvider: () -> Float
 ) {
     val scale = LocalTextScale.current
-    var reasoningOpen by remember(m.uid, streaming) { mutableStateOf(streaming) }
+    var reasoningOpen by remember(m.uid) { mutableStateOf(false) }
     var copiedMsg by remember(m.uid) { mutableStateOf(false) }
     val timeText = remember(m.ts) { AppState.formatTimeShort(m.ts) }
     val shownText = remember(m.content, state.agentMode, streaming) {
@@ -958,6 +971,7 @@ private fun AssistantMessageBlock(
         }
 
         if (m.reasoning.isNotEmpty()) {
+            val activelyThinking = streaming && shownText.isEmpty()
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -981,12 +995,20 @@ private fun AssistantMessageBlock(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.width(6.dp))
-                        val dur = if (m.reasoningMs > 0) " · ${AppState.formatDuration(m.reasoningMs)}" else ""
+                        val headerText = when {
+                            activelyThinking -> "Размышления · думает…"
+                            m.reasoningMs > 0 -> "Размышления · ${AppState.formatDuration(m.reasoningMs)}"
+                            else -> "Размышления"
+                        }
                         Text(
-                            "Размышления$dur",
+                            headerText,
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
                         )
+                        if (activelyThinking) {
+                            ExpressiveLoader(size = 12.dp)
+                        }
                     }
                     AnimatedVisibility(visible = reasoningOpen) {
                         SelectionContainer {
@@ -1009,7 +1031,8 @@ private fun AssistantMessageBlock(
                 streaming = streaming,
                 onCopy = { state.copyText(it) },
                 onOpenUrl = { state.openUrl(it) },
-                onPreviewHtml = { state.hostActions?.openHtmlPreview(it) }
+                onPreviewHtml = { state.hostActions?.openHtmlPreview(it) },
+                viewportTopProvider = viewportTopProvider
             )
         }
 
