@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 
 val LocalTextScale = compositionLocalOf { 1f }
+val LocalUiScale = compositionLocalOf { 1f }
 
 enum class AppThemeMode(val id: String, val label: String) {
     SYSTEM("system", "Системная"),
@@ -272,15 +273,16 @@ fun LocalApiTheme(
         }
     }
 
+    val uiScaleFactor = uiScale.coerceIn(0.55f, 1.75f)
     val baseDensity = LocalDensity.current
-    val scaledDensity = remember(baseDensity, uiScale) {
-        val factor = uiScale.coerceIn(0.55f, 1.75f)
-        Density(density = baseDensity.density * factor, fontScale = baseDensity.fontScale)
+    val scaledDensity = remember(baseDensity, uiScaleFactor) {
+        Density(density = baseDensity.density * uiScaleFactor, fontScale = baseDensity.fontScale)
     }
 
     CompositionLocalProvider(
         LocalDensity provides scaledDensity,
-        LocalTextScale provides textScale.coerceIn(0.6f, 2.0f)
+        LocalTextScale provides textScale.coerceIn(0.6f, 2.0f),
+        LocalUiScale provides uiScaleFactor
     ) {
         MaterialTheme(
             colorScheme = colors,

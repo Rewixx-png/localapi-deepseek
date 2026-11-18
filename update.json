@@ -3,5 +3,5 @@
   "versionName": "1.11.13",
   "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.13/LocalApiDeepSeek.apk",
   "sha256": "3f61b6a4ae58b8a2b511fd3f2cb9b1b73416750a70ed78d5fe5671e7fbf89e1f",
-  "notes": "LaTeX-формулы рендерятся локальным KaTeX (\\(...\\), \\[...\\], $...$, $$...$$). Модель может выбирать шрифт слов через [[font:serif|...]], sans, mono, cursive, condensed, light, black; инструкция добавлена в каждый запрос."
+  "notes": "Исправлен масштаб и обрезка LaTeX-формул (KaTeX) при изменении масштаба интерфейса и текста, добавлен плавный горизонтальный скролл таблиц и широких формул, исправлена плавность ползунка масштаба интерфейса."
 }

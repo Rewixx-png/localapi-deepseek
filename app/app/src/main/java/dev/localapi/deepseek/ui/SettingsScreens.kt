@@ -59,14 +59,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -512,6 +516,18 @@ private fun UiSettingsPane(state: AppState) {
         AppPalette.entries.filter { it != AppPalette.DYNAMIC || dynamicSupported }
     }
 
+    var uiScaleDraft by remember { mutableFloatStateOf(state.uiScale.toFloat()) }
+    var uiScaleDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(state.uiScale) {
+        if (!uiScaleDragging) uiScaleDraft = state.uiScale.toFloat()
+    }
+
+    var textZoomDraft by remember { mutableFloatStateOf(state.textZoom.toFloat()) }
+    var textZoomDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(state.textZoom) {
+        if (!textZoomDragging) textZoomDraft = state.textZoom.toFloat()
+    }
+
     SectionLabel("Тема и палитра")
     GroupedCardItem(0, 2) {
         Text("Тема", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
@@ -583,25 +599,87 @@ private fun UiSettingsPane(state: AppState) {
         DetailedScaleControl(
             title = "Масштаб всего интерфейса",
             subtitle = "Меняет размер кнопок, панелей, отступов и шрифтов (55%–175%)",
-            value = state.uiScale,
+            sliderValue = uiScaleDraft,
             min = 55,
             max = 175,
             presets = listOf(65, 85, 100, 120, 150),
-            onChange = { state.updateUiScale(it) }
+            onDraftChange = {
+                uiScaleDragging = true
+                uiScaleDraft = it
+            },
+            onDragFinished = {
+                uiScaleDragging = false
+                val target = uiScaleDraft.roundToInt().coerceIn(55, 175)
+                uiScaleDraft = target.toFloat()
+                if (target != state.uiScale) state.updateUiScale(target)
+            },
+            onCommit = { target ->
+                uiScaleDragging = false
+                val clamped = target.coerceIn(55, 175)
+                uiScaleDraft = clamped.toFloat()
+                state.updateUiScale(clamped)
+            }
         )
+        Spacer(Modifier.height(10.dp))
+        val uiPreviewRatio = (uiScaleDraft / state.uiScale.coerceAtLeast(1).toFloat()).coerceIn(0.45f, 2.2f)
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().height(52.dp).clipToBounds()
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Row(
+                    modifier = Modifier.graphicsLayer(scaleX = uiPreviewRatio, scaleY = uiPreviewRatio),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Text(
+                            "Кнопка",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Text(
+                        "Интерфейс · ${uiScaleDraft.roundToInt()}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
     }
     GroupedCardItem(1, 2) {
         DetailedScaleControl(
             title = "Размер текста в чате",
-            subtitle = "Шрифт сообщений, кода и формул (60%–200%)",
-            value = state.textZoom,
+            subtitle = "Шрифт сообщений, кода, таблиц и формул (60%–200%)",
+            sliderValue = textZoomDraft,
             min = 60,
             max = 200,
             presets = listOf(75, 100, 125, 160),
-            onChange = { state.updateTextZoom(it) }
+            onDraftChange = {
+                textZoomDragging = true
+                textZoomDraft = it
+            },
+            onDragFinished = {
+                textZoomDragging = false
+                val target = textZoomDraft.roundToInt().coerceIn(60, 200)
+                textZoomDraft = target.toFloat()
+                if (target != state.textZoom) state.updateTextZoom(target)
+            },
+            onCommit = { target ->
+                textZoomDragging = false
+                val clamped = target.coerceIn(60, 200)
+                textZoomDraft = clamped.toFloat()
+                state.updateTextZoom(clamped)
+            }
         )
         Spacer(Modifier.height(10.dp))
-        val scale = state.textZoom / 100f
+        val scale = textZoomDraft / 100f
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surfaceContainer
@@ -632,12 +710,15 @@ private fun UiSettingsPane(state: AppState) {
 private fun DetailedScaleControl(
     title: String,
     subtitle: String,
-    value: Int,
+    sliderValue: Float,
     min: Int,
     max: Int,
     presets: List<Int>,
-    onChange: (Int) -> Unit
+    onDraftChange: (Float) -> Unit,
+    onDragFinished: () -> Unit,
+    onCommit: (Int) -> Unit
 ) {
+    val shownValue = sliderValue.roundToInt().coerceIn(min, max)
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
@@ -649,7 +730,7 @@ private fun DetailedScaleControl(
             color = MaterialTheme.colorScheme.primaryContainer
         ) {
             Text(
-                "$value%",
+                "$shownValue%",
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -659,21 +740,22 @@ private fun DetailedScaleControl(
     Spacer(Modifier.height(8.dp))
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         FilledTonalIconButton(
-            onClick = { if (value > min) onChange(value - 1) },
-            enabled = value > min,
+            onClick = { if (shownValue > min) onCommit(shownValue - 1) },
+            enabled = shownValue > min,
             modifier = Modifier.size(34.dp)
         ) {
             Icon(Icons.Rounded.Remove, contentDescription = "Уменьшить", modifier = Modifier.size(18.dp))
         }
         Slider(
-            value = value.toFloat(),
-            onValueChange = { onChange(it.roundToInt()) },
+            value = sliderValue.coerceIn(min.toFloat(), max.toFloat()),
+            onValueChange = onDraftChange,
+            onValueChangeFinished = onDragFinished,
             valueRange = min.toFloat()..max.toFloat(),
             modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
         )
         FilledTonalIconButton(
-            onClick = { if (value < max) onChange(value + 1) },
-            enabled = value < max,
+            onClick = { if (shownValue < max) onCommit(shownValue + 1) },
+            enabled = shownValue < max,
             modifier = Modifier.size(34.dp)
         ) {
             Icon(Icons.Rounded.Add, contentDescription = "Увеличить", modifier = Modifier.size(18.dp))
@@ -686,12 +768,12 @@ private fun DetailedScaleControl(
         presets.forEach { preset ->
             TonalActionPill(
                 label = "$preset%",
-                active = value == preset,
-                onClick = { onChange(preset) }
+                active = shownValue == preset,
+                onClick = { onCommit(preset) }
             )
         }
-        if (value != 100) {
-            TonalActionPill(label = "Сброс", onClick = { onChange(100) })
+        if (shownValue != 100) {
+            TonalActionPill(label = "Сброс", onClick = { onCommit(100) })
         }
     }
 }
