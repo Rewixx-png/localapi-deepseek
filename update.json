@@ -1,7 +1,7 @@
 {
-  "versionCode": 75,
-  "versionName": "1.11.14",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.14/LocalApiDeepSeek.apk",
-  "sha256": "ae7b7f230786559932e6c370c380471e6e230ce174458d63c394779575734097",
+  "versionCode": 76,
+  "versionName": "1.11.15",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.15/LocalApiDeepSeek.apk",
+  "sha256": "ad89214726bb5052c77b4cc24776ce1b51606627daf0e8b8c4ead49175707464",
   "notes": "Исправлен масштаб и обрезка LaTeX-формул (KaTeX) при изменении масштаба интерфейса и текста, добавлен плавный горизонтальный скролл таблиц и широких формул, исправлена плавность ползунка масштаба интерфейса."
 }
