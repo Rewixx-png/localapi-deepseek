@@ -1,7 +1,7 @@
 {
-  "versionCode": 76,
-  "versionName": "1.11.15",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.15/LocalApiDeepSeek.apk",
-  "sha256": "ad89214726bb5052c77b4cc24776ce1b51606627daf0e8b8c4ead49175707464",
+  "versionCode": 77,
+  "versionName": "1.11.16",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.16/LocalApiDeepSeek.apk",
+  "sha256": "d89237dcbb2e489f20e618bc805f3ec91a8e11ecb0366381d3e4035a0a554194",
   "notes": "Убран уезд и пустой скролл LaTeX-формул (KaTeX), ускорен рендеринг при прокрутке, исправлены таблицы с символом |, кэширован подсчёт токенов и добавлены плавные анимации переходов и чата."
 }
