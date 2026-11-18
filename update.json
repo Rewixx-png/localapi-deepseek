@@ -1,7 +1,7 @@
 {
-  "versionCode": 76,
-  "versionName": "1.11.15",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.15/LocalApiDeepSeek.apk",
-  "sha256": "ad89214726bb5052c77b4cc24776ce1b51606627daf0e8b8c4ead49175707464",
+  "versionCode": 77,
+  "versionName": "1.11.16",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.16/LocalApiDeepSeek.apk",
+  "sha256": "d89237dcbb2e489f20e618bc805f3ec91a8e11ecb0366381d3e4035a0a554194",
   "notes": "Быстрый рендер KaTeX через кэш ImageBitmap без фризов при скролле истории, липкая шапка у блоков кода, сворачиваемые таблицы, исправленный блок раздумий (закрыт по умолчанию и сворачивается во время генерации), прокачанный браузер агента ([1]..[N] элементы, Shadow DOM, React-инпуты, select/press/hover/find/wait_for) и плавные анимации."
 }
