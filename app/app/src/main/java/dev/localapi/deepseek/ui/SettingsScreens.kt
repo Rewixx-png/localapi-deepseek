@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
@@ -35,12 +38,15 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -61,9 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -142,11 +146,11 @@ private fun SettingsCatalogPane(state: AppState) {
     }
     val ver = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "версия неизвестна"
     val avail = state.updateManifest?.let { " · доступно ${it.versionName}" }.orEmpty()
-    val uiSub = "${state.themeMode.label} · ${state.palette.label} · текст ${state.textZoom}%"
+    val uiSub = "${state.themeMode.label} · ${state.palette.label} · UI ${state.uiScale}% · текст ${state.textZoom}%"
 
     val items = listOf(
         Triple(SettingsPane.TOKEN, Icons.Rounded.Key, "Авторизация и ключи" to tokenSub),
-        Triple(SettingsPane.UI, Icons.Rounded.Palette, "Интерфейс и цвета" to uiSub),
+        Triple(SettingsPane.UI, Icons.Rounded.Palette, "Интерфейс, цвета и масштаб" to uiSub),
         Triple(SettingsPane.SERVER, Icons.Rounded.Dns, "Локальный API" to serverSub),
         Triple(SettingsPane.TUNNEL, Icons.Rounded.Public, "Cloudflare Tunnel" to tunnelSub),
         Triple(SettingsPane.SYSTEM, Icons.Rounded.Settings, "О приложении и сети" to (ver + avail))
@@ -327,8 +331,7 @@ private fun ServerSettingsPane(state: AppState) {
         }
     }
     val lastIdx = if (state.serverInfo.running) 2 else 1
-    val total = lastIdx + 1
-    GroupedCardItem(lastIdx, total) {
+    GroupedCardItem(lastIdx, lastIdx + 1) {
         Text(
             "Если система усыпляет сервер в фоне: на Samsung разрешите фоновую работу в настройках батареи, на Xiaomi включите автозапуск и «Без ограничений».",
             style = MaterialTheme.typography.bodySmall,
@@ -356,11 +359,8 @@ private fun TunnelSettingsPane(state: AppState) {
             enabled = state.online,
             onCheckedChange = { on ->
                 if (on) {
-                    if (!state.serverInfo.running) {
-                        state.showToast("Сначала включите локальный API")
-                    } else {
-                        confirmTunnel = true
-                    }
+                    if (!state.serverInfo.running) state.showToast("Сначала включите локальный API")
+                    else confirmTunnel = true
                 } else {
                     state.stopCfTunnel()
                 }
@@ -512,8 +512,8 @@ private fun UiSettingsPane(state: AppState) {
         AppPalette.entries.filter { it != AppPalette.DYNAMIC || dynamicSupported }
     }
 
-    SectionLabel("Оформление")
-    GroupedCardItem(0, 3) {
+    SectionLabel("Тема и палитра")
+    GroupedCardItem(0, 2) {
         Text("Тема", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(10.dp))
         M3SegmentedRow(
@@ -522,7 +522,7 @@ private fun UiSettingsPane(state: AppState) {
             onSelect = { state.updateThemeMode(it) }
         )
     }
-    GroupedCardItem(1, 3) {
+    GroupedCardItem(1, 2) {
         Text("Палитра (Material You)", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
         Text(
             if (state.palette == AppPalette.DYNAMIC && dynamicSupported) "Динамические цвета с обоев устройства"
@@ -539,16 +539,18 @@ private fun UiSettingsPane(state: AppState) {
                         val c1 = if (pal == AppPalette.DYNAMIC) MaterialTheme.colorScheme.primary else pal.swatchPrimary
                         val c2 = if (pal == AppPalette.DYNAMIC) MaterialTheme.colorScheme.tertiary else pal.swatchSecondary
                         val c3 = if (pal == AppPalette.DYNAMIC) MaterialTheme.colorScheme.primaryContainer else pal.swatchContainer
+                        val interaction = remember { MutableInteractionSource() }
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
+                                .springBounce(interaction)
                                 .clip(RoundedCornerShape(16.dp))
                                 .border(
                                     width = if (active) 2.dp else 0.dp,
                                     color = if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
                                     shape = RoundedCornerShape(16.dp)
                                 )
-                                .clickable { state.updatePalette(pal) },
+                                .clickable(interactionSource = interaction, indication = null) { state.updatePalette(pal) },
                             color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
                             shape = RoundedCornerShape(16.dp)
                         ) {
@@ -575,47 +577,41 @@ private fun UiSettingsPane(state: AppState) {
             }
         }
     }
-    GroupedCardItem(2, 3) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Размер текста", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text("${state.textZoom}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        }
-        Slider(
-            value = state.textZoom.toFloat(),
-            onValueChange = { state.updateTextZoom(it.roundToInt()) },
-            valueRange = 85f..150f
+
+    SectionLabel("Детальное масштабирование")
+    GroupedCardItem(0, 2) {
+        DetailedScaleControl(
+            title = "Масштаб всего интерфейса",
+            subtitle = "Меняет размер кнопок, панелей, отступов и шрифтов (55%–175%)",
+            value = state.uiScale,
+            min = 55,
+            max = 175,
+            presets = listOf(65, 85, 100, 120, 150),
+            onChange = { state.updateUiScale(it) }
         )
+    }
+    GroupedCardItem(1, 2) {
+        DetailedScaleControl(
+            title = "Размер текста в чате",
+            subtitle = "Шрифт сообщений, кода и формул (60%–200%)",
+            value = state.textZoom,
+            min = 60,
+            max = 200,
+            presets = listOf(75, 100, 125, 160),
+            onChange = { state.updateTextZoom(it) }
+        )
+        Spacer(Modifier.height(10.dp))
         val scale = state.textZoom / 100f
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surfaceContainer
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            "Как выглядит текст в чате?",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            fontSize = (15 * scale).sp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh
-                    ) {
-                        Text(
-                            "Вот так. Жирный текст, код и формулы.",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            fontSize = (15 * scale).sp
-                        )
-                    }
-                }
+                Text("User · 12:34", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("Напиши крутой код", fontSize = (15 * scale).sp)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Text("Model · 12:34", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                Text("Вот решение с формулами и таблицами.", fontSize = (15 * scale).sp)
             }
         }
     }
@@ -629,5 +625,73 @@ private fun UiSettingsPane(state: AppState) {
             checked = state.compact,
             onCheckedChange = { state.updateCompact(it) }
         )
+    }
+}
+
+@Composable
+private fun DetailedScaleControl(
+    title: String,
+    subtitle: String,
+    value: Int,
+    min: Int,
+    max: Int,
+    presets: List<Int>,
+    onChange: (Int) -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(8.dp))
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Text(
+                "$value%",
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        FilledTonalIconButton(
+            onClick = { if (value > min) onChange(value - 1) },
+            enabled = value > min,
+            modifier = Modifier.size(34.dp)
+        ) {
+            Icon(Icons.Rounded.Remove, contentDescription = "Уменьшить", modifier = Modifier.size(18.dp))
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = min.toFloat()..max.toFloat(),
+            modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
+        )
+        FilledTonalIconButton(
+            onClick = { if (value < max) onChange(value + 1) },
+            enabled = value < max,
+            modifier = Modifier.size(34.dp)
+        ) {
+            Icon(Icons.Rounded.Add, contentDescription = "Увеличить", modifier = Modifier.size(18.dp))
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        presets.forEach { preset ->
+            TonalActionPill(
+                label = "$preset%",
+                active = value == preset,
+                onClick = { onChange(preset) }
+            )
+        }
+        if (value != 100) {
+            TonalActionPill(label = "Сброс", onClick = { onChange(100) })
+        }
     }
 }

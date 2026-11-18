@@ -97,7 +97,8 @@ class MainActivity : ComponentActivity() {
             LocalApiTheme(
                 themeMode = appState.themeMode,
                 palette = appState.palette,
-                textScale = appState.textZoom / 100f
+                textScale = appState.textZoom / 100f,
+                uiScale = appState.uiScale / 100f
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (appState.screen) {

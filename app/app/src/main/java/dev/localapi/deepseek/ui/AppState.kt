@@ -28,6 +28,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -36,6 +38,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 enum class AppScreen { BOOT, ONBOARDING, TOKEN, CHAT, SETTINGS, TERMINAL }
 enum class SettingsPane(val title: String) {
@@ -51,7 +54,11 @@ data class WebSource(val title: String, val url: String, val site: String = "", 
 data class UsageStats(val promptTokens: Long = 0, val completionTokens: Long = 0, val totalTokens: Long = 0)
 data class BalanceInfo(val available: Boolean, val currency: String, val total: String, val granted: String, val toppedUp: String)
 
+private val MSG_ID_SEQ = AtomicLong(1L)
+fun nextMessageUid(): Long = MSG_ID_SEQ.getAndIncrement()
+
 data class ChatMessage(
+    val uid: Long = nextMessageUid(),
     val role: String,
     val content: String,
     val reasoning: String = "",
@@ -122,6 +129,14 @@ class AppState(private val activity: Activity) {
     private val tunnel = CloudflareTunnel.get(activity)
     private val browser = AgentBrowser(activity)
 
+    // In-memory LRU caches to eliminate scroll stutter on images/media
+    private val dataUrlImageCache = object : LinkedHashMap<String, ImageBitmap>(24, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?): Boolean = size > 24
+    }
+    private val agentMediaCache = object : LinkedHashMap<String, List<Pair<String, ImageBitmap>>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Pair<String, ImageBitmap>>>?): Boolean = size > 16
+    }
+
     // Navigation & overlays
     var screen by mutableStateOf(AppScreen.BOOT)
     var settingsPane by mutableStateOf(SettingsPane.ROOT)
@@ -155,7 +170,8 @@ class AppState(private val activity: Activity) {
     // Appearance & AI Settings
     var themeMode by mutableStateOf(AppThemeMode.from(prefs.getString("theme", "system")))
     var palette by mutableStateOf(AppPalette.from(prefs.getString("palette", "dynamic")))
-    var textZoom by mutableIntStateOf((prefs.getInt("textZoom", 100)).coerceIn(85, 150))
+    var uiScale by mutableIntStateOf(prefs.getInt("uiScale", 100).coerceIn(55, 175))
+    var textZoom by mutableIntStateOf(prefs.getInt("textZoom", 100).coerceIn(60, 200))
     var compact by mutableStateOf(prefs.getBoolean("compact", false))
 
     var model by mutableStateOf(prefs.getString("model", "deepseek-flash") ?: "deepseek-flash")
@@ -341,11 +357,7 @@ class AppState(private val activity: Activity) {
             override fun onUpdateError(message: String) {
                 updateStatusText = message
                 updateBusy = false
-                if (showUpdateDialog) {
-                    updateError = message
-                } else {
-                    showToast(message)
-                }
+                if (showUpdateDialog) updateError = message else showToast(message)
             }
 
             override fun onUpdateProgress(percent: Int) {
@@ -453,9 +465,7 @@ class AppState(private val activity: Activity) {
         refreshTunnelStatus()
     }
 
-    fun onPause() {
-        foreground = false
-    }
+    fun onPause() { foreground = false }
 
     fun destroy() {
         pollTask?.let { main.removeCallbacks(it) }
@@ -528,10 +538,7 @@ class AppState(private val activity: Activity) {
     fun verifyAndSaveToken(token: String, stayInSettings: Boolean = false) {
         val clean = token.trim()
         if (clean.length < 8) return
-        if (!online) {
-            showToast("Нет доступа к интернету")
-            return
-        }
+        if (!online) { showToast("Нет доступа к интернету"); return }
         tokenChecking = true
         tokenError = null
         tokenVerified = false
@@ -548,9 +555,7 @@ class AppState(private val activity: Activity) {
                 stopLocalService()
                 refreshServerStatus()
                 tokenVerified = true
-                if (stayInSettings) {
-                    showToast("Токен сохранён")
-                }
+                if (stayInSettings) showToast("Токен сохранён")
             }
         }
     }
@@ -615,7 +620,8 @@ class AppState(private val activity: Activity) {
     // ── Appearance & AI Config ───────────────────────────────────────────
     fun updateThemeMode(m: AppThemeMode) { themeMode = m; prefs.edit().putString("theme", m.id).apply() }
     fun updatePalette(p: AppPalette) { palette = p; prefs.edit().putString("palette", p.id).apply() }
-    fun updateTextZoom(z: Int) { textZoom = z.coerceIn(85, 150); prefs.edit().putInt("textZoom", textZoom).apply() }
+    fun updateUiScale(s: Int) { uiScale = s.coerceIn(55, 175); prefs.edit().putInt("uiScale", uiScale).apply() }
+    fun updateTextZoom(z: Int) { textZoom = z.coerceIn(60, 200); prefs.edit().putInt("textZoom", textZoom).apply() }
     fun updateCompact(c: Boolean) { compact = c; prefs.edit().putBoolean("compact", c).apply() }
     fun updateModel(m: String) { model = m; prefs.edit().putString("model", m).apply() }
     fun updateThinking(t: Boolean) { thinking = t; prefs.edit().putBoolean("thinking", t).apply() }
@@ -705,11 +711,15 @@ class AppState(private val activity: Activity) {
     fun deleteChat(id: String) {
         val env = parseEnvelope(Rust.nativeDeleteChat(id))
         if (!env.ok) { showToast(env.errorMessage); return }
-        if (id == currentChatId) {
-            newDraftChat(agentMode)
-        }
+        if (id == currentChatId) newDraftChat(agentMode)
         refreshChats()
         showToast("Чат удалён")
+    }
+
+    fun regenerateLast() {
+        if (streaming) return
+        val lastUser = messages.lastOrNull { it.role == "user" && !it.content.startsWith("[TOOL_RESULT]") } ?: return
+        sendMessage(lastUser.content)
     }
 
     private fun parseConversationMessages(conv: JSONObject) {
@@ -719,16 +729,12 @@ class AppState(private val activity: Activity) {
         var i = 0
         while (i < arr.length()) {
             val m = arr.optJSONObject(i)
-            if (m == null) {
-                i++
-                continue
-            }
+            if (m == null) { i++; continue }
             val role = m.optString("role", "user")
             val content = m.optString("content", "")
             val reasoning = m.optString("reasoning", "")
             if (role == "user" && content.startsWith("[TOOL_RESULT]")) {
-                i++
-                continue
+                i++; continue
             }
             if (role == "user") toolNum = 0
 
@@ -754,8 +760,7 @@ class AppState(private val activity: Activity) {
             val visible = if (agentMode && role == "assistant") stripDirectives(content) else content
             if (role == "assistant" && !hasTool && visible.isEmpty() && reasoning.isEmpty()
                 && extractMedia(content).isEmpty() && extractBrowse(content).isEmpty()) {
-                i++
-                continue
+                i++; continue
             }
             messages.add(
                 ChatMessage(
@@ -808,20 +813,14 @@ class AppState(private val activity: Activity) {
 
     fun addImagesFromUris(uris: List<Uri>) {
         val slots = 4 - pendingAttachments.size
-        if (slots <= 0) {
-            showToast("Можно прикрепить не больше 4 фото")
-            return
-        }
+        if (slots <= 0) { showToast("Можно прикрепить не больше 4 фото"); return }
         val chosen = uris.take(slots)
         io.execute {
             chosen.forEach { uri ->
                 val encoded = encodeImageUri(uri)
                 main.post {
-                    if (encoded == null) {
-                        showToast("Не удалось прочитать изображение")
-                    } else if (pendingAttachments.size < 4) {
-                        pendingAttachments.add(encoded)
-                    }
+                    if (encoded == null) showToast("Не удалось прочитать изображение")
+                    else if (pendingAttachments.size < 4) pendingAttachments.add(encoded)
                 }
             }
         }
@@ -1003,17 +1002,13 @@ class AppState(private val activity: Activity) {
     }
 
     fun cancelStream() {
-        if (activeStreamId > 0) {
-            Rust.nativeCancel(activeStreamId)
-        }
+        if (activeStreamId > 0) Rust.nativeCancel(activeStreamId)
     }
 
     private fun detachStream() {
         pollTask?.let { main.removeCallbacks(it) }
         pollTask = null
-        if (activeStreamId > 0) {
-            Rust.nativeCancel(activeStreamId)
-        }
+        if (activeStreamId > 0) Rust.nativeCancel(activeStreamId)
         activeStreamId = 0
         streaming = false
         streamStage = null
@@ -1140,6 +1135,39 @@ class AppState(private val activity: Activity) {
         sandbox.exec(id, cmd)
     }
 
+    // ── Cached Image Decoding ────────────────────────────────────────────
+    fun decodeImageBitmapCached(dataUrl: String): ImageBitmap? {
+        dataUrlImageCache[dataUrl]?.let { return it }
+        val bmp = runCatching {
+            val b = Base64.decode(dataUrl.substringAfter(",", dataUrl), Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap()
+        }.getOrNull() ?: return null
+        dataUrlImageCache[dataUrl] = bmp
+        return bmp
+    }
+
+    fun readAgentMediaBitmapCached(content: String): List<Pair<String, ImageBitmap>> {
+        if (!agentMode || currentChatId.isEmpty()) return emptyList()
+        val names = extractMedia(content)
+        if (names.isEmpty()) return emptyList()
+        val key = "$currentChatId:${names.joinToString("|")}"
+        agentMediaCache[key]?.let { return it }
+        val out = mutableListOf<Pair<String, ImageBitmap>>()
+        names.forEach { name ->
+            try {
+                val item = AgentWorkspace.readMedia(activity, currentChatId, name, 12 * 1024 * 1024)
+                val mime = item.optString("mime").lowercase()
+                if (mime.startsWith("image/")) {
+                    val bytes = Base64.decode(item.optString("data"), Base64.DEFAULT)
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                    if (bmp != null) out.add(name to bmp)
+                }
+            } catch (_: Exception) { }
+        }
+        agentMediaCache[key] = out
+        return out
+    }
+
     // ── Workspace & Sandbox & Tunnel Actions ─────────────────────────────
     fun refreshAgentRoot() {
         try {
@@ -1171,10 +1199,7 @@ class AppState(private val activity: Activity) {
     }
 
     fun openAgentFolder() {
-        if (!agentRootConfigured) {
-            hostActions?.chooseAgentRoot()
-            return
-        }
+        if (!agentRootConfigured) { hostActions?.chooseAgentRoot(); return }
         if (currentChatId.isEmpty()) newDraftChat(true)
         try {
             val dir = SafAgentWorkspace.chatDir(activity, currentChatId, currentChatTitle, true)
@@ -1241,25 +1266,6 @@ class AppState(private val activity: Activity) {
         }
     }
 
-    fun readAgentMediaBitmap(content: String): List<Pair<String, Bitmap>> {
-        if (!agentMode || currentChatId.isEmpty()) return emptyList()
-        val names = extractMedia(content)
-        if (names.isEmpty()) return emptyList()
-        val out = mutableListOf<Pair<String, Bitmap>>()
-        names.forEach { name ->
-            try {
-                val item = AgentWorkspace.readMedia(activity, currentChatId, name, 12 * 1024 * 1024)
-                val mime = item.optString("mime").lowercase()
-                if (mime.startsWith("image/")) {
-                    val bytes = Base64.decode(item.optString("data"), Base64.DEFAULT)
-                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bmp != null) out.add(name to bmp)
-                }
-            } catch (_: Exception) { }
-        }
-        return out
-    }
-
     fun refreshSandbox() {
         try {
             val st = sandbox.status()
@@ -1310,16 +1316,11 @@ class AppState(private val activity: Activity) {
         screen = AppScreen.TERMINAL
     }
 
-    fun writeTerminal(cmd: String) {
-        sandbox.write(cmd + "\n")
-    }
+    fun writeTerminal(cmd: String) { sandbox.write(cmd + "\n") }
 
     // ── Server & Tunnel ──────────────────────────────────────────────────
     fun refreshServerStatus() {
-        if (!hasToken || !online) {
-            serverInfo = ServerInfo()
-            return
-        }
+        if (!hasToken || !online) { serverInfo = ServerInfo(); return }
         val env = parseEnvelope(Rust.nativeServerStatus())
         val o = env.data as? JSONObject
         serverInfo = if (o != null) {
@@ -1724,6 +1725,9 @@ class AppState(private val activity: Activity) {
             bytes < 1024 * 1024 -> String.format(Locale("ru"), "%.1f КБ", bytes / 1024.0)
             else -> String.format(Locale("ru"), "%.1f МБ", bytes / (1024.0 * 1024.0))
         }
+
+        fun formatTimeShort(ts: Long): String =
+            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))
 
         fun timeAgo(ts: Long): String {
             val diff = (System.currentTimeMillis() - ts).coerceAtLeast(0L)

@@ -1,20 +1,29 @@
 package dev.localapi.deepseek
 
-import android.graphics.BitmapFactory
-import android.util.Base64
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,12 +42,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
@@ -46,17 +56,19 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SmartToy
@@ -100,7 +112,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -111,9 +125,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 private val PARTIAL_DIRECTIVE_RE = Regex(
@@ -133,7 +146,7 @@ fun ChatScreen(state: AppState) {
 
     val isScrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 16 } }
     val canScrollDown by remember { derivedStateOf { listState.canScrollForward } }
-    val itemGap = if (state.compact) 10.dp else 16.dp
+    val itemGap = if (state.compact) 10.dp else 14.dp
 
     BackHandler(enabled = drawerState.isOpen || showSystemSheet) {
         if (showSystemSheet) showSystemSheet = false
@@ -225,7 +238,7 @@ fun ChatScreen(state: AppState) {
                                 )
                             }
                         } else {
-                            items(state.chatList, key = { it.id }) { item ->
+                            itemsIndexed(state.chatList, key = { _, item -> item.id }) { _, item ->
                                 val selected = item.id == state.currentChatId
                                 NavigationDrawerItem(
                                     selected = selected,
@@ -363,28 +376,61 @@ fun ChatScreen(state: AppState) {
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(itemGap)
                         ) {
-                            items(state.messages) { msg ->
-                                when (msg.role) {
-                                    "user" -> UserMessageBubble(msg, state)
-                                    "tool" -> msg.toolBlock?.let { ToolExecutionCard(it) }
-                                    "notice" -> msg.notice?.let { SandboxNoticeRow(it) }
-                                    else -> AssistantMessageBlock(msg, state, streaming = false)
+                            itemsIndexed(
+                                items = state.messages,
+                                key = { _, it -> it.uid },
+                                contentType = { _, it -> it.role }
+                            ) { index, msg ->
+                                val prevRole = if (index > 0) state.messages[index - 1].role else null
+                                val showDividerAbove = index > 0 && (
+                                    msg.role == "user" || (msg.role == "assistant" && prevRole == "user")
+                                )
+                                val isLastMsg = index == state.messages.lastIndex
+
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    if (showDividerAbove) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(bottom = itemGap),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                    when (msg.role) {
+                                        "user" -> UserMessageBlock(msg, state)
+                                        "tool" -> msg.toolBlock?.let { ToolExecutionCard(it) }
+                                        "notice" -> msg.notice?.let { SandboxNoticeRow(it) }
+                                        else -> AssistantMessageBlock(
+                                            m = msg,
+                                            state = state,
+                                            streaming = false,
+                                            isLatest = isLastMsg && !state.streaming
+                                        )
+                                    }
                                 }
                             }
                             if (state.streaming) {
-                                item(key = "streaming_assistant") {
-                                    AssistantMessageBlock(
-                                        m = ChatMessage(
-                                            role = "assistant",
-                                            content = state.streamContent,
-                                            reasoning = state.streamReasoning
-                                        ),
-                                        state = state,
-                                        streaming = true
-                                    )
+                                item(key = "streaming_assistant", contentType = "streaming") {
+                                    val prevIsUser = state.messages.lastOrNull()?.role == "user"
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        if (prevIsUser) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(bottom = itemGap),
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                            )
+                                        }
+                                        AssistantMessageBlock(
+                                            m = ChatMessage(
+                                                role = "assistant",
+                                                content = state.streamContent,
+                                                reasoning = state.streamReasoning
+                                            ),
+                                            state = state,
+                                            streaming = true,
+                                            isLatest = true
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -393,7 +439,7 @@ fun ChatScreen(state: AppState) {
 
                 AnimatedVisibility(
                     visible = canScrollDown,
-                    enter = fadeIn() + scaleIn(),
+                    enter = fadeIn() + scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
                     exit = fadeOut() + scaleOut(),
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
                 ) {
@@ -437,6 +483,14 @@ fun ChatScreen(state: AppState) {
 @Composable
 private fun AgentDockStrip(state: AppState) {
     val sb = state.sandboxState
+    val pulseTransition = rememberInfiniteTransition(label = "sb_pulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 1f, targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "pulse"
+    )
+    val sbInteraction = remember { MutableInteractionSource() }
+
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         Surface(
             shape = RoundedCornerShape(18.dp),
@@ -469,6 +523,8 @@ private fun AgentDockStrip(state: AppState) {
                 }
                 Surface(
                     onClick = { state.refreshSandbox(); state.showSandboxSheet = true },
+                    interactionSource = sbInteraction,
+                    modifier = Modifier.springBounce(sbInteraction),
                     shape = CircleShape,
                     color = if (sb.running) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
                 ) {
@@ -477,7 +533,13 @@ private fun AgentDockStrip(state: AppState) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .alpha(if (sb.running || sb.installing) pulseAlpha else 1f)
+                                .clip(CircleShape)
+                                .background(dotColor)
+                        )
                         Text(
                             sbText,
                             style = MaterialTheme.typography.labelMedium,
@@ -495,22 +557,25 @@ private fun AgentDockStrip(state: AppState) {
             }
         }
 
-        if (state.agentFiles.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
+        AnimatedVisibility(visible = state.agentFiles.isNotEmpty()) {
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 state.agentFiles.forEach { f ->
+                    val fInteraction = remember { MutableInteractionSource() }
                     Surface(
                         onClick = { state.toggleAgentFile(f.name) },
+                        interactionSource = fInteraction,
                         shape = RoundedCornerShape(12.dp),
                         color = if (f.selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-                        modifier = Modifier.border(
-                            1.dp,
-                            if (f.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(12.dp)
-                        )
+                        modifier = Modifier
+                            .springBounce(fInteraction)
+                            .border(
+                                1.dp,
+                                if (f.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(12.dp)
+                            )
                     ) {
                         Row(
                             modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 5.dp, bottom = 5.dp),
@@ -581,8 +646,11 @@ private fun EmptyChatHero(state: AppState, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             suggestions.forEach { hint ->
+                val interaction = remember { MutableInteractionSource() }
                 Surface(
                     onClick = { state.sendMessage(hint) },
+                    interactionSource = interaction,
+                    modifier = Modifier.springBounce(interaction),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow
                 ) {
@@ -599,54 +667,91 @@ private fun EmptyChatHero(state: AppState, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun UserMessageBubble(m: ChatMessage, state: AppState) {
+private fun UserMessageBlock(m: ChatMessage, state: AppState) {
     val scale = LocalTextScale.current
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Surface(
-            shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier.widthIn(max = 310.dp)
+    val timeText = remember(m.ts) { AppState.formatTimeShort(m.ts) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 6.dp)
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (m.images.isNotEmpty()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 6.dp)) {
-                        m.images.forEach { dataUrl ->
-                            val bmp = remember(dataUrl) {
-                                runCatching {
-                                    val b = Base64.decode(dataUrl.substringAfter(",", dataUrl), Base64.DEFAULT)
-                                    BitmapFactory.decodeByteArray(b, 0, b.size)
-                                }.getOrNull()
-                            }
-                            if (bmp != null) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(72.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { state.previewImageDataUrl = dataUrl }
-                                )
-                            }
-                        }
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "User",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "• $timeText",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (m.images.isNotEmpty()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState())
+            ) {
+                m.images.forEach { dataUrl ->
+                    val bmp = remember(dataUrl) { state.decodeImageBitmapCached(dataUrl) }
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(78.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { state.previewImageDataUrl = dataUrl }
+                        )
                     }
                 }
-                if (m.content.isNotEmpty()) {
-                    Text(
-                        m.content,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = (15.5f * scale).sp, lineHeight = (22f * scale).sp)
-                    )
-                }
+            }
+        }
+
+        if (m.content.isNotEmpty()) {
+            SelectionContainer {
+                Text(
+                    m.content,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = (15.5f * scale).sp,
+                        lineHeight = (22.5f * scale).sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Boolean) {
+private fun AssistantMessageBlock(
+    m: ChatMessage,
+    state: AppState,
+    streaming: Boolean,
+    isLatest: Boolean
+) {
     val scale = LocalTextScale.current
-    var reasoningOpen by remember(m.ts, streaming) { mutableStateOf(streaming) }
+    var reasoningOpen by remember(m.uid, streaming) { mutableStateOf(streaming) }
+    var copiedMsg by remember(m.uid) { mutableStateOf(false) }
+    val timeText = remember(m.ts) { AppState.formatTimeShort(m.ts) }
     val shownText = remember(m.content, state.agentMode, streaming) {
         if (state.agentMode) {
             val cleaned = AppState.stripDirectives(m.content)
@@ -659,38 +764,77 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
         if (!streaming && state.agentMode) AppState.extractBrowse(m.content) else ""
     }
     val mediaBitmaps = remember(m.content, state.currentChatId, streaming) {
-        if (!streaming && state.agentMode) state.readAgentMediaBitmap(m.content) else emptyList()
+        if (!streaming && state.agentMode) state.readAgentMediaBitmapCached(m.content) else emptyList()
+    }
+    val chevronRot by animateFloatAsState(if (reasoningOpen) 180f else 0f, ExpressiveSpring, label = "reas_chev")
+
+    LaunchedEffect(copiedMsg) {
+        if (copiedMsg) {
+            delay(1400)
+            copiedMsg = false
+        }
+    }
+
+    val stageLabel = when {
+        !streaming -> ""
+        state.streamStage == "uploading" -> "Загрузка…"
+        state.search && state.streamStage == "searching" && state.streamReasoning.isEmpty() && state.streamContent.isEmpty() -> "Поиск в интернете…"
+        state.streamReasoning.isNotEmpty() && state.streamContent.isEmpty() -> "Думает…"
+        state.streamStage == "reasoning" && state.streamContent.isEmpty() -> "Думает…"
+        else -> "Пишет…"
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(9.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(15.dp)
+                )
             }
             Spacer(Modifier.width(8.dp))
-            Text(state.modelShortLabel(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-            if (streaming) {
-                Spacer(Modifier.width(10.dp))
-                ExpressiveLoader(size = 16.dp)
-                Spacer(Modifier.width(6.dp))
-                val stageText = when {
-                    state.streamStage == "uploading" -> "Загрузка…"
-                    state.search && state.streamStage == "searching" && state.streamReasoning.isEmpty() && state.streamContent.isEmpty() -> "Ищу в сети…"
-                    state.streamReasoning.isNotEmpty() && state.streamContent.isEmpty() -> "Размышляю…"
-                    state.streamStage == "reasoning" && state.streamContent.isEmpty() -> "Размышляю…"
-                    else -> "Отвечаю…"
-                }
+            Text("Model", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "• $timeText",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest
+            ) {
                 Text(
-                    stageText,
+                    state.modelShortLabel(),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (streaming) {
+                Spacer(Modifier.width(8.dp))
+                ExpressiveLoader(size = 15.dp)
+                Spacer(Modifier.width(6.dp))
+                AnimatedContent(
+                    targetState = stageLabel,
+                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    label = "stage_anim"
+                ) { lbl ->
+                    Text(
+                        lbl,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
 
@@ -698,7 +842,10 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 420f))
+                    .padding(bottom = 8.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -709,9 +856,9 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            if (reasoningOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            Icons.Rounded.ExpandMore,
                             contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(18.dp).rotate(chevronRot),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.width(6.dp))
@@ -723,12 +870,14 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
                         )
                     }
                     AnimatedVisibility(visible = reasoningOpen) {
-                        Text(
-                            m.reasoning,
-                            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = (13f * scale).sp, lineHeight = (19f * scale).sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        SelectionContainer {
+                            Text(
+                                m.reasoning,
+                                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = (13f * scale).sp, lineHeight = (19f * scale).sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -748,7 +897,7 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
         mediaBitmaps.forEach { (_, bmp) ->
             Spacer(Modifier.height(8.dp))
             Image(
-                bitmap = bmp.asImageBitmap(),
+                bitmap = bmp,
                 contentDescription = null,
                 contentScale = ContentScale.FillWidth,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(16.dp))
@@ -789,7 +938,6 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
             Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
 
-        // Copy & metrics appear only on final completed responses, never on intermediate tool-calling steps
         if (!streaming && !m.hasToolCall && (shownText.isNotEmpty() || m.cancelled)) {
             Row(
                 modifier = Modifier.padding(top = 8.dp),
@@ -798,9 +946,20 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
             ) {
                 if (shownText.isNotEmpty()) {
                     TonalActionPill(
-                        label = "Копировать",
-                        icon = Icons.Rounded.ContentCopy,
-                        onClick = { state.copyText(shownText) }
+                        label = if (copiedMsg) "Скопировано" else "Копировать",
+                        icon = if (copiedMsg) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                        active = copiedMsg,
+                        onClick = {
+                            state.copyText(shownText)
+                            copiedMsg = true
+                        }
+                    )
+                }
+                if (isLatest && !state.streaming) {
+                    TonalActionPill(
+                        label = "Повторить",
+                        icon = Icons.Rounded.Refresh,
+                        onClick = { state.regenerateLast() }
                     )
                 }
                 if (m.elapsedMs > 0) {
@@ -829,12 +988,14 @@ private fun AssistantMessageBlock(m: ChatMessage, state: AppState, streaming: Bo
 private fun ToolExecutionCard(tb: ToolBlockData) {
     var open by remember(tb.id) { mutableStateOf(tb.running) }
     val ok = tb.exitCode == "0"
+    val chevronRot by animateFloatAsState(if (open) 180f else 0f, ExpressiveSpring, label = "tool_chev")
 
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF0E1318),
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 420f))
             .border(1.dp, Color(0xFF252D37), RoundedCornerShape(16.dp))
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -846,10 +1007,10 @@ private fun ToolExecutionCard(tb: ToolBlockData) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    Icons.Rounded.ExpandMore,
                     contentDescription = null,
                     tint = Color(0xFF8B949E),
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(18.dp).rotate(chevronRot)
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(tb.label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Color(0xFF7BD88F))
@@ -900,7 +1061,7 @@ private fun SandboxNoticeRow(n: SandboxNotice) {
         "error" -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.outline
     }
-    val time = remember(n.ts) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(n.ts)) }
+    val time = remember(n.ts) { AppState.formatTimeShort(n.ts) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.Center,
@@ -915,14 +1076,15 @@ private fun SandboxNoticeRow(n: SandboxNotice) {
 @Composable
 private fun ChatComposerBar(state: AppState) {
     val hasInput = state.composerDraft.isNotBlank() || state.pendingAttachments.isNotEmpty()
-    val sendRadius by animateDpAsState(if (state.streaming) 16.dp else 24.dp, tween(200), label = "send_shape")
+    val sendRadius by animateDpAsState(if (state.streaming) 16.dp else 24.dp, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "send_shape")
+    val sendInteraction = remember { MutableInteractionSource() }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            if (state.pendingAttachments.isNotEmpty()) {
+            AnimatedVisibility(visible = state.pendingAttachments.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1002,17 +1164,22 @@ private fun ChatComposerBar(state: AppState) {
                         )
                     }
 
-                    AnimatedVisibility(visible = state.streaming || hasInput) {
+                    AnimatedVisibility(
+                        visible = state.streaming || hasInput,
+                        enter = scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)) + fadeIn(),
+                        exit = scaleOut() + fadeOut()
+                    ) {
                         Surface(
                             onClick = {
                                 if (state.streaming) state.cancelStream()
                                 else if (state.online) state.sendMessage()
                             },
+                            interactionSource = sendInteraction,
                             enabled = state.streaming || state.online,
                             shape = RoundedCornerShape(sendRadius),
                             color = if (state.streaming) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                             contentColor = if (state.streaming) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(44.dp)
+                            modifier = Modifier.size(44.dp).springBounce(sendInteraction)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(

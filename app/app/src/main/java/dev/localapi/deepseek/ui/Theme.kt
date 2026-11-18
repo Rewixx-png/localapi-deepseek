@@ -2,8 +2,6 @@ package dev.localapi.deepseek
 
 import android.app.Activity
 import android.os.Build
-import android.view.View
-import android.view.WindowInsetsController
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -18,14 +16,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 
 val LocalTextScale = compositionLocalOf { 1f }
 
@@ -239,6 +240,7 @@ fun LocalApiTheme(
     themeMode: AppThemeMode,
     palette: AppPalette,
     textScale: Float = 1f,
+    uiScale: Float = 1f,
     content: @Composable () -> Unit
 ) {
     val systemDark = isSystemInDarkTheme()
@@ -263,29 +265,23 @@ fun LocalApiTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as? Activity)?.window ?: return@SideEffect
-            val barColor = colors.surface.toArgb()
-            window.statusBarColor = barColor
-            window.navigationBarColor = barColor
-            val lightIcons = !dark
-            if (Build.VERSION.SDK_INT >= 30) {
-                val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-                window.insetsController?.setSystemBarsAppearance(if (lightIcons) mask else 0, mask)
-            } else {
-                @Suppress("DEPRECATION")
-                var flags = window.decorView.systemUiVisibility
-                flags = if (lightIcons) {
-                    flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                } else {
-                    flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
-                }
-                @Suppress("DEPRECATION")
-                window.decorView.systemUiVisibility = flags
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
             }
         }
     }
 
-    CompositionLocalProvider(LocalTextScale provides textScale.coerceIn(0.85f, 1.5f)) {
+    val baseDensity = LocalDensity.current
+    val scaledDensity = remember(baseDensity, uiScale) {
+        val factor = uiScale.coerceIn(0.55f, 1.75f)
+        Density(density = baseDensity.density * factor, fontScale = baseDensity.fontScale)
+    }
+
+    CompositionLocalProvider(
+        LocalDensity provides scaledDensity,
+        LocalTextScale provides textScale.coerceIn(0.6f, 2.0f)
+    ) {
         MaterialTheme(
             colorScheme = colors,
             typography = AppTypography,
