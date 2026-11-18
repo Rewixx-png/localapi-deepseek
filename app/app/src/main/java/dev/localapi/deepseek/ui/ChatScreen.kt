@@ -3,6 +3,7 @@ package dev.localapi.deepseek
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -17,11 +18,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -60,7 +64,6 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Image
@@ -76,6 +79,7 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -115,6 +119,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -143,27 +148,57 @@ fun ChatScreen(state: AppState) {
     val focus = LocalFocusManager.current
     var showSystemSheet by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<ChatSummaryItem?>(null) }
+    var stickToBottom by remember(state.currentChatId) { mutableStateOf(true) }
 
     val isScrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 16 } }
     val canScrollDown by remember { derivedStateOf { listState.canScrollForward } }
     val itemGap = if (state.compact) 10.dp else 14.dp
+
+    val contextTokens = remember(
+        state.messages.size,
+        state.composerDraft,
+        state.systemPrompt,
+        state.agentMode,
+        state.agentFiles.size,
+        state.streamContent.length,
+        state.streamReasoning.length,
+        state.sandboxState.running
+    ) {
+        state.estimateContextTokens()
+    }
 
     BackHandler(enabled = drawerState.isOpen || showSystemSheet) {
         if (showSystemSheet) showSystemSheet = false
         else if (drawerState.isOpen) scope.launch { drawerState.close() }
     }
 
-    LaunchedEffect(state.messages.size, state.streaming) {
-        val total = state.messages.size + if (state.streaming) 1 else 0
-        if (total > 0 && !listState.isScrollInProgress) {
-            listState.scrollToItem(total - 1)
+    LaunchedEffect(listState.isScrollInProgress, canScrollDown) {
+        if (!canScrollDown) {
+            stickToBottom = true
+        } else if (listState.isScrollInProgress) {
+            stickToBottom = false
         }
     }
 
-    LaunchedEffect(state.streamContent.length, state.streamReasoning.length) {
+    LaunchedEffect(state.messages.size) {
+        if (state.messages.lastOrNull()?.role == "user") {
+            stickToBottom = true
+        }
+    }
+
+    LaunchedEffect(
+        state.messages.size,
+        state.streaming,
+        state.streamContent.length,
+        state.streamReasoning.length
+    ) {
         val total = state.messages.size + if (state.streaming) 1 else 0
-        if (total > 0 && state.streaming && !listState.isScrollInProgress && !canScrollDown) {
-            listState.scrollToItem(total - 1)
+        if (total > 0 && stickToBottom) {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            if (lastVisible < total - 1) {
+                listState.scrollToItem(total - 1)
+            }
+            listState.scrollBy(10_000f)
         }
     }
 
@@ -291,22 +326,67 @@ fun ChatScreen(state: AppState) {
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
+                val topColor by animateColorAsState(
+                    if (isScrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface,
+                    animationSpec = tween(220),
+                    label = "topbar_bg"
+                )
                 TopAppBar(
                     title = {
-                        Column {
-                            Text(
-                                state.currentChatTitle,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            val tokens = state.estimateContextTokens()
-                            Text(
-                                "${state.modelShortLabel()} · ≈ ${formatSpaceInt(tokens)} ток.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    focus.clearFocus()
+                                    state.showModelSheet = true
+                                }
+                                .padding(vertical = 2.dp, horizontal = 2.dp)
+                        ) {
+                            AnimatedContent(
+                                targetState = state.currentChatTitle,
+                                transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
+                                label = "chat_title_anim"
+                            ) { title ->
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    state.modelShortLabel(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1
+                                )
+                                if (state.thinking) {
+                                    Icon(
+                                        Icons.Rounded.Bolt,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                                if (state.search) {
+                                    Icon(
+                                        Icons.Rounded.Search,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.tertiary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                                Text(
+                                    "· ≈ ${formatSpaceInt(contextTokens)} ток.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     },
                     navigationIcon = {
@@ -332,9 +412,7 @@ fun ChatScreen(state: AppState) {
                             Icon(Icons.Rounded.Add, contentDescription = "Новый чат", modifier = Modifier.size(20.dp))
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = if (isScrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface
-                    )
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = topColor)
                 )
             },
             bottomBar = {
@@ -363,7 +441,7 @@ fun ChatScreen(state: AppState) {
                         }
                     }
 
-                    if (state.agentMode) {
+                    AnimatedVisibility(visible = state.agentMode) {
                         AgentDockStrip(state)
                     }
 
@@ -390,7 +468,7 @@ fun ChatScreen(state: AppState) {
                                 )
                                 val isLastMsg = index == state.messages.lastIndex
 
-                                Column(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.fillMaxWidth().animateItem()) {
                                     if (showDividerAbove) {
                                         HorizontalDivider(
                                             modifier = Modifier.padding(bottom = itemGap),
@@ -413,7 +491,7 @@ fun ChatScreen(state: AppState) {
                             if (state.streaming) {
                                 item(key = "streaming_assistant", contentType = "streaming") {
                                     val prevIsUser = state.messages.lastOrNull()?.role == "user"
-                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                    Column(modifier = Modifier.fillMaxWidth().animateItem()) {
                                         if (prevIsUser) {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(bottom = itemGap),
@@ -439,17 +517,36 @@ fun ChatScreen(state: AppState) {
 
                 AnimatedVisibility(
                     visible = canScrollDown,
-                    enter = fadeIn() + scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
-                    exit = fadeOut() + scaleOut(),
+                    enter = fadeIn(tween(180)) + slideInVertically { it / 2 } + scaleIn(
+                        spring(dampingRatio = Spring.DampingRatioMediumBouncy)
+                    ),
+                    exit = fadeOut(tween(150)) + slideOutVertically { it / 2 } + scaleOut(),
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
                 ) {
+                    val fabContainer by animateColorAsState(
+                        if (state.streaming) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        label = "scroll_fab_bg"
+                    )
+                    val fabContent by animateColorAsState(
+                        if (state.streaming) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                        label = "scroll_fab_fg"
+                    )
                     SmallFloatingActionButton(
                         onClick = {
+                            stickToBottom = true
                             val last = (state.messages.size + if (state.streaming) 1 else 0) - 1
-                            if (last >= 0) scope.launch { listState.animateScrollToItem(last) }
+                            if (last >= 0) {
+                                scope.launch {
+                                    listState.animateScrollToItem(last)
+                                    listState.scrollBy(10_000f)
+                                }
+                            }
                         },
                         shape = RoundedCornerShape(14.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                        containerColor = fabContainer,
+                        contentColor = fabContent
                     ) {
                         Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Вниз")
                     }
@@ -612,6 +709,13 @@ private fun EmptyChatHero(state: AppState, modifier: Modifier = Modifier) {
     } else {
         listOf("Объясни сложную тему простыми словами", "Напиши быстрый скрипт на Python", "Сделай план проекта по шагам")
     }
+    val heroPulse = rememberInfiniteTransition(label = "hero_breathe")
+    val iconScale by heroPulse.animateFloat(
+        initialValue = 0.97f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(tween(2200), RepeatMode.Reverse),
+        label = "hero_scale"
+    )
     Column(
         modifier = modifier.padding(horizontal = 24.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
@@ -619,6 +723,7 @@ private fun EmptyChatHero(state: AppState, modifier: Modifier = Modifier) {
     ) {
         Box(
             modifier = Modifier
+                .scale(iconScale)
                 .size(74.dp)
                 .clip(RoundedCornerShape(26.dp))
                 .background(MaterialTheme.colorScheme.primaryContainer),
@@ -654,12 +759,23 @@ private fun EmptyChatHero(state: AppState, modifier: Modifier = Modifier) {
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow
                 ) {
-                    Text(
-                        hint,
+                    Row(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            if (state.agentMode) Icons.Rounded.Terminal else Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            hint,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }
@@ -826,7 +942,10 @@ private fun AssistantMessageBlock(
                 Spacer(Modifier.width(6.dp))
                 AnimatedContent(
                     targetState = stageLabel,
-                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    transitionSpec = {
+                        (fadeIn(tween(180)) + slideInVertically { it / 3 }) togetherWith
+                            (fadeOut(tween(120)) + slideOutVertically { -it / 3 })
+                    },
                     label = "stage_anim"
                 ) { lbl ->
                     Text(
@@ -945,15 +1064,53 @@ private fun AssistantMessageBlock(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (shownText.isNotEmpty()) {
-                    TonalActionPill(
-                        label = if (copiedMsg) "Скопировано" else "Копировать",
-                        icon = if (copiedMsg) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                        active = copiedMsg,
+                    val copyInteraction = remember { MutableInteractionSource() }
+                    val copyBg by animateColorAsState(
+                        if (copiedMsg) MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        label = "msg_copy_bg"
+                    )
+                    val copyFg by animateColorAsState(
+                        if (copiedMsg) MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        label = "msg_copy_fg"
+                    )
+                    Surface(
                         onClick = {
                             state.copyText(shownText)
                             copiedMsg = true
+                        },
+                        interactionSource = copyInteraction,
+                        modifier = Modifier.springBounce(copyInteraction),
+                        shape = CircleShape,
+                        color = copyBg,
+                        contentColor = copyFg
+                    ) {
+                        AnimatedContent(
+                            targetState = copiedMsg,
+                            transitionSpec = {
+                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.92f)) togetherWith
+                                    (fadeOut(tween(110)) + scaleOut(targetScale = 0.92f))
+                            },
+                            label = "msg_copy_anim"
+                        ) { isCopied ->
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    if (isCopied) "Скопировано" else "Копировать",
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
                         }
-                    )
+                    }
                 }
                 if (isLatest && !state.streaming) {
                     TonalActionPill(
@@ -1076,14 +1233,32 @@ private fun SandboxNoticeRow(n: SandboxNotice) {
 @Composable
 private fun ChatComposerBar(state: AppState) {
     val hasInput = state.composerDraft.isNotBlank() || state.pendingAttachments.isNotEmpty()
-    val sendRadius by animateDpAsState(if (state.streaming) 16.dp else 24.dp, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "send_shape")
+    val sendRadius by animateDpAsState(
+        if (state.streaming) 15.dp else 22.dp,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "send_shape"
+    )
+    val pillBorderColor by animateColorAsState(
+        when {
+            state.streaming -> MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+            hasInput -> MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(220),
+        label = "composer_border"
+    )
     val sendInteraction = remember { MutableInteractionSource() }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(spring(dampingRatio = 0.82f, stiffness = 420f))
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
             AnimatedVisibility(visible = state.pendingAttachments.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
@@ -1119,7 +1294,9 @@ private fun ChatComposerBar(state: AppState) {
             Surface(
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, pillBorderColor, RoundedCornerShape(28.dp))
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
@@ -1169,6 +1346,14 @@ private fun ChatComposerBar(state: AppState) {
                         enter = scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)) + fadeIn(),
                         exit = scaleOut() + fadeOut()
                     ) {
+                        val fabColor by animateColorAsState(
+                            if (state.streaming) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            label = "send_bg"
+                        )
+                        val fabFg by animateColorAsState(
+                            if (state.streaming) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+                            label = "send_fg"
+                        )
                         Surface(
                             onClick = {
                                 if (state.streaming) state.cancelStream()
@@ -1177,16 +1362,25 @@ private fun ChatComposerBar(state: AppState) {
                             interactionSource = sendInteraction,
                             enabled = state.streaming || state.online,
                             shape = RoundedCornerShape(sendRadius),
-                            color = if (state.streaming) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                            contentColor = if (state.streaming) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+                            color = fabColor,
+                            contentColor = fabFg,
                             modifier = Modifier.size(44.dp).springBounce(sendInteraction)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    if (state.streaming) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send,
-                                    contentDescription = if (state.streaming) "Остановить" else "Отправить",
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                AnimatedContent(
+                                    targetState = state.streaming,
+                                    transitionSpec = {
+                                        (scaleIn(initialScale = 0.7f) + fadeIn(tween(150))) togetherWith
+                                            (scaleOut(targetScale = 0.7f) + fadeOut(tween(110)))
+                                    },
+                                    label = "send_icon_anim"
+                                ) { isStreaming ->
+                                    Icon(
+                                        if (isStreaming) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send,
+                                        contentDescription = if (isStreaming) "Остановить" else "Отправить",
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }

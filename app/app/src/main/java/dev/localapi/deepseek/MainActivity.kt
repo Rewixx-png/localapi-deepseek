@@ -19,17 +19,39 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -100,14 +122,37 @@ class MainActivity : ComponentActivity() {
                 textScale = appState.textZoom / 100f,
                 uiScale = appState.uiScale / 100f
             ) {
+                var lastToast by remember { mutableStateOf("") }
+                LaunchedEffect(appState.toastMessage) {
+                    appState.toastMessage?.let { lastToast = it }
+                }
+
                 Box(modifier = Modifier.fillMaxSize()) {
-                    when (appState.screen) {
-                        AppScreen.BOOT -> BootScreen(appState)
-                        AppScreen.ONBOARDING -> OnboardingScreen(appState)
-                        AppScreen.TOKEN -> TokenScreen(appState)
-                        AppScreen.CHAT -> ChatScreen(appState)
-                        AppScreen.SETTINGS -> SettingsScreen(appState)
-                        AppScreen.TERMINAL -> TerminalScreen(appState)
+                    AnimatedContent(
+                        targetState = appState.screen,
+                        transitionSpec = {
+                            when {
+                                targetState == AppScreen.SETTINGS || targetState == AppScreen.TERMINAL ->
+                                    (slideInHorizontally(tween(240)) { it / 5 } + fadeIn(tween(220))) togetherWith
+                                        fadeOut(tween(150))
+                                initialState == AppScreen.SETTINGS || initialState == AppScreen.TERMINAL ->
+                                    fadeIn(tween(200)) togetherWith
+                                        (slideOutHorizontally(tween(200)) { it / 5 } + fadeOut(tween(150)))
+                                else ->
+                                    (fadeIn(tween(220)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220))) togetherWith
+                                        fadeOut(tween(160))
+                            }
+                        },
+                        label = "screen_nav_anim"
+                    ) { scr ->
+                        when (scr) {
+                            AppScreen.BOOT -> BootScreen(appState)
+                            AppScreen.ONBOARDING -> OnboardingScreen(appState)
+                            AppScreen.TOKEN -> TokenScreen(appState)
+                            AppScreen.CHAT -> ChatScreen(appState)
+                            AppScreen.SETTINGS -> SettingsScreen(appState)
+                            AppScreen.TERMINAL -> TerminalScreen(appState)
+                        }
                     }
 
                     ModelConfigSheet(appState)
@@ -120,24 +165,36 @@ class MainActivity : ComponentActivity() {
 
                     AnimatedVisibility(
                         visible = appState.toastMessage != null,
-                        enter = fadeIn(),
-                        exit = fadeOut(),
+                        enter = slideInVertically(
+                            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+                        ) { it / 2 } + scaleIn(initialScale = 0.92f) + fadeIn(tween(180)),
+                        exit = slideOutVertically(tween(160)) { it / 2 } + scaleOut(targetScale = 0.94f) + fadeOut(tween(150)),
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .navigationBarsPadding()
                             .padding(horizontal = 20.dp, vertical = 92.dp)
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.inverseSurface,
                             contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                            shadowElevation = 4.dp
+                            shadowElevation = 6.dp
                         ) {
-                            Text(
-                                text = appState.toastMessage.orEmpty(),
+                            Row(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Info,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = appState.toastMessage ?: lastToast,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
                         }
                     }
                 }

@@ -9,10 +9,18 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +39,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
@@ -90,9 +100,218 @@ private sealed interface MdBlock {
     data class Table(val headers: List<String>, val aligns: List<TextAlign>, val rows: List<List<String>>) : MdBlock
 }
 
-private val katexSizeCache = object : LinkedHashMap<String, Pair<Float, Float>>(96, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Float, Float>>?): Boolean = size > 96
+private val katexSizeCache = object : LinkedHashMap<String, Pair<Float, Float>>(128, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Float, Float>>?): Boolean = size > 128
 }
+
+// Precompiled regexes to avoid reallocating patterns during streaming and scrolling
+private val INLINE_CODE_RE = Regex("`[^`\\n]+`")
+private val INLINE_DOLLAR_RE = Regex("(?<!\\\\)\\$([^$\\n]{1,200})(?<!\\\\)\\$")
+private val SIMPLE_DOLLAR_EXPR_RE = Regex("^[a-zA-Z0-9.,()*+-]+$")
+private val HTML_MATH_RE = Regex("\\\\\\[[\\s\\S]*?\\\\\\]|\\\\\\([\\s\\S]*?\\\\\\)|\\$\\$[\\s\\S]*?\\$\\$|(?<!\\\\)\\$[^$\\n]+(?<!\\\\)\\$")
+private val HTML_CODE_RE = Regex("`([^`\\n]+)`")
+private val HTML_FONT_RE = Regex("\\[\\[font:([a-z-]+)\\|([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE)
+private val HTML_LINK_RE = Regex("\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)")
+private val HTML_BOLD_STAR_RE = Regex("\\*\\*([^*\\n]+)\\*\\*")
+private val HTML_BOLD_UND_RE = Regex("__([^_\\n]+)__")
+private val HTML_STRIKE_RE = Regex("~~([^~\\n]+)~~")
+private val HTML_ITALIC_RE = Regex("(?<![\\w*])\\*([^*\\n]+)\\*(?![\\w*])")
+private val HTML_CODE_PH_RE = Regex("@@C_(\\d+)@@")
+private val HTML_MATH_PH_RE = Regex("@@M_(\\d+)@@")
+private val MD_HEADING_RE = Regex("^\\s{0,3}(#{1,6})\\s+(.*?)\\s*#*\\s*$")
+private val MD_RULE_RE = Regex("^\\s{0,3}([-*_])(?:\\s*\\1){2,}\\s*$")
+private val MD_QUOTE_RE = Regex("^\\s{0,3}>\\s?(.*)$")
+private val MD_UL_RE = Regex("^\\s{0,3}[-*+]\\s+(.*)$")
+private val MD_OL_RE = Regex("^\\s{0,3}(\\d+[.)])\\s+(.*)$")
+private val MD_TABLE_SEP_RE = Regex("^\\s*\\|?[\\s:|-]*-{3,}[\\s:|-]*\\|?\\s*$")
+private val MD_TABLE_CELL_SEP_RE = Regex("^:?-{3,}:?$")
+private val EST_FONT_TAG_RE = Regex("\\[\\[font:[a-z-]+\\|([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE)
+private val EST_TEX_CMD_ARG_RE = Regex("\\\\(?:text|mathrm|mathbf|mathbb|mathcal|operatorname)\\{([^}]*)\\}")
+private val EST_TEX_CMD_RE = Regex("\\\\[a-zA-Z]+")
+private val EST_MARKUP_CHARS_RE = Regex("[`$*_{}~\\\\]")
+private val SPLIT_WS_RE = Regex("\\s+")
+private val SYNTAX_TOKEN_RE = Regex("(//[^\\n]*|#[^\\n]*|/\\*[\\s\\S]*?\\*/|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|\\b\\d+(?:\\.\\d+)?\\b|\\b[A-Z][A-Za-z0-9_]*\\b|\\b[a-z_][a-zA-Z0-9_]*\\b)")
+private val INLINE_TOKEN_RE = Regex(
+    "`([^`\\n]+)`|\\[\\[font:([a-z-]+)\\|([\\s\\S]*?)\\]\\]|\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)|\\*\\*([^*\n]+)\\*\\*|__([^_\n]+)__|~~([^~\n]+)~~|\\*([^*\n]+)\\*|(https?://[^\\s<\\]]+)"
+)
+
+private val KATEX_SHELL_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="stylesheet" href="katex/katex.min.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    font-family: Roboto, system-ui, sans-serif;
+    line-height: 1.48;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow: hidden;
+  }
+  #root.display-mode {
+    display: inline-block;
+    width: max-content;
+    padding: 6px 8px;
+    white-space: nowrap;
+    text-align: center;
+  }
+  #root.display-mode .katex-display {
+    display: inline-block;
+    margin: 0 !important;
+    padding: 4px 0;
+    overflow: visible !important;
+  }
+  #root.display-mode .katex-display > .katex {
+    display: inline-block;
+    white-space: nowrap;
+  }
+  #root.inline-mode {
+    display: flow-root;
+    width: 100%;
+    padding: 2px 0 4px 0;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  #root.inline-mode .katex-display {
+    margin: 6px 0 !important;
+    padding: 4px 0;
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  code {
+    font-family: ui-monospace, "Roboto Mono", monospace;
+    font-size: 0.9em;
+    font-weight: 500;
+  }
+  a { text-decoration: underline; }
+  del { opacity: 0.8; }
+  strong { font-weight: 600; }
+  .katex { color: inherit; font-size: 1.04em; }
+  .md-font-serif { font-family: Georgia, "Noto Serif", serif; }
+  .md-font-sans { font-family: Roboto, "Noto Sans", sans-serif; }
+  .md-font-mono { font-family: "Roboto Mono", monospace; }
+  .md-font-cursive { font-family: cursive; }
+  .md-font-condensed { font-family: sans-serif-condensed, sans-serif; }
+  .md-font-light { font-weight: 300; }
+  .md-font-black { font-weight: 900; }
+  .md-font-smallcaps { font-variant: small-caps; letter-spacing: 0.04em; }
+</style>
+<style id="dyn-style"></style>
+</head>
+<body>
+<div id="root"></div>
+<script src="katex/katex.min.js"></script>
+<script src="katex/contrib/auto-render.min.js"></script>
+<script>
+  (function () {
+    var root = document.getElementById("root");
+    var dynStyle = document.getElementById("dyn-style");
+    var renderSeq = 0;
+    var lastSentW = 0;
+    var lastSentH = 0;
+    var currentIsDisplay = false;
+
+    function measureAndReport(seq) {
+      if (seq !== renderSeq) return;
+      try {
+        var rect = root.getBoundingClientRect();
+        var minTop = rect.top;
+        var maxBottom = rect.bottom;
+        var minLeft = rect.left;
+        var maxRight = rect.right;
+        var els = root.querySelectorAll(".katex, .katex-html, .katex-display");
+        for (var i = 0; i < els.length; i++) {
+          var r = els[i].getBoundingClientRect();
+          if (r.height > 0 && r.width > 0) {
+            if (r.top < minTop) minTop = r.top;
+            if (r.bottom > maxBottom) maxBottom = r.bottom;
+            if (r.left < minLeft) minLeft = r.left;
+            if (r.right > maxRight) maxRight = r.right;
+          }
+        }
+        var cssH = Math.ceil(Math.max(rect.height, root.scrollHeight, maxBottom - minTop));
+        var cssW = currentIsDisplay
+          ? Math.ceil(Math.max(rect.width, maxRight - minLeft))
+          : Math.ceil(rect.width);
+        var dpr = window.devicePixelRatio || 1;
+        var physW = Math.ceil(cssW * dpr);
+        var physH = Math.ceil(cssH * dpr);
+        if (physH > 0 && physW > 0 && (physW !== lastSentW || physH !== lastSentH)) {
+          lastSentW = physW;
+          lastSentH = physH;
+          if (window.KatexBridge) {
+            window.KatexBridge.setSize(physW, physH);
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (window.ResizeObserver) {
+      try {
+        new ResizeObserver(function () { measureAndReport(renderSeq); }).observe(root);
+      } catch (e) {}
+    }
+
+    window.__renderLatex = function (bodyHtml, cfgJson) {
+      renderSeq++;
+      var seq = renderSeq;
+      lastSentW = 0;
+      lastSentH = 0;
+      var cfg = {};
+      try { cfg = JSON.parse(cfgJson); } catch (e) {}
+      currentIsDisplay = !!cfg.isDisplay;
+
+      document.documentElement.style.width = currentIsDisplay ? "max-content" : "100%";
+      document.body.style.width = currentIsDisplay ? "max-content" : "100%";
+      document.body.style.color = cfg.color || "#e2e2e9";
+      document.body.style.fontSize = (cfg.fontSize || 15) + "px";
+      document.body.style.fontWeight = cfg.fontWeight || "400";
+      if (dynStyle) {
+        dynStyle.textContent = "code, a { color: " + (cfg.accent || "#aac7ff") + "; }";
+      }
+
+      root.className = currentIsDisplay ? "display-mode" : "inline-mode";
+      root.style.textAlign = currentIsDisplay ? "center" : (cfg.align || "left");
+      root.innerHTML = bodyHtml || "";
+
+      try {
+        if (window.renderMathInElement) {
+          window.renderMathInElement(root, {
+            delimiters: [
+              { left: "$$", right: "$$", display: true },
+              { left: "\\[", right: "\\]", display: true },
+              { left: "\\(", right: "\\)", display: false },
+              { left: "$", right: "$", display: false }
+            ],
+            ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+            throwOnError: false,
+            strict: false,
+            errorColor: "#ffb4ab"
+          });
+        }
+      } catch (e) {}
+
+      measureAndReport(seq);
+      if (window.requestAnimationFrame) {
+        requestAnimationFrame(function () { measureAndReport(seq); });
+      }
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () { measureAndReport(seq); });
+      }
+      setTimeout(function () { measureAndReport(seq); }, 45);
+      setTimeout(function () { measureAndReport(seq); }, 180);
+    };
+  })();
+</script>
+</body>
+</html>
+""".trimIndent()
 
 @Composable
 fun MarkdownMessageContent(
@@ -250,15 +469,20 @@ fun MarkdownMessageContent(
                                         .fillMaxWidth()
                                         .horizontalScroll(rememberScrollState())
                                 ) {
-                                    KatexRichBlock(
-                                        htmlBody = "\\[${escapeHtml(block.expr)}\\]",
-                                        textScale = textScale,
-                                        isDisplay = true,
-                                        availWidthDp = availWidth,
-                                        baseFontSp = 15.5f,
-                                        allowTouchOverride = false,
-                                        onOpenUrl = onOpenUrl
-                                    )
+                                    Box(
+                                        modifier = Modifier.widthIn(min = availWidth),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        KatexRichBlock(
+                                            htmlBody = "\\[${escapeHtml(block.expr)}\\]",
+                                            textScale = textScale,
+                                            isDisplay = true,
+                                            availWidthDp = availWidth,
+                                            baseFontSp = 15.5f,
+                                            allowTouchOverride = false,
+                                            onOpenUrl = onOpenUrl
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -297,7 +521,9 @@ private class KatexBridgeHost {
 
 private class KatexWebView(context: Context) : WebView(context) {
     val bridge = KatexBridgeHost()
-    @Volatile var lastRenderedHtml: String? = null
+    @Volatile var shellLoaded: Boolean = false
+    @Volatile var lastRenderKey: String? = null
+    @Volatile var pendingJs: String? = null
     @Volatile var allowTouch: Boolean = false
     @Volatile var openUrlHandler: ((String) -> Unit)? = null
 
@@ -376,8 +602,6 @@ private fun KatexRichBlockInner(
 
     val textColorHex = colorToHex(textColorOverride ?: cs.onSurface)
     val accentHex = colorToHex(cs.primary)
-    // Match Compose's physical font size: baseSp * textScale * fontScale * (systemDensity * uiScale).
-    // WebView 1 CSS px = systemDensity physical px (with textZoom=100 & text-size-adjust: 100%).
     val fontSizeCssPx = (baseFontSp * textScale * uiScale * density.fontScale).coerceAtLeast(6f)
     val cssTextAlign = when (textAlign) {
         TextAlign.Center -> "center"
@@ -386,179 +610,50 @@ private fun KatexRichBlockInner(
     }
     val cssFontWeight = if (isBold) "600" else "400"
     val availWidthVal = availWidthDp.value.coerceAtLeast(40f)
-    val widthBucket = (availWidthVal * density.density / 8f).roundToInt()
+    val widthBucket = if (isDisplay) 0 else (availWidthVal * density.density / 8f).roundToInt()
     val scaleBucket = (fontSizeCssPx * 10f).roundToInt()
     val cacheKey = remember(htmlBody, scaleBucket, widthBucket, isDisplay, cssTextAlign, cssFontWeight) {
         "${htmlBody.hashCode()}:${htmlBody.length}:$scaleBucket:$widthBucket:$isDisplay:$cssTextAlign:$cssFontWeight"
     }
+    val renderKey = remember(cacheKey, textColorHex, accentHex) {
+        "$cacheKey:$textColorHex:$accentHex"
+    }
     val cached = katexSizeCache[cacheKey]
-    val initialHeight = cached?.second ?: ((if (isDisplay) 46f else 24f) * textScale).coerceAtLeast(22f)
-    val initialWidth = cached?.first ?: availWidthVal
+    val initialHeight = cached?.second ?: ((if (isDisplay) 44f else 24f) * textScale).coerceAtLeast(22f)
+    val initialWidth = cached?.first ?: (if (isDisplay) availWidthVal.coerceAtMost(240f) else availWidthVal)
 
     var heightDp by remember(cacheKey) { mutableFloatStateOf(initialHeight) }
     var widthDp by remember(cacheKey) { mutableFloatStateOf(initialWidth) }
+    var measured by remember(cacheKey) { mutableStateOf(cached != null) }
+    val alphaAnim by animateFloatAsState(
+        targetValue = if (measured) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "katex_alpha"
+    )
     val hasLinks = remember(htmlBody) { htmlBody.contains("<a href=") }
     val allowTouch = allowTouchOverride ?: hasLinks
 
-    val documentHtml = remember(htmlBody, textColorHex, accentHex, fontSizeCssPx, isDisplay, cssTextAlign, cssFontWeight) {
-        val bodyJson = JSONObject.quote(htmlBody)
-        val rootCss = if (isDisplay) {
-            """
-            #root {
-              display: inline-block;
-              min-width: 100%;
-              padding: 6px 4px;
-              white-space: nowrap;
-              text-align: center;
-            }
-            .katex-display {
-              display: inline-block;
-              min-width: 100%;
-              margin: 0 !important;
-              padding: 4px 2px;
-              overflow: visible !important;
-              text-align: center;
-            }
-            .katex-display > .katex {
-              display: inline-block;
-              white-space: nowrap;
-            }
-            """.trimIndent()
-        } else {
-            """
-            #root {
-              display: flow-root;
-              width: 100%;
-              padding: 2px 0 4px 0;
-              text-align: $cssTextAlign;
-              word-wrap: break-word;
-              overflow-wrap: anywhere;
-            }
-            .katex-display {
-              margin: 6px 0 !important;
-              padding: 4px 0;
-              overflow-x: auto;
-              overflow-y: visible;
-            }
-            """.trimIndent()
-        }
-        """
-        <!doctype html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-        <link rel="stylesheet" href="katex/katex.min.css">
-        <style>
-          * { box-sizing: border-box; }
-          html, body {
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            color: $textColorHex;
-            font-family: Roboto, system-ui, sans-serif;
-            font-size: ${fontSizeCssPx}px;
-            font-weight: $cssFontWeight;
-            line-height: 1.48;
-            -webkit-text-size-adjust: 100%;
-            text-size-adjust: 100%;
-            overflow: hidden;
-          }
-          $rootCss
-          code {
-            font-family: ui-monospace, "Roboto Mono", monospace;
-            font-size: 0.9em;
-            color: $accentHex;
-            font-weight: 500;
-          }
-          a { color: $accentHex; text-decoration: underline; }
-          del { opacity: 0.8; }
-          strong { font-weight: 600; }
-          .katex { color: inherit; font-size: 1.04em; }
-          .md-font-serif { font-family: Georgia, "Noto Serif", serif; }
-          .md-font-sans { font-family: Roboto, "Noto Sans", sans-serif; }
-          .md-font-mono { font-family: "Roboto Mono", monospace; }
-          .md-font-cursive { font-family: cursive; }
-          .md-font-condensed { font-family: sans-serif-condensed, sans-serif; }
-          .md-font-light { font-weight: 300; }
-          .md-font-black { font-weight: 900; }
-          .md-font-smallcaps { font-variant: small-caps; letter-spacing: 0.04em; }
-        </style>
-        </head>
-        <body>
-        <div id="root"></div>
-        <script src="katex/katex.min.js"></script>
-        <script src="katex/contrib/auto-render.min.js"></script>
-        <script>
-          (function () {
-            var root = document.getElementById("root");
-            root.innerHTML = $bodyJson;
-            try {
-              if (window.renderMathInElement) {
-                window.renderMathInElement(root, {
-                  delimiters: [
-                    { left: "$$", right: "$$", display: true },
-                    { left: "\\[", right: "\\]", display: true },
-                    { left: "\\(", right: "\\)", display: false },
-                    { left: "$", right: "$", display: false }
-                  ],
-                  ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
-                  throwOnError: false,
-                  strict: false,
-                  errorColor: "#ffb4ab"
-                });
-              }
-            } catch (e) {}
-            function report() {
-              try {
-                var rect = root.getBoundingClientRect();
-                var minTop = rect.top;
-                var maxBottom = rect.bottom;
-                var minLeft = rect.left;
-                var maxRight = rect.right;
-                var els = root.querySelectorAll(".katex, .katex-html, .katex-display");
-                for (var i = 0; i < els.length; i++) {
-                  var r = els[i].getBoundingClientRect();
-                  if (r.height > 0 && r.width > 0) {
-                    if (r.top < minTop) minTop = r.top;
-                    if (r.bottom > maxBottom) maxBottom = r.bottom;
-                    if (r.left < minLeft) minLeft = r.left;
-                    if (r.right > maxRight) maxRight = r.right;
-                  }
-                }
-                var cssH = Math.ceil(Math.max(rect.height, root.scrollHeight, maxBottom - minTop)) + 2;
-                var cssW = Math.ceil(Math.max(rect.width, root.scrollWidth, maxRight - minLeft)) + 2;
-                var dpr = window.devicePixelRatio || 1;
-                if (cssH > 0 && window.KatexBridge) {
-                  window.KatexBridge.setSize(Math.ceil(cssW * dpr), Math.ceil(cssH * dpr));
-                }
-              } catch (e) {}
-            }
-            report();
-            if (window.ResizeObserver) {
-              try { new ResizeObserver(report).observe(root); } catch (e) {}
-            }
-            if (document.fonts && document.fonts.ready) {
-              document.fonts.ready.then(report);
-            }
-            setTimeout(report, 40);
-            setTimeout(report, 160);
-            setTimeout(report, 360);
-          })();
-        </script>
-        </body>
-        </html>
-        """.trimIndent()
+    val cfgJson = remember(textColorHex, accentHex, fontSizeCssPx, isDisplay, cssTextAlign, cssFontWeight) {
+        JSONObject()
+            .put("color", textColorHex)
+            .put("accent", accentHex)
+            .put("fontSize", fontSizeCssPx.toDouble())
+            .put("isDisplay", isDisplay)
+            .put("align", cssTextAlign)
+            .put("fontWeight", cssFontWeight)
+            .toString()
     }
 
     val boxModifier = if (isDisplay) {
         Modifier
-            .width(widthDp.coerceAtLeast(availWidthVal).coerceAtMost(2400f).dp)
+            .width(widthDp.coerceIn(32f, 2400f).dp)
             .height(heightDp.dp)
+            .graphicsLayer { alpha = alphaAnim }
     } else {
         Modifier
             .width(availWidthVal.dp)
             .height(heightDp.dp)
+            .graphicsLayer { alpha = alphaAnim }
     }
 
     AndroidView(
@@ -582,49 +677,68 @@ private fun KatexRichBlockInner(
                         }
                         return true
                     }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        if (url == "about:blank") return
+                        shellLoaded = true
+                        val js = pendingJs
+                        if (js != null) {
+                            pendingJs = null
+                            evaluateJavascript(js, null)
+                        }
+                    }
                 }
                 addJavascriptInterface(bridge, "KatexBridge")
+                loadDataWithBaseURL("file:///android_asset/web/", KATEX_SHELL_HTML, "text/html", "utf-8", null)
             }
         },
         onReset = { web ->
             web.bridge.onSize = null
             web.openUrlHandler = null
-            web.lastRenderedHtml = null
+            web.lastRenderKey = null
+            web.pendingJs = null
             web.allowTouch = false
         },
         onRelease = { web ->
             web.bridge.onSize = null
             web.openUrlHandler = null
+            web.pendingJs = null
             web.removeJavascriptInterface("KatexBridge")
             web.destroy()
         },
         update = { web ->
             web.allowTouch = allowTouch
             web.openUrlHandler = onOpenUrl
-            val expectedHtml = documentHtml
+            val expectedKey = renderKey
             web.bridge.onSize = { physW, physH ->
                 web.post {
-                    if (web.lastRenderedHtml != expectedHtml) return@post
+                    if (web.lastRenderKey != expectedKey) return@post
                     if (physH > 4f && physW > 4f) {
-                        val nextH = (physH / density.density) + 2f
+                        val nextH = (physH / density.density).coerceAtLeast(12f)
                         val nextW = if (isDisplay) {
-                            ((physW / density.density) + 2f).coerceAtLeast(availWidthVal).coerceAtMost(2400f)
+                            (physW / density.density).coerceIn(32f, 2400f)
                         } else {
                             availWidthVal
                         }
-                        val hChanged = abs(nextH - heightDp) > 1.2f
-                        val wChanged = isDisplay && abs(nextW - widthDp) > 1.5f
-                        if (hChanged || wChanged) {
-                            if (hChanged) heightDp = nextH
-                            if (wChanged) widthDp = nextW
+                        val hChanged = abs(nextH - heightDp) > 1.0f
+                        val wChanged = isDisplay && abs(nextW - widthDp) > 1.0f
+                        if (hChanged) heightDp = nextH
+                        if (wChanged) widthDp = nextW
+                        if (hChanged || wChanged || !measured) {
+                            measured = true
                             katexSizeCache[cacheKey] = widthDp to heightDp
                         }
                     }
                 }
             }
-            if (web.lastRenderedHtml != documentHtml) {
-                web.lastRenderedHtml = documentHtml
-                web.loadDataWithBaseURL("file:///android_asset/web/", documentHtml, "text/html", "utf-8", null)
+            if (web.lastRenderKey != expectedKey) {
+                web.lastRenderKey = expectedKey
+                val js = "window.__renderLatex && window.__renderLatex(${JSONObject.quote(htmlBody)}, ${JSONObject.quote(cfgJson)});"
+                if (web.shellLoaded) {
+                    web.evaluateJavascript(js, null)
+                } else {
+                    web.pendingJs = js
+                }
             }
         },
         modifier = boxModifier
@@ -646,6 +760,10 @@ private fun CodeBlockCard(
     val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val highlighted = remember(code, lang, darkTheme) { highlightSyntax(code.trimEnd('\n'), lang, darkTheme) }
     val chevronRot by animateFloatAsState(if (expanded) 180f else 0f, ExpressiveSpring, label = "code_chev")
+    val copyBg by animateColorAsState(
+        if (copied) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+        label = "code_copy_bg"
+    )
     val copyInteraction = remember { MutableInteractionSource() }
     val runInteraction = remember { MutableInteractionSource() }
 
@@ -710,25 +828,34 @@ private fun CodeBlockCard(
                     },
                     interactionSource = copyInteraction,
                     shape = CircleShape,
-                    color = if (copied) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    color = copyBg,
                     modifier = Modifier.springBounce(copyInteraction)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                            contentDescription = null,
-                            tint = if (copied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            if (copied) "Скопировано" else "Копировать",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (copied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                        )
+                    AnimatedContent(
+                        targetState = copied,
+                        transitionSpec = {
+                            (fadeIn(tween(150)) + scaleIn(initialScale = 0.9f)) togetherWith
+                                (fadeOut(tween(110)) + scaleOut(targetScale = 0.9f))
+                        },
+                        label = "code_copy_anim"
+                    ) { isCopied ->
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                tint = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                if (isCopied) "Скопировано" else "Копировать",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.width(6.dp))
@@ -806,7 +933,7 @@ private fun MarkdownTableCard(
                 val cellWidth = table.rows.maxOfOrNull { row ->
                     val cell = row.getOrElse(col) { "" }
                     val vis = estimateVisibleTextLen(cell)
-                    val longestWord = cell.split(Regex("\\s+")).maxOfOrNull { estimateVisibleTextLen(it) } ?: 0
+                    val longestWord = cell.split(SPLIT_WS_RE).maxOfOrNull { estimateVisibleTextLen(it) } ?: 0
                     val sampleLen = maxOf(minOf(vis, 30), minOf(longestWord, 34))
                     sampleLen * 8.6f * textScale + 26f
                 } ?: 0f
@@ -950,10 +1077,10 @@ private fun TableCellContent(
 
 private fun estimateVisibleTextLen(raw: String): Int {
     val stripped = raw
-        .replace(Regex("\\[\\[font:[a-z-]+\\|([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE), "$1")
-        .replace(Regex("\\\\(?:text|mathrm|mathbf|mathbb|mathcal|operatorname)\\{([^}]*)\\}"), "$1")
-        .replace(Regex("\\\\[a-zA-Z]+"), "x")
-        .replace(Regex("[`$*_{}~\\\\]"), "")
+        .replace(EST_FONT_TAG_RE, "$1")
+        .replace(EST_TEX_CMD_ARG_RE, "$1")
+        .replace(EST_TEX_CMD_RE, "x")
+        .replace(EST_MARKUP_CHARS_RE, "")
         .replace("\\(", "")
         .replace("\\)", "")
     return stripped.trim().length.coerceAtLeast(1)
@@ -968,9 +1095,6 @@ private fun lineCountLabel(n: Int): String {
     }
 }
 
-private val INLINE_CODE_RE = Regex("`[^`\\n]+`")
-private val INLINE_DOLLAR_RE = Regex("(?<!\\\\)\\$([^$\\n]{1,200})(?<!\\\\)\\$")
-
 private fun containsLatexMath(text: String): Boolean {
     val clean = INLINE_CODE_RE.replace(text, "")
     if (clean.contains("\\(") || clean.contains("\\[") || clean.contains("$$")) return true
@@ -981,7 +1105,7 @@ private fun containsLatexMath(text: String): Boolean {
         } else {
             inner.contains('\\') || inner.contains('^') || inner.contains('_') ||
                 inner.contains('=') || inner.contains('+') || inner.contains('/') ||
-                Regex("^[a-zA-Z0-9.,()*+-]+$").matches(inner)
+                SIMPLE_DOLLAR_EXPR_RE.matches(inner)
         }
     }
 }
@@ -994,20 +1118,19 @@ private fun escapeHtml(s: String): String = s
 
 private fun inlineMarkdownToSafeHtml(text: String): String {
     val mathTokens = mutableListOf<String>()
-    val mathRe = Regex("\\\\\\[[\\s\\S]*?\\\\\\]|\\\\\\([\\s\\S]*?\\\\\\)|\\$\\$[\\s\\S]*?\\$\\$|(?<!\\\\)\\$[^$\\n]+(?<!\\\\)\\$")
-    val protectedMath = mathRe.replace(text) { m ->
+    val protectedMath = HTML_MATH_RE.replace(text) { m ->
         val token = "@@M_${mathTokens.size}@@"
         mathTokens.add(m.value)
         token
     }
     var s = escapeHtml(protectedMath)
     val codeTokens = mutableListOf<String>()
-    s = Regex("`([^`\\n]+)`").replace(s) { m ->
+    s = HTML_CODE_RE.replace(s) { m ->
         val token = "@@C_${codeTokens.size}@@"
         codeTokens.add("<code>${m.groupValues[1]}</code>")
         token
     }
-    s = Regex("\\[\\[font:([a-z-]+)\\|([\\s\\S]*?)\\]\\]", RegexOption.IGNORE_CASE).replace(s) { m ->
+    s = HTML_FONT_RE.replace(s) { m ->
         val cls = when (m.groupValues[1].lowercase()) {
             "serif" -> "md-font-serif"
             "sans" -> "md-font-sans"
@@ -1021,16 +1144,16 @@ private fun inlineMarkdownToSafeHtml(text: String): String {
         }
         if (cls.isEmpty()) m.groupValues[2] else "<span class=\"$cls\">${m.groupValues[2]}</span>"
     }
-    s = Regex("\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)").replace(s) { m ->
+    s = HTML_LINK_RE.replace(s) { m ->
         "<a href=\"${m.groupValues[2]}\">${m.groupValues[1]}</a>"
     }
-    s = Regex("\\*\\*([^*\\n]+)\\*\\*").replace(s, "<strong>$1</strong>")
-    s = Regex("__([^_\\n]+)__").replace(s, "<strong>$1</strong>")
-    s = Regex("~~([^~\\n]+)~~").replace(s, "<del>$1</del>")
-    s = Regex("(?<![\\w*])\\*([^*\\n]+)\\*(?![\\w*])").replace(s, "<em>$1</em>")
+    s = HTML_BOLD_STAR_RE.replace(s, "<strong>$1</strong>")
+    s = HTML_BOLD_UND_RE.replace(s, "<strong>$1</strong>")
+    s = HTML_STRIKE_RE.replace(s, "<del>$1</del>")
+    s = HTML_ITALIC_RE.replace(s, "<em>$1</em>")
     s = s.replace("\n", "<br>")
-    s = Regex("@@C_(\\d+)@@").replace(s) { m -> codeTokens.getOrElse(m.groupValues[1].toInt()) { "" } }
-    s = Regex("@@M_(\\d+)@@").replace(s) { m -> escapeHtml(mathTokens.getOrElse(m.groupValues[1].toInt()) { "" }) }
+    s = HTML_CODE_PH_RE.replace(s) { m -> codeTokens.getOrElse(m.groupValues[1].toInt()) { "" } }
+    s = HTML_MATH_PH_RE.replace(s) { m -> escapeHtml(mathTokens.getOrElse(m.groupValues[1].toInt()) { "" }) }
     return s
 }
 
@@ -1110,24 +1233,24 @@ private fun parseTextBlocks(text: String, out: MutableList<MdBlock>) {
             i = tbl.second
             continue
         }
-        val hMatch = Regex("^\\s{0,3}(#{1,6})\\s+(.*?)\\s*#*\\s*$").matchEntire(line)
+        val hMatch = MD_HEADING_RE.matchEntire(line)
         if (hMatch != null) {
             flushPara()
             out.add(MdBlock.Heading(hMatch.groupValues[1].length, hMatch.groupValues[2]))
             i++; continue
         }
-        if (Regex("^\\s{0,3}([-*_])(?:\\s*\\1){2,}\\s*$").matches(line)) {
+        if (MD_RULE_RE.matches(line)) {
             flushPara(); out.add(MdBlock.Rule); i++; continue
         }
-        val qMatch = Regex("^\\s{0,3}>\\s?(.*)$").matchEntire(line)
+        val qMatch = MD_QUOTE_RE.matchEntire(line)
         if (qMatch != null) {
             flushPara(); out.add(MdBlock.Quote(qMatch.groupValues[1])); i++; continue
         }
-        val ulMatch = Regex("^\\s{0,3}[-*+]\\s+(.*)$").matchEntire(line)
+        val ulMatch = MD_UL_RE.matchEntire(line)
         if (ulMatch != null) {
             flushPara(); out.add(MdBlock.ListItem("•", ulMatch.groupValues[1])); i++; continue
         }
-        val olMatch = Regex("^\\s{0,3}(\\d+[.)])\\s+(.*)$").matchEntire(line)
+        val olMatch = MD_OL_RE.matchEntire(line)
         if (olMatch != null) {
             flushPara(); out.add(MdBlock.ListItem(olMatch.groupValues[1], olMatch.groupValues[2])); i++; continue
         }
@@ -1137,21 +1260,83 @@ private fun parseTextBlocks(text: String, out: MutableList<MdBlock>) {
     flushPara()
 }
 
-private fun splitTableRow(line: String): List<String> {
+private fun splitTableRow(line: String, expectedCols: Int? = null): List<String> {
     var s = line.trim()
     if (s.startsWith("|")) s = s.drop(1)
-    if (s.endsWith("|")) s = s.dropLast(1)
-    return s.split("|").map { it.trim() }
+    if (s.endsWith("|") && !s.endsWith("\\|")) s = s.dropLast(1)
+    val strict = splitPipeAware(s, protectDollars = false)
+    if (expectedCols == null || strict.size <= expectedCols) return strict
+    return splitPipeAware(s, protectDollars = true)
+}
+
+private fun splitPipeAware(s: String, protectDollars: Boolean): List<String> {
+    val out = mutableListOf<String>()
+    val cur = StringBuilder()
+    var inCode = false
+    var parenDepth = 0
+    var bracketDepth = 0
+    var inSingleDollar = false
+    var inDoubleDollar = false
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        if (c == '\\' && i + 1 < s.length) {
+            val next = s[i + 1]
+            if (!inCode && next == '|') {
+                cur.append('|')
+                i += 2
+                continue
+            }
+            if (!inCode) {
+                when (next) {
+                    '(' -> parenDepth++
+                    ')' -> if (parenDepth > 0) parenDepth--
+                    '[' -> bracketDepth++
+                    ']' -> if (bracketDepth > 0) bracketDepth--
+                }
+            }
+            cur.append(c).append(next)
+            i += 2
+            continue
+        }
+        if (c == '`' && parenDepth == 0 && bracketDepth == 0) {
+            inCode = !inCode
+            cur.append(c)
+            i++
+            continue
+        }
+        if (protectDollars && !inCode && parenDepth == 0 && bracketDepth == 0 && c == '$') {
+            if (i + 1 < s.length && s[i + 1] == '$') {
+                inDoubleDollar = !inDoubleDollar
+                cur.append("$$")
+                i += 2
+                continue
+            }
+            inSingleDollar = !inSingleDollar
+            cur.append(c)
+            i++
+            continue
+        }
+        if (c == '|' && !inCode && parenDepth == 0 && bracketDepth == 0 && !inSingleDollar && !inDoubleDollar) {
+            out.add(cur.toString().trim())
+            cur.setLength(0)
+        } else {
+            cur.append(c)
+        }
+        i++
+    }
+    out.add(cur.toString().trim())
+    return out
 }
 
 private fun parseTableAt(lines: List<String>, start: Int): Pair<MdBlock.Table, Int>? {
     val head = lines.getOrNull(start) ?: return null
     val sep = lines.getOrNull(start + 1) ?: return null
-    if (!head.contains("|") || !Regex("^\\s*\\|?[\\s:|-]*-{3,}[\\s:|-]*\\|?\\s*$").matches(sep)) return null
-    val headers = splitTableRow(head)
+    if (!head.contains("|") || !MD_TABLE_SEP_RE.matches(sep)) return null
     val sepCells = splitTableRow(sep)
-    if (headers.isEmpty() || sepCells.size != headers.size) return null
-    if (!sepCells.all { Regex("^:?-{3,}:?$").matches(it) }) return null
+    if (sepCells.isEmpty() || !sepCells.all { MD_TABLE_CELL_SEP_RE.matches(it) }) return null
+    val headers = splitTableRow(head, sepCells.size)
+    if (headers.size != sepCells.size) return null
     val aligns = sepCells.map {
         val l = it.startsWith(":"); val r = it.endsWith(":")
         when { l && r -> TextAlign.Center; r -> TextAlign.End; else -> TextAlign.Start }
@@ -1159,17 +1344,13 @@ private fun parseTableAt(lines: List<String>, start: Int): Pair<MdBlock.Table, I
     val rows = mutableListOf<List<String>>()
     var i = start + 2
     while (i < lines.size && lines[i].trim().isNotEmpty() && lines[i].contains("|")) {
-        val cells = splitTableRow(lines[i]).toMutableList()
+        val cells = splitTableRow(lines[i], headers.size).toMutableList()
         while (cells.size < headers.size) cells.add("")
         rows.add(cells.take(headers.size))
         i++
     }
     return MdBlock.Table(headers, aligns, rows) to i
 }
-
-private val INLINE_TOKEN_RE = Regex(
-    "`([^`\\n]+)`|\\[\\[font:([a-z-]+)\\|([\\s\\S]*?)\\]\\]|\\[([^\\]]+)\\]\\((https?://[^\\s)]+)\\)|\\*\\*([^*\n]+)\\*\\*|__([^_\n]+)__|~~([^~\n]+)~~|\\*([^*\n]+)\\*|(https?://[^\\s<\\]]+)"
-)
 
 private fun buildInlineAnnotated(
     text: String,
@@ -1249,9 +1430,8 @@ private fun highlightSyntax(code: String, lang: String, dark: Boolean): Annotate
     val cString = if (dark) Color(0xFFA5D6A7) else Color(0xFF2E7D32)
     val cNumber = if (dark) Color(0xFFFFCC80) else Color(0xFFB45309)
     val cType = if (dark) Color(0xFF82AAFF) else Color(0xFF1D4ED8)
-    val tokenRe = Regex("(//[^\\n]*|#[^\\n]*|/\\*[\\s\\S]*?\\*/|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|\\b\\d+(?:\\.\\d+)?\\b|\\b[A-Z][A-Za-z0-9_]*\\b|\\b[a-z_][a-zA-Z0-9_]*\\b)")
     var idx = 0
-    for (m in tokenRe.findAll(code)) {
+    for (m in SYNTAX_TOKEN_RE.findAll(code)) {
         if (m.range.first > idx) append(code.substring(idx, m.range.first))
         val tok = m.value
         val color = when {

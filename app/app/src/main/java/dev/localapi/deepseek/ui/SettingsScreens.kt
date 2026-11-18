@@ -1,7 +1,19 @@
 package dev.localapi.deepseek
 
 import android.os.Build
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
@@ -71,7 +84,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -89,7 +104,13 @@ fun SettingsScreen(state: AppState) {
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
             LargeTopAppBar(
-                title = { Text(state.settingsPane.title) },
+                title = {
+                    AnimatedContent(
+                        targetState = state.settingsPane.title,
+                        transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                        label = "settings_title_anim"
+                    ) { Text(it) }
+                },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (state.settingsPane != SettingsPane.ROOT) state.settingsPane = SettingsPane.ROOT
@@ -121,13 +142,26 @@ fun SettingsScreen(state: AppState) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            when (state.settingsPane) {
-                SettingsPane.ROOT -> SettingsCatalogPane(state)
-                SettingsPane.TOKEN -> TokenSettingsPane(state)
-                SettingsPane.SERVER -> ServerSettingsPane(state)
-                SettingsPane.TUNNEL -> TunnelSettingsPane(state)
-                SettingsPane.SYSTEM -> SystemSettingsPane(state)
-                SettingsPane.UI -> UiSettingsPane(state)
+            AnimatedContent(
+                targetState = state.settingsPane,
+                transitionSpec = {
+                    val forward = targetState != SettingsPane.ROOT
+                    val enter = slideInHorizontally(tween(230)) { if (forward) it / 4 else -it / 4 } + fadeIn(tween(200))
+                    val exit = slideOutHorizontally(tween(170)) { if (forward) -it / 5 else it / 5 } + fadeOut(tween(140))
+                    enter togetherWith exit
+                },
+                label = "settings_pane_anim"
+            ) { pane ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    when (pane) {
+                        SettingsPane.ROOT -> SettingsCatalogPane(state)
+                        SettingsPane.TOKEN -> TokenSettingsPane(state)
+                        SettingsPane.SERVER -> ServerSettingsPane(state)
+                        SettingsPane.TUNNEL -> TunnelSettingsPane(state)
+                        SettingsPane.SYSTEM -> SystemSettingsPane(state)
+                        SettingsPane.UI -> UiSettingsPane(state)
+                    }
+                }
             }
             Spacer(Modifier.height(28.dp))
         }
@@ -556,35 +590,59 @@ private fun UiSettingsPane(state: AppState) {
                         val c2 = if (pal == AppPalette.DYNAMIC) MaterialTheme.colorScheme.tertiary else pal.swatchSecondary
                         val c3 = if (pal == AppPalette.DYNAMIC) MaterialTheme.colorScheme.primaryContainer else pal.swatchContainer
                         val interaction = remember { MutableInteractionSource() }
+                        val borderW by animateDpAsState(if (active) 2.dp else 0.dp, spring(dampingRatio = 0.75f, stiffness = 400f), label = "pal_bw")
+                        val borderC by animateColorAsState(
+                            if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            label = "pal_bc"
+                        )
+                        val cardBg by animateColorAsState(
+                            if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            label = "pal_bg"
+                        )
+                        val cardFg by animateColorAsState(
+                            if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                            label = "pal_fg"
+                        )
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
                                 .springBounce(interaction)
                                 .clip(RoundedCornerShape(16.dp))
-                                .border(
-                                    width = if (active) 2.dp else 0.dp,
-                                    color = if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    shape = RoundedCornerShape(16.dp)
-                                )
+                                .border(width = borderW, color = borderC, shape = RoundedCornerShape(16.dp))
                                 .clickable(interactionSource = interaction, indication = null) { state.updatePalette(pal) },
-                            color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            color = cardBg,
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(14.dp).clip(CircleShape).background(c1))
-                                    Box(Modifier.offset(x = (-4).dp).size(14.dp).clip(CircleShape).background(c2))
-                                    Box(Modifier.offset(x = (-8).dp).size(14.dp).clip(CircleShape).background(c3))
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(14.dp).clip(CircleShape).background(c1))
+                                        Box(Modifier.offset(x = (-4).dp).size(14.dp).clip(CircleShape).background(c2))
+                                        Box(Modifier.offset(x = (-8).dp).size(14.dp).clip(CircleShape).background(c3))
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        pal.label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = cardFg
+                                    )
                                 }
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    pal.label,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                )
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = active,
+                                    enter = scaleIn(spring()) + fadeIn(tween(150)),
+                                    exit = scaleOut() + fadeOut(tween(100)),
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(5.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -719,6 +777,11 @@ private fun DetailedScaleControl(
     onCommit: (Int) -> Unit
 ) {
     val shownValue = sliderValue.roundToInt().coerceIn(min, max)
+    val haptic = LocalHapticFeedback.current
+    val commitWithHaptic: (Int) -> Unit = { v ->
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        onCommit(v)
+    }
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
@@ -740,7 +803,7 @@ private fun DetailedScaleControl(
     Spacer(Modifier.height(8.dp))
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         FilledTonalIconButton(
-            onClick = { if (shownValue > min) onCommit(shownValue - 1) },
+            onClick = { if (shownValue > min) commitWithHaptic(shownValue - 1) },
             enabled = shownValue > min,
             modifier = Modifier.size(34.dp)
         ) {
@@ -754,7 +817,7 @@ private fun DetailedScaleControl(
             modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
         )
         FilledTonalIconButton(
-            onClick = { if (shownValue < max) onCommit(shownValue + 1) },
+            onClick = { if (shownValue < max) commitWithHaptic(shownValue + 1) },
             enabled = shownValue < max,
             modifier = Modifier.size(34.dp)
         ) {
@@ -769,11 +832,11 @@ private fun DetailedScaleControl(
             TonalActionPill(
                 label = "$preset%",
                 active = shownValue == preset,
-                onClick = { onCommit(preset) }
+                onClick = { commitWithHaptic(preset) }
             )
         }
         if (shownValue != 100) {
-            TonalActionPill(label = "Сброс", onClick = { onCommit(100) })
+            TonalActionPill(label = "Сброс", onClick = { commitWithHaptic(100) })
         }
     }
 }

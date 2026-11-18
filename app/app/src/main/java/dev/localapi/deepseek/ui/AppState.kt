@@ -73,7 +73,8 @@ data class ChatMessage(
     val error: String? = null,
     val hasToolCall: Boolean = false,
     val toolBlock: ToolBlockData? = null,
-    val notice: SandboxNotice? = null
+    val notice: SandboxNotice? = null,
+    val estTokens: Int = if (role == "user" || role == "assistant") 4 + AppState.estimateTokens(content) + images.size * 256 else 0
 )
 
 data class ToolBlockData(
@@ -1440,17 +1441,24 @@ class AppState(private val activity: Activity) {
 
     private val clearToastTask = Runnable { toastMessage = null }
 
+    private var cachedSysPromptKey: String = ""
+    private var cachedSysPromptTokens: Int = 0
+
     fun estimateContextTokens(): Int {
-        var total = estimateTokens(systemPrompt) + estimateTokens(buildAgentPromptSuffix())
-        messages.forEach { m ->
-            if (m.role == "user" || m.role == "assistant") {
-                total += 4 + estimateTokens(m.content) + m.images.size * 256
+        if (systemPrompt != cachedSysPromptKey) {
+            cachedSysPromptKey = systemPrompt
+            cachedSysPromptTokens = estimateTokens(systemPrompt)
+        }
+        var total = cachedSysPromptTokens
+        messages.forEach { m -> total += m.estTokens }
+        if (agentMode) {
+            total += if (sandboxState.running) 220 else 110
+            agentFiles.forEach { f ->
+                if (f.selected) total += ((f.size + 2) / 3).toInt()
             }
         }
-        if (agentMode) {
-            agentFiles.filter { it.selected && !agentFileCache.containsKey(it.name) }.forEach {
-                total += ((it.size + 2) / 3).toInt()
-            }
+        if (streaming) {
+            total += estimateTokens(streamContent) + estimateTokens(streamReasoning)
         }
         total += estimateTokens(composerDraft)
         return total
