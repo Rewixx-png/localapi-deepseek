@@ -28,13 +28,15 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Downloads the Ubuntu Base/QEMU guest assets and launches QEMU with the
- * app-private agent workspace shared over 9p.
+ * Downloads the Ubuntu Base/QEMU guest assets, launches QEMU with the
+ * app-private agent workspace shared over 9p, configures non-interactive apt +
+ * proxy networking, detects installed tools, and runs base package setup.
  */
 final class SandboxManager {
     static final String VERSION = "ubuntu-disk-1";
@@ -46,6 +48,10 @@ final class SandboxManager {
     static final long ASSET_SIZE = 132758428L;
 
     private static final String NET_READY_MARKER = "__LOCALAPI_NET_READY__";
+    private static final Pattern TOOLS_MARKER_RE =
+            Pattern.compile("__LOCALAPI_TOOLS__=([^\\r\\n]*)");
+    private static final Pattern BASE_MARKER_RE =
+            Pattern.compile("__LOCALAPI_BASE_V2__=([01])");
     private static final long MAX_LOG_BYTES = 2L * 1024 * 1024;
     private static final Pattern ANSI_PATTERN =
             Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
@@ -59,6 +65,7 @@ final class SandboxManager {
         void onExecChunk(String id, String chunk);
         void onExecResult(String id, String output, int code);
         void onExit(int code, String chatId);
+        default void onStatusChanged() {}
     }
 
     private final Activity activity;
@@ -69,6 +76,10 @@ final class SandboxManager {
     private volatile boolean running;
     private volatile boolean networkConfigured;
     private volatile boolean shellReady;
+    private volatile boolean baseInstalled;
+    private volatile boolean installingBase;
+    private volatile String installedTools = "";
+    private volatile String networkStatus = "";
     private volatile String activeChatId = "";
 
     private final Object startLock = new Object();
@@ -96,6 +107,13 @@ final class SandboxManager {
 
     private void ui(Runnable r) {
         activity.runOnUiThread(r);
+    }
+
+    private void notifyStatus() {
+        ui(() -> {
+            Listener l = listener;
+            if (l != null) l.onStatusChanged();
+        });
     }
 
     private static File dir(Context context) {
@@ -159,6 +177,11 @@ final class SandboxManager {
         out.put("installed", installed(activity));
         out.put("installing", installing);
         out.put("running", running);
+        out.put("shellReady", shellReady);
+        out.put("baseInstalled", baseInstalled);
+        out.put("installingBase", installingBase);
+        out.put("installedTools", installedTools);
+        out.put("networkStatus", networkStatus);
         out.put("version", VERSION);
         out.put("size", ASSET_SIZE);
         out.put("ramMb", ramMb);
@@ -216,6 +239,7 @@ final class SandboxManager {
             ui(() -> { Listener l = listener; if (l != null) l.onError("Сначала скачайте песочницу", chatId == null ? "" : chatId); });
             return;
         }
+        SandboxProxy.start();
         final Process started;
         final String currentChat;
         synchronized (startLock) {
@@ -277,6 +301,8 @@ final class SandboxManager {
                 running = true;
                 networkConfigured = false;
                 shellReady = false;
+                installingBase = false;
+                networkStatus = "";
                 synchronized (serialLock) {
                     serial.setLength(0);
                 }
@@ -309,17 +335,41 @@ final class SandboxManager {
                     String text = new String(cbuf, 0, read);
                     logOut.write(text.getBytes(StandardCharsets.UTF_8));
                     logOut.flush();
+                    boolean statusUpdated = false;
                     synchronized (serialLock) {
                         serial.append(text);
                         if (!shellReady && networkConfigured
                                 && serial.indexOf(NET_READY_MARKER) >= 0) {
                             shellReady = true;
+                            statusUpdated = true;
+                        }
+                        if (networkConfigured && text.contains("__LOCALAPI_")) {
+                            String snapshot = serial.length() > 4096
+                                    ? serial.substring(serial.length() - 4096)
+                                    : serial.toString();
+                            Matcher tm = TOOLS_MARKER_RE.matcher(snapshot);
+                            while (tm.find()) {
+                                String found = tm.group(1).trim();
+                                if (!found.equals(installedTools)) {
+                                    installedTools = found;
+                                    statusUpdated = true;
+                                }
+                            }
+                            Matcher bm = BASE_MARKER_RE.matcher(snapshot);
+                            while (bm.find()) {
+                                boolean ok = "1".equals(bm.group(1));
+                                if (ok != baseInstalled) {
+                                    baseInstalled = ok;
+                                    statusUpdated = true;
+                                }
+                            }
                         }
                         if (serial.length() > 400000) {
                             serial.delete(0, serial.length() - 300000);
                         }
                         serialLock.notifyAll();
                     }
+                    if (statusUpdated) notifyStatus();
                     maybeConfigureNetwork(started);
                     runJs("window.__sandboxOutput && window.__sandboxOutput("
                             + JSONObject.quote(text) + ")");
@@ -341,6 +391,7 @@ final class SandboxManager {
                 }
                 running = false;
                 shellReady = false;
+                installingBase = false;
                 exitedChat = activeChatId;
                 activeChatId = "";
             }
@@ -353,6 +404,90 @@ final class SandboxManager {
             final int exitCode = code;
             ui(() -> { Listener l = listener; if (l != null) l.onExit(exitCode, exitedChat); });
         }, "sandbox-output").start();
+    }
+
+    /** Interrupts any currently executing shell command with Ctrl+C without killing QEMU. */
+    void interruptExec() {
+        synchronized (ticketLock) {
+            execTicket++;
+        }
+        Process p = process;
+        if (p != null) {
+            try {
+                synchronized (writeLock) {
+                    p.getOutputStream().write(new byte[]{3, 3, '\n'});
+                    p.getOutputStream().flush();
+                }
+            } catch (Exception ignored) { }
+        }
+        synchronized (serialLock) {
+            serialLock.notifyAll();
+        }
+    }
+
+    /** Tests host proxy and (if running) guest internet access through 10.0.2.2:18991. */
+    void testNetwork() {
+        networkStatus = "Проверка…";
+        notifyStatus();
+        new Thread(() -> {
+            String proxyResult = SandboxProxy.selfTest();
+            emitOutput("\n[net-test] Host proxy 127.0.0.1:" + SandboxProxy.PORT + " -> " + proxyResult + "\n");
+            if (!running) {
+                networkStatus = proxyResult;
+                notifyStatus();
+                return;
+            }
+            String cmd = "echo \"[net-test] Checking guest -> 10.0.2.2:18991...\"; "
+                    + "if command -v curl >/dev/null 2>&1; then "
+                    + "  curl -sS -I --max-time 12 -x http://10.0.2.2:18991 http://ports.ubuntu.com/ubuntu-ports/ | head -1 && "
+                    + "  curl -sS -I --max-time 12 -x http://10.0.2.2:18991 https://example.com | head -1; "
+                    + "elif /bin/busybox --list 2>/dev/null | grep -qx wget; then "
+                    + "  http_proxy=http://10.0.2.2:18991 /bin/busybox wget -S --spider -T 12 http://ports.ubuntu.com/ubuntu-ports/ 2>&1 | head -4; "
+                    + "else "
+                    + "  printf 'HEAD http://ports.ubuntu.com/ubuntu-ports/ HTTP/1.1\\r\\nHost: ports.ubuntu.com\\r\\nConnection: close\\r\\n\\r\\n' | /bin/busybox nc -w 10 10.0.2.2 18991 | head -1; "
+                    + "fi";
+            ExecOutcome outcome = runBlockingExec("nettest_" + System.currentTimeMillis(), cmd, 25_000L, null);
+            if (outcome.code == 0 && (outcome.output.contains("HTTP/") || outcome.output.contains("200") || outcome.output.contains("301") || outcome.output.contains("302"))) {
+                networkStatus = "OK (гость + прокси работают)";
+            } else {
+                String summary = outcome.output.isEmpty() ? ("код " + outcome.code) : outcome.output.split("\\n")[0];
+                networkStatus = "Проблема: " + summary;
+            }
+            emitOutput("[net-test] Итог: " + networkStatus + "\n");
+            notifyStatus();
+        }, "sandbox-nettest").start();
+    }
+
+    /** Installs Python, wget, curl, htop, git, jq and CLI utilities persistently into rootfs.img. */
+    void installBasePackages() {
+        if (!running || installingBase) return;
+        installingBase = true;
+        notifyStatus();
+        new Thread(() -> {
+            emitOutput("\n==> Запуск /usr/bin/install-base (сохранится в rootfs.img)...\n");
+            String cmd = "/usr/bin/install-base && "
+                    + "__tools=\"\"; for t in python3 pip3 curl wget htop git jq unzip zip nano tree sqlite3; do "
+                    + "  [ -x \"/usr/bin/$t\" ] || [ -x \"/bin/$t\" ] && __tools=\"${__tools}${__tools:+,}$t\"; "
+                    + "done; "
+                    + "printf '%s%s=%s\\n' '__LOCALAPI_' 'TOOLS__' \"$__tools\"; "
+                    + "[ -f /var/lib/localapi-base-v2 ] && printf '%s%s=1\\n' '__LOCALAPI_' 'BASE_V2__'";
+            ExecOutcome outcome = runBlockingExec("installbase_" + System.currentTimeMillis(), cmd, 900_000L, null);
+            installingBase = false;
+            if (outcome.code == 0) {
+                baseInstalled = true;
+                emitOutput("\n==> Базовые пакеты успешно установлены!\n");
+            } else {
+                emitOutput("\n==> Установка завершилась с кодом " + outcome.code + "\n");
+            }
+            notifyStatus();
+        }, "sandbox-install-base").start();
+    }
+
+    private void emitOutput(String text) {
+        ui(() -> {
+            Listener l = listener;
+            if (l != null) l.onOutput(text);
+        });
     }
 
     /**
@@ -377,209 +512,221 @@ final class SandboxManager {
         }
     }
 
-    void exec(String id, String command) {
+    private static final class ExecOutcome {
+        final String output;
+        final int code;
+        final boolean preempted;
+
+        ExecOutcome(String output, int code, boolean preempted) {
+            this.output = output;
+            this.code = code;
+            this.preempted = preempted;
+        }
+    }
+
+    private ExecOutcome runBlockingExec(String id, String command, long timeoutMs, String streamIdForChunks) {
         final Process proc = process;
         if (!running || proc == null) {
-            runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                    + JSONObject.quote(id) + "," + JSONObject.quote(
-                    "Песочница не запущена") + ",-1)");
-            ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница не запущена", -1); });
-            return;
+            return new ExecOutcome("Песочница не запущена", -1, false);
         }
         final long myTicket;
         synchronized (ticketLock) {
             myTicket = ++execTicket;
         }
-        new Thread(() -> {
-            synchronized (execLock) {
-                if (myTicket != execTicket) return;
-                if (!running || process != proc) {
-                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                            + JSONObject.quote(id) + "," + JSONObject.quote(
-                            "Песочница не запущена") + ",-1)");
-                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница не запущена", -1); });
-                    return;
-                }
+        synchronized (execLock) {
+            if (myTicket != execTicket) return new ExecOutcome("", -1, true);
+            if (!running || process != proc) {
+                return new ExecOutcome("Песочница не запущена", -1, false);
+            }
 
-                long bootStart = System.currentTimeMillis();
-                long bootDeadline = bootStart + 25_000L;
-                boolean nudged = false;
-                while (!shellReady && running && process == proc
-                        && myTicket == execTicket
-                        && System.currentTimeMillis() < bootDeadline) {
-                    if (!nudged && !networkConfigured
-                            && System.currentTimeMillis() - bootStart > 4_000L) {
-                        nudged = true;
-                        try {
-                            synchronized (writeLock) {
-                                proc.getOutputStream().write('\n');
-                                proc.getOutputStream().flush();
-                            }
-                        } catch (Exception ignored) { }
-                    }
-                    synchronized (serialLock) {
-                        if (shellReady) break;
-                        try {
-                            serialLock.wait(200);
-                        } catch (InterruptedException ignored) {
-                            Thread.currentThread().interrupt();
-                            break;
+            long bootStart = System.currentTimeMillis();
+            long bootDeadline = bootStart + 25_000L;
+            boolean nudged = false;
+            while (!shellReady && running && process == proc
+                    && myTicket == execTicket
+                    && System.currentTimeMillis() < bootDeadline) {
+                if (!nudged && !networkConfigured
+                        && System.currentTimeMillis() - bootStart > 4_000L) {
+                    nudged = true;
+                    try {
+                        synchronized (writeLock) {
+                            proc.getOutputStream().write('\n');
+                            proc.getOutputStream().flush();
                         }
-                    }
+                    } catch (Exception ignored) { }
                 }
-                if (myTicket != execTicket) return;
-                if (!running || process != proc) {
-                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                            + JSONObject.quote(id) + "," + JSONObject.quote(
-                            "Песочница остановлена") + ",-1)");
-                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница остановлена", -1); });
-                    return;
-                }
-
-                String rawId = id == null ? "" : id.replaceAll("[^A-Za-z0-9_-]", "");
-                if (rawId.isEmpty()) rawId = String.valueOf(System.nanoTime());
-                String begin = "__LOCALAPI_BEGIN_" + rawId + "__";
-                String end = "__LOCALAPI_END_" + rawId + "__";
-                String tmpFile = "/tmp/.cmd_" + rawId + ".sh";
-                String b64File = tmpFile + ".b64";
-                String cmdText = command == null ? "" : command;
-                String b64 = Base64.encodeToString(
-                        cmdText.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
-
                 synchronized (serialLock) {
-                    serial.setLength(0);
-                }
-
-                try {
-                    // Chunk base64 into short <=240-char lines so neither PL011 RX FIFO
-                    // nor Linux n_tty 4096-byte canonical line buffer ever drops data.
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("rm -f ").append(b64File).append(' ').append(tmpFile).append('\n');
-                    for (int off = 0; off < b64.length(); off += 240) {
-                        int endOff = Math.min(b64.length(), off + 240);
-                        sb.append("printf '%s' '").append(b64, off, endOff)
-                                .append("' >> ").append(b64File).append('\n');
+                    if (shellReady) break;
+                    try {
+                        serialLock.wait(200);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        break;
                     }
-                    sb.append("(base64 -d ").append(b64File)
-                            .append(" 2>/dev/null || /bin/busybox base64 -d ")
-                            .append(b64File).append(") > ").append(tmpFile)
-                            .append(" && rm -f ").append(b64File)
-                            .append(" && printf '\\n").append(begin).append("\\n'")
-                            .append(" && ( trap 'pwd > /tmp/.localapi_cwd 2>/dev/null' EXIT; . ")
-                            .append(tmpFile).append(" )")
-                            .append("; __rc=$?; rm -f ").append(tmpFile)
-                            .append("; [ -f /tmp/.localapi_cwd ] && cd \"$(cat /tmp/.localapi_cwd)\" 2>/dev/null")
-                            .append("; printf '\\n").append(end).append("%s\\n' \"$__rc\"\n");
-
-                    synchronized (writeLock) {
-                        writeUartSafe(proc.getOutputStream(),
-                                sb.toString().getBytes(StandardCharsets.UTF_8));
-                    }
-
-                    long timeoutMs = (cmdText.contains("install-base")
-                            || cmdText.contains("apt-get")) ? 900_000L : 120_000L;
-                    long deadline = System.currentTimeMillis() + timeoutMs;
-                    int endAt = -1;
-                    int code = -1;
-                    String lastChunk = "";
-
-                    while (running && process == proc && myTicket == execTicket
-                            && System.currentTimeMillis() < deadline) {
-                        String partial = null;
-                        synchronized (serialLock) {
-                            String buffer = serial.toString();
-                            for (int pos = buffer.indexOf(end); pos >= 0;
-                                 pos = buffer.indexOf(end, pos + 1)) {
-                                int codeStart = pos + end.length();
-                                int nl = buffer.indexOf('\n', codeStart);
-                                String codeText = buffer.substring(codeStart,
-                                        nl >= 0 ? nl : buffer.length()).trim();
-                                if (codeText.matches("\\d+")) {
-                                    endAt = pos;
-                                    try {
-                                        code = Integer.parseInt(codeText);
-                                    } catch (Exception ignored) {
-                                    }
-                                    break;
-                                }
-                            }
-                            if (endAt >= 0) break;
-                            int beginAt = buffer.lastIndexOf(begin);
-                            if (beginAt >= 0) {
-                                partial = buffer.substring(beginAt + begin.length());
-                            }
-                            serialLock.wait(200);
-                        }
-                        if (partial != null) {
-                            String chunk = cleanShellOutput(
-                                    partial.replace(begin, "").replace(end, ""));
-                            if (chunk.length() > 16000) {
-                                chunk = chunk.substring(0, 16000) + "\n[вывод обрезан]";
-                            }
-                            if (!chunk.equals(lastChunk)) {
-                                lastChunk = chunk;
-                                runJs("window.__sandboxExecChunk && window.__sandboxExecChunk("
-                                        + JSONObject.quote(id) + ","
-                                        + JSONObject.quote(chunk) + ")");
-                                final String cOut = chunk;
-                                ui(() -> { Listener l = listener; if (l != null) l.onExecChunk(id, cOut); });
-                            }
-                        }
-                    }
-
-                    boolean preempted = (myTicket != execTicket);
-                    boolean timedOut = (endAt < 0 && running && process == proc);
-                    if (timedOut || preempted) {
-                        try {
-                            synchronized (writeLock) {
-                                proc.getOutputStream().write(new byte[]{3, 4, '\n'});
-                                proc.getOutputStream().flush();
-                            }
-                        } catch (Exception ignored) {
-                        }
-                    }
-
-                    String buffer;
-                    synchronized (serialLock) {
-                        buffer = serial.toString();
-                    }
-                    String output;
-                    if (endAt >= 0) {
-                        int beginAt = buffer.lastIndexOf(begin, endAt);
-                        int from = beginAt >= 0 ? beginAt + begin.length() : 0;
-                        output = buffer.substring(from, endAt);
-                    } else {
-                        int beginAt = buffer.lastIndexOf(begin);
-                        output = beginAt >= 0 ? buffer.substring(beginAt + begin.length()) : buffer;
-                        if (output.length() > 12000) {
-                            output = output.substring(output.length() - 12000);
-                        }
-                    }
-                    output = cleanShellOutput(output.replace(begin, "").replace(end, ""));
-                    if (endAt >= 0) {
-                        shellReady = true;
-                    }
-                    if (preempted) return;
-                    if (timedOut) {
-                        output = (output.isEmpty() ? "" : output + "\n")
-                                + "[таймаут выполнения команды]";
-                    }
-                    if (output.length() > 16000) {
-                        output = output.substring(0, 16000) + "\n[вывод обрезан]";
-                    }
-                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                            + JSONObject.quote(id) + "," + JSONObject.quote(output)
-                            + "," + code + ")");
-                    final String fOut = output;
-                    final int fCode = code;
-                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, fOut, fCode); });
-                } catch (Exception e) {
-                    final String errMsg = e.getMessage() == null ? "exec error" : e.getMessage();
-                    runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                            + JSONObject.quote(id) + "," + JSONObject.quote(errMsg) + ",-1)");
-                    ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, errMsg, -1); });
                 }
             }
+            if (myTicket != execTicket) return new ExecOutcome("", -1, true);
+            if (!running || process != proc) {
+                return new ExecOutcome("Песочница остановлена", -1, false);
+            }
+
+            String rawId = id == null ? "" : id.replaceAll("[^A-Za-z0-9_-]", "");
+            if (rawId.isEmpty()) rawId = String.valueOf(System.nanoTime());
+            String begin = "__LOCALAPI_BEGIN_" + rawId + "__";
+            String end = "__LOCALAPI_END_" + rawId + "__";
+            String tmpFile = "/tmp/.cmd_" + rawId + ".sh";
+            String b64File = tmpFile + ".b64";
+            String cmdText = command == null ? "" : command;
+            String b64 = Base64.encodeToString(
+                    cmdText.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+
+            synchronized (serialLock) {
+                serial.setLength(0);
+            }
+
+            try {
+                StringBuilder sb = new StringBuilder();
+                sb.append("rm -f ").append(b64File).append(' ').append(tmpFile).append('\n');
+                for (int off = 0; off < b64.length(); off += 240) {
+                    int endOff = Math.min(b64.length(), off + 240);
+                    sb.append("printf '%s' '").append(b64, off, endOff)
+                            .append("' >> ").append(b64File).append('\n');
+                }
+                sb.append("(base64 -d ").append(b64File)
+                        .append(" 2>/dev/null || /bin/busybox base64 -d ")
+                        .append(b64File).append(") > ").append(tmpFile)
+                        .append(" && rm -f ").append(b64File)
+                        .append(" && printf '\\n").append(begin).append("\\n'")
+                        .append(" && ( trap 'pwd > /tmp/.localapi_cwd 2>/dev/null' EXIT; . ")
+                        .append(tmpFile).append(" )")
+                        .append("; __rc=$?; rm -f ").append(tmpFile)
+                        .append("; [ -f /tmp/.localapi_cwd ] && cd \"$(cat /tmp/.localapi_cwd)\" 2>/dev/null")
+                        .append("; printf '\\n").append(end).append("%s\\n' \"$__rc\"\n");
+
+                synchronized (writeLock) {
+                    writeUartSafe(proc.getOutputStream(),
+                            sb.toString().getBytes(StandardCharsets.UTF_8));
+                }
+
+                long deadline = System.currentTimeMillis() + timeoutMs;
+                int endAt = -1;
+                int code = -1;
+                String lastChunk = "";
+
+                while (running && process == proc && myTicket == execTicket
+                        && System.currentTimeMillis() < deadline) {
+                    String partial = null;
+                    synchronized (serialLock) {
+                        String buffer = serial.toString();
+                        for (int pos = buffer.indexOf(end); pos >= 0;
+                             pos = buffer.indexOf(end, pos + 1)) {
+                            int codeStart = pos + end.length();
+                            int nl = buffer.indexOf('\n', codeStart);
+                            String codeText = buffer.substring(codeStart,
+                                    nl >= 0 ? nl : buffer.length()).trim();
+                            if (codeText.matches("\\d+")) {
+                                endAt = pos;
+                                try {
+                                    code = Integer.parseInt(codeText);
+                                } catch (Exception ignored) {
+                                }
+                                break;
+                            }
+                        }
+                        if (endAt >= 0) break;
+                        int beginAt = buffer.lastIndexOf(begin);
+                        if (beginAt >= 0) {
+                            partial = buffer.substring(beginAt + begin.length());
+                        }
+                        serialLock.wait(200);
+                    }
+                    if (partial != null && streamIdForChunks != null) {
+                        String chunk = cleanShellOutput(
+                                partial.replace(begin, "").replace(end, ""));
+                        if (chunk.length() > 16000) {
+                            chunk = chunk.substring(0, 16000) + "\n[вывод обрезан]";
+                        }
+                        if (!chunk.equals(lastChunk)) {
+                            lastChunk = chunk;
+                            runJs("window.__sandboxExecChunk && window.__sandboxExecChunk("
+                                    + JSONObject.quote(streamIdForChunks) + ","
+                                    + JSONObject.quote(chunk) + ")");
+                            final String cOut = chunk;
+                            ui(() -> { Listener l = listener; if (l != null) l.onExecChunk(streamIdForChunks, cOut); });
+                        }
+                    }
+                }
+
+                boolean preempted = (myTicket != execTicket);
+                boolean timedOut = (endAt < 0 && running && process == proc && !preempted);
+                if (timedOut || preempted) {
+                    try {
+                        synchronized (writeLock) {
+                            proc.getOutputStream().write(new byte[]{3, 4, '\n'});
+                            proc.getOutputStream().flush();
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                String buffer;
+                synchronized (serialLock) {
+                    buffer = serial.toString();
+                }
+                String output;
+                if (endAt >= 0) {
+                    int beginAt = buffer.lastIndexOf(begin, endAt);
+                    int from = beginAt >= 0 ? beginAt + begin.length() : 0;
+                    output = buffer.substring(from, endAt);
+                } else {
+                    int beginAt = buffer.lastIndexOf(begin);
+                    output = beginAt >= 0 ? buffer.substring(beginAt + begin.length()) : buffer;
+                    if (output.length() > 12000) {
+                        output = output.substring(output.length() - 12000);
+                    }
+                }
+                output = cleanShellOutput(output.replace(begin, "").replace(end, ""));
+                if (endAt >= 0) {
+                    shellReady = true;
+                }
+                if (timedOut) {
+                    output = (output.isEmpty() ? "" : output + "\n")
+                            + "[таймаут выполнения команды]";
+                }
+                if (output.length() > 16000) {
+                    output = output.substring(0, 16000) + "\n[вывод обрезан]";
+                }
+                return new ExecOutcome(output, code, preempted);
+            } catch (Exception e) {
+                String errMsg = e.getMessage() == null ? "exec error" : e.getMessage();
+                return new ExecOutcome(errMsg, -1, false);
+            }
+        }
+    }
+
+    void exec(String id, String command) {
+        final Process proc = process;
+        if (!running || proc == null) {
+            runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                    + JSONObject.quote(id) + "," + JSONObject.quote("Песочница не запущена") + ",-1)");
+            ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница не запущена", -1); });
+            return;
+        }
+        String cmdText = command == null ? "" : command;
+        boolean longPkg = cmdText.contains("install-base")
+                || cmdText.contains("apt-get")
+                || cmdText.contains("apt ")
+                || cmdText.contains("pip ")
+                || cmdText.contains("pip3 ")
+                || cmdText.contains("npm ");
+        long timeoutMs = longPkg ? 900_000L : 120_000L;
+        new Thread(() -> {
+            ExecOutcome outcome = runBlockingExec(id, cmdText, timeoutMs, id);
+            if (outcome.preempted) return;
+            runJs("window.__sandboxExecResult && window.__sandboxExecResult("
+                    + JSONObject.quote(id) + "," + JSONObject.quote(outcome.output)
+                    + "," + outcome.code + ")");
+            ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, outcome.output, outcome.code); });
         }, "sandbox-exec").start();
     }
 
@@ -590,6 +737,7 @@ final class SandboxManager {
         StringBuilder cleaned = new StringBuilder(normalized.length());
         for (String line : normalized.split("\n", -1)) {
             if (line.equals("#") || line.equals("# ")) continue;
+            if (line.contains("__LOCALAPI_TOOLS__=") || line.contains("__LOCALAPI_BASE_V2__=")) continue;
             cleaned.append(line).append('\n');
         }
         return cleaned.toString().trim();
@@ -613,24 +761,76 @@ final class SandboxManager {
         utc.setTimeZone(TimeZone.getTimeZone("UTC"));
         String date = utc.format(new Date());
         String setup = "/bin/busybox ifconfig lo up 2>/dev/null\n"
-                + "/bin/busybox ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
-                + "/bin/busybox route add default gw 10.0.2.2 eth0 2>/dev/null\n"
+                + "NIC=eth0; for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] || { NIC=\"$n\"; break; }; done\n"
+                + "/bin/busybox ifconfig \"$NIC\" 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
+                + "/bin/busybox route add default gw 10.0.2.2 \"$NIC\" 2>/dev/null\n"
                 + "printf 'nameserver 10.0.2.3\\n' > /etc/resolv.conf\n"
                 + "date -u -s \"" + date + "\" 2>/dev/null\n"
+                + "export DEBIAN_FRONTEND=noninteractive\n"
+                + "export APT_LISTCHANGES_FRONTEND=none\n"
                 + "export http_proxy=http://10.0.2.2:18991\n"
                 + "export https_proxy=http://10.0.2.2:18991\n"
-                + "[ -e /usr/bin/top ] || ln -s /bin/busybox /usr/bin/top 2>/dev/null\n"
-                + "printf '#!/bin/sh\\napt-get update && apt-get install -y --no-install-recommends curl ca-certificates htop procps python3 python3-pip git wget dnsutils iputils-ping\\n' > /usr/bin/install-base\n"
+                + "export HTTP_PROXY=http://10.0.2.2:18991\n"
+                + "export HTTPS_PROXY=http://10.0.2.2:18991\n"
+                + "export no_proxy=localhost,127.0.0.1,10.0.2.2\n"
+                + "export NO_PROXY=localhost,127.0.0.1,10.0.2.2\n"
+                + "export PATH=/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n"
+                + "mkdir -p /usr/local/bin /etc/profile.d\n"
+                + "for cmd in wget unzip tar ps top ping nslookup nc less vi; do "
+                + "  if /bin/busybox --list 2>/dev/null | /bin/busybox grep -qx \"$cmd\"; then "
+                + "    [ -e \"/usr/local/bin/$cmd\" ] || ln -s /bin/busybox \"/usr/local/bin/$cmd\" 2>/dev/null; "
+                + "  fi; "
+                + "done\n"
+                + "cat << 'PROEOF' > /etc/profile.d/localapi.sh\n"
+                + "export DEBIAN_FRONTEND=noninteractive\n"
+                + "export APT_LISTCHANGES_FRONTEND=none\n"
+                + "export http_proxy=http://10.0.2.2:18991\n"
+                + "export https_proxy=http://10.0.2.2:18991\n"
+                + "export HTTP_PROXY=http://10.0.2.2:18991\n"
+                + "export HTTPS_PROXY=http://10.0.2.2:18991\n"
+                + "export no_proxy=localhost,127.0.0.1,10.0.2.2\n"
+                + "export NO_PROXY=localhost,127.0.0.1,10.0.2.2\n"
+                + "export PATH=/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n"
+                + "PROEOF\n"
+                + "cat << 'APTEOF' > /etc/apt/apt.conf.d/99proxy\n"
+                + "Acquire::http::Proxy \"http://10.0.2.2:18991\";\n"
+                + "Acquire::https::Proxy \"http://10.0.2.2:18991\";\n"
+                + "Acquire::http::Pipeline-Depth \"0\";\n"
+                + "Acquire::ForceIPv4 \"true\";\n"
+                + "Acquire::Retries \"3\";\n"
+                + "Acquire::http::Timeout \"30\";\n"
+                + "Acquire::https::Timeout \"30\";\n"
+                + "DPkg::Options { \"--force-confdef\"; \"--force-confold\"; };\n"
+                + "APTEOF\n"
+                + "cat << 'IBEOF' > /usr/bin/install-base\n"
+                + "#!/bin/sh\n"
+                + "set -e\n"
+                + "export DEBIAN_FRONTEND=noninteractive\n"
+                + "export APT_LISTCHANGES_FRONTEND=none\n"
+                + "export http_proxy=http://10.0.2.2:18991\n"
+                + "export https_proxy=http://10.0.2.2:18991\n"
+                + "export HTTP_PROXY=http://10.0.2.2:18991\n"
+                + "export HTTPS_PROXY=http://10.0.2.2:18991\n"
+                + "echo '==> Обновление индексов apt...'\n"
+                + "apt-get update\n"
+                + "echo '==> Установка python3, pip, curl, wget, htop, git, jq, unzip, nano, tree, sqlite3...'\n"
+                + "apt-get install -y --no-install-recommends ca-certificates curl wget python3 python3-pip python3-venv git htop procps jq unzip zip nano file tree sqlite3 dnsutils iputils-ping net-tools\n"
+                + "touch /var/lib/localapi-base-v2\n"
+                + "echo '==> Готово! Пакеты сохранены в rootfs.img.'\n"
+                + "IBEOF\n"
                 + "chmod +x /usr/bin/install-base\n"
-                + "printf 'Acquire::http::Proxy \"http://10.0.2.2:18991\";\\n"
-                + "Acquire::https::Proxy \"http://10.0.2.2:18991\";\\n' > /etc/apt/apt.conf.d/99proxy\n"
                 + "cd /workspace 2>/dev/null || true\n"
+                + "__tools=\"\"; for t in python3 pip3 curl wget htop git jq unzip zip nano tree sqlite3; do "
+                + "  [ -x \"/usr/bin/$t\" ] || [ -x \"/bin/$t\" ] && __tools=\"${__tools}${__tools:+,}$t\"; "
+                + "done\n"
+                + "printf '%s%s=%s\\n' '__LOCALAPI_' 'TOOLS__' \"$__tools\"\n"
+                + "if [ -f /var/lib/localapi-base-v2 ]; then printf '%s%s=1\\n' '__LOCALAPI_' 'BASE_V2__'; else printf '%s%s=0\\n' '__LOCALAPI_' 'BASE_V2__'; fi\n"
                 + "printf '%s%s\\n' '__LOCALAPI_' 'NET_READY__'\n";
         try {
             synchronized (writeLock) {
                 writeUartSafe(proc.getOutputStream(), setup.getBytes(StandardCharsets.UTF_8));
             }
-            log("sandbox network configured (slirp 10.0.2.15)");
+            log("sandbox network & apt configured (slirp 10.0.2.15 -> proxy 10.0.2.2:18991)");
         } catch (Exception e) {
             shellReady = true;
             log("sandbox network setup error: " + e.getMessage());
@@ -644,6 +844,7 @@ final class SandboxManager {
             process = null;
             running = false;
             shellReady = false;
+            installingBase = false;
         }
         if (p != null) p.destroy();
         synchronized (serialLock) {

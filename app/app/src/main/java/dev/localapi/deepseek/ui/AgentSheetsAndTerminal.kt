@@ -31,6 +31,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
@@ -76,6 +78,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -304,6 +307,7 @@ fun SandboxSheet(state: AppState) {
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -353,6 +357,54 @@ fun SandboxSheet(state: AppState) {
                     modifier = Modifier.fillMaxWidth().clip(CircleShape)
                 )
                 Text("Загрузка: ${sb.progressPercent}%", style = MaterialTheme.typography.labelSmall)
+            }
+
+            if (sb.running) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = { state.installSandboxBase() },
+                        enabled = !sb.installingBase,
+                        modifier = Modifier.weight(1f),
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Rounded.Build, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            when {
+                                sb.installingBase -> "Установка…"
+                                sb.baseInstalled -> "Обновить пакеты"
+                                else -> "Пакеты (Python…)"
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = { state.testSandboxNetwork() },
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Rounded.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Сеть", maxLines = 1)
+                    }
+                }
+                if (sb.installedTools.isNotEmpty()) {
+                    Text(
+                        "Установлено: ${sb.installedTools}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (sb.networkStatus.isNotEmpty()) {
+                    Text(
+                        "Сеть: ${sb.networkStatus}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             if (sb.log.isNotEmpty()) {

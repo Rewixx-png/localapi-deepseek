@@ -486,14 +486,17 @@ fun ChatScreen(state: AppState) {
                                     }
                                     when (msg.role) {
                                         "user" -> UserMessageBlock(msg, state)
-                                        "tool" -> msg.toolBlock?.let { ToolExecutionCard(it) }
+                                        "tool" -> msg.toolBlock?.let {
+                                            ToolExecutionCard(it, onStop = { state.cancelAgentExec() })
+                                        }
                                         "notice" -> msg.notice?.let { SandboxNoticeRow(it) }
                                         else -> AssistantMessageBlock(
                                             m = msg,
                                             state = state,
                                             streaming = false,
                                             isLatest = isLastMsg && !state.streaming,
-                                            viewportTopProvider = { viewportTopWindowY.floatValue }
+                                            viewportTopProvider = { viewportTopWindowY.floatValue },
+                                            scrollTickProvider = { listState.firstVisibleItemIndex * 100_000 + listState.firstVisibleItemScrollOffset }
                                         )
                                     }
                                 }
@@ -518,7 +521,8 @@ fun ChatScreen(state: AppState) {
                                             state = state,
                                             streaming = true,
                                             isLatest = true,
-                                            viewportTopProvider = { viewportTopWindowY.floatValue }
+                                            viewportTopProvider = { viewportTopWindowY.floatValue },
+                                            scrollTickProvider = { listState.firstVisibleItemIndex * 100_000 + listState.firstVisibleItemScrollOffset }
                                         )
                                     }
                                 }
@@ -875,7 +879,8 @@ private fun AssistantMessageBlock(
     state: AppState,
     streaming: Boolean,
     isLatest: Boolean,
-    viewportTopProvider: () -> Float
+    viewportTopProvider: () -> Float,
+    scrollTickProvider: () -> Int
 ) {
     val scale = LocalTextScale.current
     var reasoningOpen by remember(m.uid) { mutableStateOf(false) }
@@ -1032,7 +1037,8 @@ private fun AssistantMessageBlock(
                 onCopy = { state.copyText(it) },
                 onOpenUrl = { state.openUrl(it) },
                 onPreviewHtml = { state.hostActions?.openHtmlPreview(it) },
-                viewportTopProvider = viewportTopProvider
+                viewportTopProvider = viewportTopProvider,
+                scrollTickProvider = scrollTickProvider
             )
         }
 
@@ -1165,7 +1171,7 @@ private fun AssistantMessageBlock(
 }
 
 @Composable
-private fun ToolExecutionCard(tb: ToolBlockData) {
+private fun ToolExecutionCard(tb: ToolBlockData, onStop: () -> Unit = {}) {
     var open by remember(tb.id) { mutableStateOf(tb.running) }
     val ok = tb.exitCode == "0"
     val chevronRot by animateFloatAsState(if (open) 180f else 0f, ExpressiveSpring, label = "tool_chev")
@@ -1199,6 +1205,19 @@ private fun ToolExecutionCard(tb: ToolBlockData) {
                     ExpressiveLoader(size = 14.dp, color = Color(0xFF7BD88F), containerColor = Color(0xFF1A2B22))
                     Spacer(Modifier.width(6.dp))
                     Text("выполняется…", style = MaterialTheme.typography.labelSmall, color = Color(0xFF8B949E))
+                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        onClick = onStop,
+                        shape = CircleShape,
+                        color = Color(0xFF421A1D)
+                    ) {
+                        Text(
+                            "Стоп",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFFF9B9B)
+                        )
+                    }
                 } else {
                     Surface(
                         shape = CircleShape,

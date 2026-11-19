@@ -25,8 +25,10 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
@@ -46,7 +48,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -70,7 +71,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -85,7 +85,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -100,11 +100,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.lang.ref.WeakReference
@@ -709,6 +707,7 @@ fun MarkdownMessageContent(
     onOpenUrl: (String) -> Unit,
     onPreviewHtml: (String) -> Unit,
     viewportTopProvider: () -> Float = { 0f },
+    scrollTickProvider: () -> Int = { 0 },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -884,7 +883,8 @@ fun MarkdownMessageContent(
                         textScale = textScale,
                         onCopy = { onCopy(block.code) },
                         onPreviewHtml = { onPreviewHtml(block.code) },
-                        viewportTopProvider = viewportTopProvider
+                        viewportTopProvider = viewportTopProvider,
+                        scrollTickProvider = scrollTickProvider
                     )
                     is MdBlock.Table -> MarkdownTableCard(
                         table = block,
@@ -1242,7 +1242,8 @@ private fun CodeBlockCard(
     textScale: Float,
     onCopy: () -> Unit,
     onPreviewHtml: () -> Unit,
-    viewportTopProvider: () -> Float
+    viewportTopProvider: () -> Float,
+    scrollTickProvider: () -> Int
 ) {
     var expanded by remember { mutableStateOf(true) }
     var copied by remember { mutableStateOf(false) }
@@ -1258,10 +1259,6 @@ private fun CodeBlockCard(
     val copyInteraction = remember { MutableInteractionSource() }
     val runInteraction = remember { MutableInteractionSource() }
 
-    val cardTopWindowY = remember { mutableFloatStateOf(0f) }
-    val cardHeightPx = remember { mutableIntStateOf(0) }
-    val headerHeightPx = remember { mutableIntStateOf(0) }
-
     LaunchedEffect(copied) {
         if (copied) {
             delay(1400)
@@ -1274,159 +1271,168 @@ private fun CodeBlockCard(
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         modifier = Modifier
             .fillMaxWidth()
-            .onGloballyPositioned { coords ->
-                cardTopWindowY.floatValue = coords.positionInWindow().y
-                cardHeightPx.intValue = coords.size.height
-            }
-            .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 420f))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .zIndex(2f)
-                    .onGloballyPositioned { coords ->
-                        headerHeightPx.intValue = coords.size.height
-                    }
-                    .offset {
-                        if (!expanded || cardHeightPx.intValue <= headerHeightPx.intValue * 2) {
-                            IntOffset.Zero
-                        } else {
-                            val scrolledPast = (viewportTopProvider() - cardTopWindowY.floatValue).roundToInt()
-                            val maxOffset = (cardHeightPx.intValue - headerHeightPx.intValue).coerceAtLeast(0)
-                            IntOffset(0, scrolledPast.coerceIn(0, maxOffset))
-                        }
-                    }
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable { expanded = !expanded }
-            ) {
-                Row(
+        Layout(
+            content = {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable { expanded = !expanded }
                 ) {
-                    Text(
-                        lang.ifEmpty { "code" }.uppercase(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        lineCountLabel(lines.size),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.weight(1f))
-                    if (canRun) {
-                        Surface(
-                            onClick = onPreviewHtml,
-                            interactionSource = runInteraction,
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.springBounce(runInteraction).padding(end = 6.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(14.dp))
-                                Text("Открыть", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                            }
-                        }
-                    }
-                    Surface(
-                        onClick = {
-                            onCopy()
-                            copied = true
-                        },
-                        interactionSource = copyInteraction,
-                        shape = CircleShape,
-                        color = copyBg,
-                        modifier = Modifier.springBounce(copyInteraction)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AnimatedContent(
-                            targetState = copied,
-                            transitionSpec = {
-                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.9f)) togetherWith
-                                    (fadeOut(tween(110)) + scaleOut(targetScale = 0.9f))
-                            },
-                            label = "code_copy_anim"
-                        ) { isCopied ->
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        Text(
+                            lang.ifEmpty { "code" }.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            lineCountLabel(lines.size),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.weight(1f))
+                        if (canRun) {
+                            Surface(
+                                onClick = onPreviewHtml,
+                                interactionSource = runInteraction,
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.springBounce(runInteraction).padding(end = 6.dp)
                             ) {
-                                Icon(
-                                    if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                                    contentDescription = null,
-                                    tint = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    if (isCopied) "Скопировано" else "Копировать",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(14.dp))
+                                    Text("Открыть", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                }
                             }
                         }
+                        Surface(
+                            onClick = {
+                                onCopy()
+                                copied = true
+                            },
+                            interactionSource = copyInteraction,
+                            shape = CircleShape,
+                            color = copyBg,
+                            modifier = Modifier.springBounce(copyInteraction)
+                        ) {
+                            AnimatedContent(
+                                targetState = copied,
+                                transitionSpec = {
+                                    (fadeIn(tween(150)) + scaleIn(initialScale = 0.9f)) togetherWith
+                                        (fadeOut(tween(110)) + scaleOut(targetScale = 0.9f))
+                                },
+                                label = "code_copy_anim"
+                            ) { isCopied ->
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                        contentDescription = null,
+                                        tint = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        if (isCopied) "Скопировано" else "Копировать",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isCopied) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            Icons.Rounded.ExpandMore,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp).rotate(chevronRot)
+                        )
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Icon(
-                        Icons.Rounded.ExpandMore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp).rotate(chevronRot)
-                    )
+                    if (expanded) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    }
                 }
-                if (expanded) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = expandVertically(spring(dampingRatio = 0.86f, stiffness = 420f)) + fadeIn(tween(150)),
+                    exit = shrinkVertically(tween(180)) + fadeOut(tween(120))
+                ) {
+                    val fontSize = (12.5f * textScale).sp
+                    val lineHeight = (18.5f * textScale).sp
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
+                            .padding(vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = (1..lines.size).joinToString("\n"),
+                            softWrap = false,
+                            modifier = Modifier.padding(start = 12.dp, end = 10.dp),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = fontSize,
+                                lineHeight = lineHeight,
+                                textAlign = TextAlign.End
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        )
+                        Text(
+                            text = highlighted,
+                            softWrap = false,
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 12.dp),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = fontSize,
+                                lineHeight = lineHeight
+                            )
+                        )
+                    }
                 }
             }
-            AnimatedVisibility(visible = expanded) {
-                val fontSize = (12.5f * textScale).sp
-                val lineHeight = (18.5f * textScale).sp
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min)
-                        .padding(vertical = 10.dp)
-                ) {
-                    Text(
-                        text = (1..lines.size).joinToString("\n"),
-                        softWrap = false,
-                        modifier = Modifier.padding(start = 12.dp, end = 10.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = fontSize,
-                            lineHeight = lineHeight,
-                            textAlign = TextAlign.End
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    )
-                    Text(
-                        text = highlighted,
-                        softWrap = false,
-                        modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = fontSize,
-                            lineHeight = lineHeight
-                        )
-                    )
+        ) { measurables, constraints ->
+            val childConstraints = constraints.copy(minHeight = 0)
+            val headerP = measurables[0].measure(childConstraints)
+            val bodyP = measurables.getOrNull(1)?.measure(childConstraints)
+            val bodyH = bodyP?.height ?: 0
+            val width = maxOf(headerP.width, bodyP?.width ?: 0)
+            val totalH = headerP.height + bodyH
+            layout(width, totalH) {
+                scrollTickProvider()
+                bodyP?.placeRelative(0, headerP.height, zIndex = 0f)
+                val coords = coordinates
+                val stickyY = if (expanded && bodyH > headerP.height && coords != null && coords.isAttached) {
+                    val topInWindow = coords.positionInWindow().y
+                    val scrolledPast = (viewportTopProvider() - topInWindow).roundToInt()
+                    val maxOffset = (totalH - headerP.height).coerceAtLeast(0)
+                    scrolledPast.coerceIn(0, maxOffset)
+                } else {
+                    0
                 }
+                headerP.placeRelative(0, stickyY, zIndex = 2f)
             }
         }
     }
