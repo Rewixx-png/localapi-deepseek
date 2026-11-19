@@ -1,7 +1,7 @@
 {
-  "versionCode": 77,
-  "versionName": "1.11.16",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.16/LocalApiDeepSeek.apk",
-  "sha256": "d89237dcbb2e489f20e618bc805f3ec91a8e11ecb0366381d3e4035a0a554194",
+  "versionCode": 78,
+  "versionName": "1.11.17",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.17/LocalApiDeepSeek.apk",
+  "sha256": "3ce80926960f48f5e9fd46fd2bf241ab05e71dfa920cec3181d87ddf66dcb427",
   "notes": "Липкая шапка кода без отставания и мерцания, починена сеть и apt-get в песочнице Ubuntu (Keep-Alive прокси, Pipeline-Depth=0, noninteractive, проверка сети и кнопка установки Python/curl/wget/htop/git/jq в 1 тап), кнопка «Стоп» на командах агента и улучшенный промпт агента."
 }
