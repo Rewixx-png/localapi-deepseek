@@ -1,7 +1,7 @@
 {
-  "versionCode": 79,
-  "versionName": "1.11.18",
-  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.18/LocalApiDeepSeek.apk",
-  "sha256": "ae85fc550a59060b94979a1291ff39624f99e1f82bc4973f087a999f203f1274",
+  "versionCode": 80,
+  "versionName": "1.11.19",
+  "url": "https://github.com/Rewixx-png/localapi-deepseek/releases/download/v1.11.19/LocalApiDeepSeek.apk",
+  "sha256": "7c52f6ec8d51a91b9fa6cddfe25aa469f4e9a3eb87ae393f93ece8b1db364114",
   "notes": "Крупное обновление стабильности и безопасности: R8-оптимизация (−10 МБ APK, DEX в 15× меньше), вынесены все тяжёлые вызовы JNI/I/O с UI-потока, починены tail логов, честная перегенерация без дублей, синхронизация SAF-папки с /workspace, SSRF-защита прокси песочницы, строгая проверка SHA-256 обновлений, настройка порта локального API и динамический список моделей."
 }
