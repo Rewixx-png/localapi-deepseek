@@ -867,7 +867,15 @@ fn local_server_works_with_web_session() {
     assert_eq!(WEB_SESSION_CREATES.load(Ordering::Relaxed), 1);
 
     engine.stop_server();
-    let deleted: Value = serde_json::from_str(&LAST_WEB_DELETE.lock().unwrap()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let raw = loop {
+        let current = LAST_WEB_DELETE.lock().unwrap().clone();
+        if !current.is_empty() || Instant::now() >= deadline {
+            break current;
+        }
+        std::thread::sleep(Duration::from_millis(15));
+    };
+    let deleted: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(deleted["chat_session_ids"][0], WEB_SESSION);
 }
 
@@ -1159,4 +1167,41 @@ fn api_images_are_sent_as_content_parts() {
 
     let stored = engine.get_chat(&chat.id).unwrap();
     assert_eq!(stored.messages[0].images.len(), 1);
+}
+
+#[test]
+fn pop_last_turn_rewinds_history_and_preserves_images() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let base = start_mock();
+    let dir = temp_dir();
+    let engine = Engine::with_base(&dir, &base).unwrap();
+    engine.set_token(API_TOKEN, "api").unwrap();
+    let chat = engine.new_chat().unwrap();
+    let image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z2S8AAAAASUVORK5CYII=";
+
+    let s1 = engine.send(&chat.id, "первый вопрос", "high").unwrap();
+    wait_done(&engine, s1.stream_id);
+
+    let s2 = engine
+        .send_opts(
+            &chat.id,
+            "второй вопрос с фото",
+            "deepseek-flash",
+            true,
+            false,
+            vec![image.to_string()],
+            "high",
+        )
+        .unwrap();
+    wait_done(&engine, s2.stream_id);
+    assert_eq!(engine.get_chat(&chat.id).unwrap().messages.len(), 4);
+
+    let popped = engine.pop_last_turn(&chat.id).unwrap();
+    assert_eq!(popped.text, "второй вопрос с фото");
+    assert_eq!(popped.images, vec![image.to_string()]);
+    assert_eq!(popped.chat.messages.len(), 2);
+
+    let stored = engine.get_chat(&chat.id).unwrap();
+    assert_eq!(stored.messages.len(), 2);
+    assert_eq!(stored.messages[0].content, "первый вопрос");
 }

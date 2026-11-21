@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Allow cleartext globally only because the embedded Ubuntu sandbox proxy
+        (apt HTTP mirrors such as ports.ubuntu.com) and AgentBrowser may reach
+        arbitrary HTTP endpoints. Every credential-bearing and update domain is
+        strictly pinned to HTTPS below.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">deepseek.com</domain>
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="true">cloudflare.com</domain>
+        <domain includeSubdomains="true">trycloudflare.com</domain>
+        <domain includeSubdomains="true">argotunnel.com</domain>
+    </domain-config>
+</network-security-config>

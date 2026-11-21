@@ -226,6 +226,29 @@ impl Store {
         conv.updated_at = now_ms();
         self.save(conv)
     }
+
+    /// Removes the last non-tool user message and all following messages (assistant
+    /// reply and any intermediate agent tool turns) so the UI can cleanly regenerate
+    /// without duplicating the user turn in history.
+    pub fn pop_last_turn(
+        &self,
+        conv: &mut Conversation,
+    ) -> Result<Option<(String, Vec<String>)>, Error> {
+        let Some(idx) = conv
+            .messages
+            .iter()
+            .rposition(|m| m.role == "user" && !m.content.starts_with("[TOOL_RESULT]"))
+        else {
+            return Ok(None);
+        };
+        let removed = conv.messages[idx].clone();
+        conv.messages.truncate(idx);
+        conv.web_session_id.clear();
+        conv.web_parent_id = None;
+        conv.updated_at = now_ms();
+        self.save(conv)?;
+        Ok(Some((removed.content, removed.images)))
+    }
 }
 
 fn random_hex(len: usize) -> String {

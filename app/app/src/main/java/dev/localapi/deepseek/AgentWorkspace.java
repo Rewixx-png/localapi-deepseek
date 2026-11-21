@@ -2,13 +2,7 @@ package dev.localapi.deepseek;
 
 import android.content.Context;
 import android.net.Uri;
-import android.util.Base64;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -18,23 +12,61 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.List;
+import java.util.Locale;
 
 /**
- * Per-agent-chat workspace. ZIP imports are treated as untrusted input:
- * names must stay inside the workspace, entries and sizes are capped, and
- * symlinks are never created by ZipInputStream.
+ * Per-agent-chat workspace mounted directly into QEMU over 9p as /workspace.
+ * All relative paths are canonical-checked to stay inside the workspace root.
  */
 final class AgentWorkspace {
-    private static final long MAX_ZIP_BYTES = 40L * 1024 * 1024;
-    private static final long MAX_TOTAL_BYTES = 120L * 1024 * 1024;
-    private static final long MAX_FILE_BYTES = 32L * 1024 * 1024;
-    private static final int MAX_READ_BYTES = 128 * 1024;
-    private static final int MAX_ENTRIES = 600;
-    private static final int MAX_LISTED = 300;
+    static final long MAX_ZIP_BYTES = 40L * 1024 * 1024;
+    static final int MAX_READ_BYTES = 128 * 1024;
+    static final int MAX_MEDIA_BYTES = 16 * 1024 * 1024;
+    static final int MAX_LISTED = 300;
+
+    static final class FileEntry {
+        final String name;
+        final long size;
+
+        FileEntry(String name, long size) {
+            this.name = name;
+            this.size = size;
+        }
+    }
+
+    static final class TextFile {
+        final String name;
+        final long size;
+        final boolean truncated;
+        final boolean binary;
+        final String text;
+
+        TextFile(String name, long size, boolean truncated, boolean binary, String text) {
+            this.name = name;
+            this.size = size;
+            this.truncated = truncated;
+            this.binary = binary;
+            this.text = text;
+        }
+    }
+
+    static final class MediaBytes {
+        final String name;
+        final long size;
+        final String mime;
+        final byte[] bytes;
+
+        MediaBytes(String name, long size, String mime, byte[] bytes) {
+            this.name = name;
+            this.size = size;
+            this.mime = mime;
+            this.bytes = bytes;
+        }
+    }
 
     private AgentWorkspace() {
     }
@@ -73,7 +105,7 @@ final class AgentWorkspace {
             name = "project.zip";
         }
         if (name.length() > 96) name = name.substring(name.length() - 96);
-        if (!name.toLowerCase().endsWith(".zip")) name += ".zip";
+        if (!name.toLowerCase(Locale.US).endsWith(".zip")) name += ".zip";
         if (name.equals(".zip")) name = "project.zip";
 
         File target = new File(root, name);
@@ -113,103 +145,32 @@ final class AgentWorkspace {
         return name;
     }
 
-    static JSONArray list(Context context, String chatId) {
+    static List<FileEntry> listEntries(Context context, String chatId) {
         File root = root(context, chatId);
-        JSONArray out = new JSONArray();
+        List<FileEntry> out = new ArrayList<>();
         collect(root, "", out);
         return out;
     }
 
-    private static void collect(File dir, String prefix, JSONArray out) {
-        if (out.length() >= MAX_LISTED) return;
+    private static void collect(File dir, String prefix, List<FileEntry> out) {
+        if (out.size() >= MAX_LISTED) return;
         File[] files = dir.listFiles();
         if (files == null) return;
         Arrays.sort(files, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
         for (File file : files) {
-            if (out.length() >= MAX_LISTED) return;
+            if (out.size() >= MAX_LISTED) return;
             String name = file.getName();
             String relative = prefix.isEmpty() ? name : prefix + "/" + name;
             if (file.isDirectory()) {
                 collect(file, relative, out);
             } else if (file.isFile()) {
-                try {
-                    JSONObject item = new JSONObject();
-                    item.put("name", relative);
-                    item.put("size", file.length());
-                    out.put(item);
-                } catch (Exception ignored) {
-                }
+                out.add(new FileEntry(relative, file.length()));
             }
         }
     }
 
-    static String importZip(Context context, String chatId, Uri uri) throws IOException {
-        File root = root(context, chatId);
-        File temp = new File(context.getCacheDir(), "agent-import-" + System.nanoTime() + ".zip");
-        long compressed;
-        try {
-            compressed = copyLimited(context, uri, temp, MAX_ZIP_BYTES);
-            if (compressed <= 0) {
-                throw new IOException("ZIP пустой");
-            }
-            int entries = 0;
-            long total = 0;
-            byte[] buffer = new byte[64 * 1024];
-            String rootPath = root.getCanonicalPath();
-            try (ZipInputStream zin = new ZipInputStream(
-                    new BufferedInputStream(new FileInputStream(temp)))) {
-                ZipEntry entry;
-                while ((entry = zin.getNextEntry()) != null) {
-                    entries++;
-                    if (entries > MAX_ENTRIES) {
-                        throw new IOException("В ZIP слишком много файлов");
-                    }
-                    String name = entry.getName();
-                    if (!safeRelative(name)) {
-                        throw new IOException("Небезопасный путь в ZIP: " + name);
-                    }
-                    File target = new File(root, name);
-                    String targetPath = target.getCanonicalPath();
-                    if (!targetPath.equals(rootPath)
-                            && !targetPath.startsWith(rootPath + File.separator)) {
-                        throw new IOException("Путь выходит за пределы workspace");
-                    }
-                    if (entry.isDirectory()) {
-                        if (!target.isDirectory() && !target.mkdirs()) {
-                            throw new IOException("Не удалось создать папку " + name);
-                        }
-                        continue;
-                    }
-                    File parent = target.getParentFile();
-                    if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
-                        throw new IOException("Не удалось создать папку для " + name);
-                    }
-                    long fileBytes = 0;
-                    try (OutputStream out = new FileOutputStream(target)) {
-                        int read;
-                        while ((read = zin.read(buffer)) > 0) {
-                            fileBytes += read;
-                            total += read;
-                            if (fileBytes > MAX_FILE_BYTES) {
-                                throw new IOException("Файл больше 32 МБ: " + name);
-                            }
-                            if (total > MAX_TOTAL_BYTES) {
-                                throw new IOException("Распакованный ZIP больше 120 МБ");
-                            }
-                            out.write(buffer, 0, read);
-                        }
-                    }
-                }
-            }
-            return entries + " файлов распаковано";
-        } finally {
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-        }
-    }
-
-    static JSONObject read(Context context, String chatId, String name, int maxBytes)
-            throws IOException, JSONException {
+    static TextFile readText(Context context, String chatId, String name, int maxBytes)
+            throws IOException {
         if (!safeRelative(name)) {
             throw new IOException("Некорректный путь файла");
         }
@@ -244,13 +205,13 @@ final class AgentWorkspace {
         byte[] bytes = out.toByteArray();
         boolean binary = isBinary(bytes);
         int textLen = truncated && !binary ? utf8SafeLength(bytes) : bytes.length;
-        JSONObject item = new JSONObject();
-        item.put("name", name);
-        item.put("size", size);
-        item.put("truncated", truncated || size > bytes.length);
-        item.put("binary", binary);
-        item.put("text", binary ? "" : new String(bytes, 0, textLen, StandardCharsets.UTF_8));
-        return item;
+        return new TextFile(
+                name,
+                size,
+                truncated || size > bytes.length,
+                binary,
+                binary ? "" : new String(bytes, 0, textLen, StandardCharsets.UTF_8)
+        );
     }
 
     private static int utf8SafeLength(byte[] bytes) {
@@ -273,8 +234,8 @@ final class AgentWorkspace {
         return (len - i) < expected ? i : len;
     }
 
-    static JSONObject readMedia(Context context, String chatId, String name, int maxBytes)
-            throws IOException, JSONException {
+    static MediaBytes readMediaBytes(Context context, String chatId, String name, int maxBytes)
+            throws IOException {
         if (!safeRelative(name)) throw new IOException("Некорректный путь файла");
         File root = root(context, chatId);
         File target = new File(root, name);
@@ -283,7 +244,7 @@ final class AgentWorkspace {
         if (!targetPath.startsWith(rootPath + File.separator) || !target.isFile()) {
             throw new IOException("Файл не найден");
         }
-        int limit = Math.max(1, Math.min(maxBytes, 16 * 1024 * 1024));
+        int limit = Math.max(1, Math.min(maxBytes, MAX_MEDIA_BYTES));
         long size = target.length();
         if (size > limit) throw new IOException("Файл больше " + (limit / (1024 * 1024)) + " МБ");
         ByteArrayOutputStream out = new ByteArrayOutputStream((int) Math.max(32, size));
@@ -295,16 +256,11 @@ final class AgentWorkspace {
         byte[] bytes = out.toByteArray();
         String mime = URLConnection.guessContentTypeFromName(name);
         if (mime == null) mime = mimeFromExtension(name);
-        JSONObject item = new JSONObject();
-        item.put("name", name);
-        item.put("size", size);
-        item.put("mime", mime);
-        item.put("data", Base64.encodeToString(bytes, Base64.NO_WRAP));
-        return item;
+        return new MediaBytes(name, size, mime, bytes);
     }
 
     private static String mimeFromExtension(String name) {
-        String lower = name.toLowerCase();
+        String lower = name.toLowerCase(Locale.US);
         if (lower.endsWith(".mp3")) return "audio/mpeg";
         if (lower.endsWith(".wav")) return "audio/wav";
         if (lower.endsWith(".m4a")) return "audio/mp4";
@@ -349,11 +305,6 @@ final class AgentWorkspace {
         }
     }
 
-    static void clear(Context context, String chatId) {
-        File root = root(context, chatId);
-        deleteRecursive(root);
-    }
-
     private static boolean deleteRecursive(File file) {
         if (file.isDirectory()) {
             File[] children = file.listFiles();
@@ -364,26 +315,7 @@ final class AgentWorkspace {
         return file.delete();
     }
 
-    private static long copyLimited(Context context, Uri uri, File target, long limit)
-            throws IOException {
-        InputStream in = context.getContentResolver().openInputStream(uri);
-        if (in == null) throw new IOException("Не удалось открыть ZIP");
-        long total = 0;
-        try (InputStream source = in; OutputStream out = new FileOutputStream(target)) {
-            byte[] buffer = new byte[64 * 1024];
-            int read;
-            while ((read = source.read(buffer)) > 0) {
-                total += read;
-                if (total > limit) {
-                    throw new IOException("ZIP больше 40 МБ");
-                }
-                out.write(buffer, 0, read);
-            }
-        }
-        return total;
-    }
-
-    private static boolean safeRelative(String name) {
+    static boolean safeRelative(String name) {
         if (name == null || name.isEmpty()) return false;
         String normalized = name.replace('\\', '/');
         if (normalized.startsWith("/") || normalized.indexOf('\0') >= 0) return false;

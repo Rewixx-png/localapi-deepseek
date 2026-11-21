@@ -1,4 +1,4 @@
-package dev.localapi.deepseek
+package dev.localapi.deepseek.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing

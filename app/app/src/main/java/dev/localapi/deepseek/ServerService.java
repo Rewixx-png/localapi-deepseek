@@ -45,7 +45,9 @@ public final class ServerService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        int port = intent == null ? 8787 : intent.getIntExtra("port", 8787);
+        int port = intent == null
+                ? AppConfig.DEFAULT_LOCAL_API_PORT
+                : intent.getIntExtra("port", AppConfig.DEFAULT_LOCAL_API_PORT);
 
         Intent open = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -126,7 +128,7 @@ public final class ServerService extends Service {
     public void onDestroy() {
         releaseLocks();
         CloudflareTunnel.shutdown();
-        stopForeground(true);
+        stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
     }
 

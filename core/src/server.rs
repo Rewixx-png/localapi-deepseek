@@ -6,7 +6,7 @@
 
 use std::io::{Cursor, Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -15,10 +15,14 @@ use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::api::{Api, Delta};
-use crate::types::{now_ms, Error, ErrorKind, Message, Usage, MODEL_ID};
+use crate::types::{
+    now_ms, Error, ErrorKind, Message, Usage, MODEL_ID, MODEL_PRO_ID, MODEL_REASONER_ID,
+    SUPPORTED_MODELS,
+};
 use crate::web::{prompt as web_prompt, WebApi, WebDelta};
 
 const MAX_BODY: u64 = 8 * 1024 * 1024;
+const MAX_CONCURRENT_REQUESTS: usize = 32;
 
 #[derive(Clone)]
 pub enum Backend {
@@ -82,12 +86,14 @@ impl LocalServer {
         let flag = Arc::clone(&shutdown);
         let backend = Arc::new(backend);
         let web_session = Arc::new(Mutex::new(None));
+        let active_requests = Arc::new(AtomicUsize::new(0));
         let worker_key = key.clone();
         let handle = spawn_accept(
             server,
             Arc::clone(&backend),
             worker_key.clone(),
             Arc::clone(&web_session),
+            Arc::clone(&active_requests),
             Arc::clone(&flag),
             "local-api-accept",
         )?;
@@ -97,6 +103,7 @@ impl LocalServer {
                 Arc::clone(&backend),
                 worker_key,
                 Arc::clone(&web_session),
+                Arc::clone(&active_requests),
                 flag,
                 "local-api-unix",
             ) {
@@ -150,7 +157,13 @@ impl LocalServer {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         if let (Backend::Web(web), Some(session)) = (&*self.backend, session) {
-            let _ = web.delete_session(&session);
+            // Remote cleanup must not block the caller (e.g., Android UI/stop path).
+            let web = web.clone();
+            let _ = thread::Builder::new()
+                .name("local-api-cleanup".into())
+                .spawn(move || {
+                    let _ = web.delete_session(&session);
+                });
         }
     }
 }
@@ -161,11 +174,20 @@ impl Drop for LocalServer {
     }
 }
 
+struct ActiveGuard(Arc<AtomicUsize>);
+
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 fn spawn_accept(
     server: Server,
     backend: Arc<Backend>,
     worker_key: String,
     web_session: Arc<Mutex<Option<String>>>,
+    active_requests: Arc<AtomicUsize>,
     flag: Arc<AtomicBool>,
     name: &str,
 ) -> Result<JoinHandle<()>, Error> {
@@ -173,12 +195,30 @@ fn spawn_accept(
         .name(name.into())
         .spawn(move || {
             while !flag.load(Ordering::Relaxed) {
-                match server.recv_timeout(Duration::from_millis(200)) {
+                match server.recv_timeout(Duration::from_millis(50)) {
                     Ok(Some(request)) => {
+                        let prev = active_requests.fetch_add(1, Ordering::Relaxed);
+                        if prev >= MAX_CONCURRENT_REQUESTS {
+                            active_requests.fetch_sub(1, Ordering::Relaxed);
+                            let _ = request.respond(json_response(
+                                503,
+                                &error_body("too many concurrent requests"),
+                            ));
+                            continue;
+                        }
+                        let guard = ActiveGuard(Arc::clone(&active_requests));
                         let backend = Arc::clone(&backend);
                         let key = worker_key.clone();
                         let session = Arc::clone(&web_session);
-                        thread::spawn(move || handle_request(request, &backend, &key, &session));
+                        let spawned = thread::Builder::new()
+                            .name("local-api-req".into())
+                            .spawn(move || {
+                                let _guard = guard;
+                                handle_request(request, &backend, &key, &session);
+                            });
+                        if spawned.is_err() {
+                            // guard dropped automatically inside closure if moved, otherwise on Err
+                        }
                     }
                     Ok(None) => {}
                     Err(_) => break,
@@ -221,14 +261,15 @@ fn handle_request(
             let _ = request.respond(json_response(200, &json!({"status": "ok"})));
         }
         (true, _, "/v1/models" | "/models") => {
+            let data: Vec<Value> = SUPPORTED_MODELS
+                .iter()
+                .map(|id| json!({"id": id, "object": "model", "owned_by": "deepseek"}))
+                .collect();
             let _ = request.respond(json_response(
                 200,
                 &json!({
                     "object": "list",
-                    "data": [
-                        {"id": MODEL_ID, "object": "model", "owned_by": "deepseek"},
-                        {"id": "deepseek-v4-pro", "object": "model", "owned_by": "deepseek"}
-                    ]
+                    "data": data
                 }),
             ));
         }
@@ -455,89 +496,86 @@ fn respond_stream(
         return;
     }
 
-    let backend = backend.clone();
-    let model = chat.model.clone();
-    thread::spawn(move || {
-        let mut sink = SseSink {
-            writer,
-            id: new_id(),
-            created: now_ms() / 1000,
-            model,
-        };
-        if sink.event(json!({"role": "assistant", "content": ""}), None).is_err() {
-            return;
-        }
+    // Already running on a dedicated worker thread spawned by `spawn_accept`.
+    let mut sink = SseSink {
+        writer,
+        id: new_id(),
+        created: now_ms() / 1000,
+        model: chat.model.clone(),
+    };
+    if sink.event(json!({"role": "assistant", "content": ""}), None).is_err() {
+        return;
+    }
 
-        let cancel = AtomicBool::new(false);
-        let result: Result<Option<Usage>, Error> = match &backend {
-            Backend::Api(api) => api.stream_chat(
-                &chat.messages,
-                &chat.model,
-                chat.thinking,
-                &chat.effort,
-                &cancel,
-                &mut |delta| sink.api_delta(delta),
-            ),
-            Backend::Web(web) => match cached_web_session(web, &web_session) {
-                Ok(session) => {
-                    let prompt = web_prompt(&chat.messages);
-                    let mut emitted = false;
-                    let first = web.stream_completion(
-                        &session,
-                        None,
-                        &prompt,
-                        Some(web_model(&chat.model)),
-                        chat.thinking,
-                        false,
-                        &[],
-                        &cancel,
-                        &mut |delta| {
-                            emitted = true;
-                            sink.web_delta(delta)
-                        },
-                    );
-                    match first {
-                        Ok(_) => Ok(None),
-                        Err(e) if e.kind == ErrorKind::Api && !emitted => {
-                            invalidate_web_session(&web_session, &session);
-                            match cached_web_session(web, &web_session) {
-                                Ok(fresh) => web
-                                    .stream_completion(
-                                        &fresh,
-                                        None,
-                                        &prompt,
-                                        Some(web_model(&chat.model)),
-                                        chat.thinking,
-                                        false,
-                                        &[],
-                                        &cancel,
-                                        &mut |delta| sink.web_delta(delta),
-                                    )
-                                    .map(|_| None),
-                                Err(err) => Err(err),
-                            }
-                        }
-                        Err(e) => {
-                            if e.kind == ErrorKind::Api {
-                                invalidate_web_session(&web_session, &session);
-                            }
-                            Err(e)
+    let cancel = AtomicBool::new(false);
+    let result: Result<Option<Usage>, Error> = match backend {
+        Backend::Api(api) => api.stream_chat(
+            &chat.messages,
+            &chat.model,
+            chat.thinking,
+            &chat.effort,
+            &cancel,
+            &mut |delta| sink.api_delta(delta),
+        ),
+        Backend::Web(web) => match cached_web_session(web, &web_session) {
+            Ok(session) => {
+                let prompt = web_prompt(&chat.messages);
+                let mut emitted = false;
+                let first = web.stream_completion(
+                    &session,
+                    None,
+                    &prompt,
+                    Some(web_model(&chat.model)),
+                    chat.thinking,
+                    false,
+                    &[],
+                    &cancel,
+                    &mut |delta| {
+                        emitted = true;
+                        sink.web_delta(delta)
+                    },
+                );
+                match first {
+                    Ok(_) => Ok(None),
+                    Err(e) if e.kind == ErrorKind::Api && !emitted => {
+                        invalidate_web_session(&web_session, &session);
+                        match cached_web_session(web, &web_session) {
+                            Ok(fresh) => web
+                                .stream_completion(
+                                    &fresh,
+                                    None,
+                                    &prompt,
+                                    Some(web_model(&chat.model)),
+                                    chat.thinking,
+                                    false,
+                                    &[],
+                                    &cancel,
+                                    &mut |delta| sink.web_delta(delta),
+                                )
+                                .map(|_| None),
+                            Err(err) => Err(err),
                         }
                     }
+                    Err(e) => {
+                        if e.kind == ErrorKind::Api {
+                            invalidate_web_session(&web_session, &session);
+                        }
+                        Err(e)
+                    }
                 }
-                Err(e) => Err(e),
-            },
-        };
-
-        if let Err(e) = &result {
-            if e.kind != ErrorKind::Cancelled {
-                sink.error(e);
             }
+            Err(e) => Err(e),
+        },
+    };
+
+    if let Err(e) = &result {
+        if e.kind != ErrorKind::Cancelled {
+            sink.error(e);
         }
-        // Send [DONE] immediately; the web session is kept in the server-wide
-        // cache and deleted when the local server stops.
-        sink.finish();
-    });
+    }
+    // Send [DONE] immediately; the web session is kept in the server-wide
+    // cache and deleted when the local server stops.
+    sink.finish();
 }
 
 struct SseSink {
@@ -638,8 +676,8 @@ impl ChatRequest {
         }
 
         let model = match value.get("model").and_then(Value::as_str) {
-            Some("deepseek-v4-pro") => "deepseek-v4-pro",
-            Some("deepseek-reasoner") => "deepseek-reasoner",
+            Some(m) if m == MODEL_PRO_ID => MODEL_PRO_ID,
+            Some(m) if m == MODEL_REASONER_ID => MODEL_REASONER_ID,
             _ => MODEL_ID,
         };
         // Local API is fast by default: reasoning is opt-in. Without this,
@@ -664,7 +702,7 @@ impl ChatRequest {
         // slow reasoning phase. `reasoning_effort` alone must not force it:
         // plain OpenAI clients send it and then wait for a full DeepThink run.
         let requested_model = value.get("model").and_then(Value::as_str);
-        let model_reasoner = requested_model == Some("deepseek-reasoner");
+        let model_reasoner = requested_model == Some(MODEL_REASONER_ID);
         let thinking = explicit_thinking.unwrap_or(model_reasoner);
         let stream = value.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
@@ -679,7 +717,7 @@ impl ChatRequest {
 }
 
 fn web_model(model: &str) -> &'static str {
-    if model == "deepseek-v4-pro" {
+    if model == MODEL_PRO_ID {
         "expert"
     } else {
         "default"
@@ -705,6 +743,17 @@ fn content_text(content: Option<&Value>) -> String {
     }
 }
 
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 fn authorized(request: &Request, key: &str) -> bool {
     request
         .headers()
@@ -714,7 +763,7 @@ fn authorized(request: &Request, key: &str) -> bool {
             let raw = h.value.as_str().trim();
             let (scheme, token) = raw.split_once(char::is_whitespace)?;
             if scheme.eq_ignore_ascii_case("Bearer") {
-                Some(token.trim() == key)
+                Some(constant_time_eq(token.trim().as_bytes(), key.as_bytes()))
             } else {
                 None
             }
@@ -806,5 +855,13 @@ mod tests {
             parse(json!({"thinking": {"type": "enabled"}, "reasoning_effort": "low"})).effort,
             "low"
         );
+    }
+
+    #[test]
+    fn constant_time_eq_checks_exact_bytes() {
+        assert!(constant_time_eq(b"secret-key-123", b"secret-key-123"));
+        assert!(!constant_time_eq(b"secret-key-123", b"secret-key-124"));
+        assert!(!constant_time_eq(b"short", b"longer"));
+        assert!(constant_time_eq(b"", b""));
     }
 }

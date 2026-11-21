@@ -1,4 +1,7 @@
-package dev.localapi.deepseek
+package dev.localapi.deepseek.ui
+
+import dev.localapi.deepseek.AppConfig
+import dev.localapi.deepseek.AppState
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -288,7 +291,7 @@ fun TokenScreen(state: AppState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             TextButton(
-                onClick = { state.openUrl("https://github.com/Rewixx-png/localapi-deepseek/blob/main/docs/get-token.md") },
+                onClick = { state.openUrl(AppConfig.TOKEN_DOCS_URL) },
                 modifier = Modifier.padding(top = 2.dp)
             ) {
                 Text("Как получить API-ключ или userToken")
@@ -429,7 +432,7 @@ fun TokenScreen(state: AppState) {
                             Text("Ключ подтверждён", style = MaterialTheme.typography.titleMedium)
                         }
                         Spacer(Modifier.height(10.dp))
-                        KeyValueRow("Модель", "DeepSeek V4.1 Flash 1017")
+                        KeyValueRow("Модель", if (state.activeMode == "web") "DeepSeek Web" else state.modelDisplayLabel(state.model))
                         KeyValueRow("Режим", if (state.activeMode == "web") "веб-сессия chat.deepseek.com" else "официальный API")
                         state.balance?.let { b ->
                             val sym = if (b.currency == "USD") "$" else if (b.currency == "CNY") "¥" else ""

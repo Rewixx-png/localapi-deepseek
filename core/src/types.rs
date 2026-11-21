@@ -4,8 +4,15 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
 pub const MODEL_ID: &str = "deepseek-flash";
+pub const MODEL_PRO_ID: &str = "deepseek-v4-pro";
+pub const MODEL_REASONER_ID: &str = "deepseek-reasoner";
+pub const SUPPORTED_MODELS: &[&str] = &[MODEL_ID, MODEL_PRO_ID];
 pub const MODEL_LABEL: &str = "DeepSeek V4.1 Flash 1017";
 pub const MODEL_VERSION: &str = "DeepSeek-V4.1-Flash-1017";
+
+pub fn supports_images(model: &str) -> bool {
+    model != MODEL_PRO_ID
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
@@ -110,6 +117,13 @@ pub struct Balance {
 #[derive(Debug, Clone, Serialize)]
 pub struct SendStart {
     pub stream_id: u64,
+    pub chat: Conversation,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PopLastTurn {
+    pub text: String,
+    pub images: Vec<String>,
     pub chat: Conversation,
 }
 

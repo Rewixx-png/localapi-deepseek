@@ -7,40 +7,39 @@ import android.net.Uri;
 
 import androidx.documentfile.provider.DocumentFile;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 /**
- * Optional public Storage Access Framework workspace. The user picks a tree
- * once (for example Documents/LocalApiDeepSeek); each agent chat is a
- * subfolder in it, so ZIPs and project files are visible in a system file
- * manager. The private AgentWorkspace remains the fallback when no tree is
- * configured.
+ * Optional public Storage Access Framework (SAF) workspace.
+ *
+ * Because QEMU's 9p `-virtfs` requires a real POSIX path (`AgentWorkspace`),
+ * this class synchronizes files bidirectionally between the user-chosen SAF
+ * tree folder and the private `AgentWorkspace` directory for each agent chat.
  */
 final class SafAgentWorkspace {
     private static final String PREFS = "agent_saf";
     private static final String KEY_ROOT = "root_uri";
     private static final String KEY_CHAT_PREFIX = "chat_";
-    private static final long MAX_ZIP_BYTES = 40L * 1024 * 1024;
     private static final long MAX_TOTAL_BYTES = 120L * 1024 * 1024;
-    private static final long MAX_FILE_BYTES = 32L * 1024 * 1024;
-    private static final int MAX_ENTRIES = 600;
-    private static final int MAX_LISTED = 300;
+    private static final long MAX_FILE_BYTES = 40L * 1024 * 1024;
+    private static final int MAX_SYNC_FILES = 300;
+
+    static final class RootInfo {
+        final boolean configured;
+        final String name;
+        final String uri;
+
+        RootInfo(boolean configured, String name, String uri) {
+            this.configured = configured;
+            this.name = name;
+            this.uri = uri;
+        }
+    }
 
     private SafAgentWorkspace() {
     }
@@ -74,9 +73,6 @@ final class SafAgentWorkspace {
         try {
             context.getContentResolver().takePersistableUriPermission(uri, flags);
         } catch (SecurityException ignored) {
-            // Some providers do not offer persistable grants; the URI may still
-            // survive while the activity stays alive, but info() will report
-            // the root as unavailable after a restart.
         }
         DocumentFile root = DocumentFile.fromTreeUri(context, uri);
         if (root == null || !root.exists() || !root.isDirectory()) {
@@ -90,15 +86,15 @@ final class SafAgentWorkspace {
         prefs(context).edit().remove(KEY_ROOT).apply();
     }
 
-    static JSONObject info(Context context) throws JSONException {
+    static RootInfo info(Context context) {
         Uri uri = rootUri(context);
         DocumentFile root = uri == null ? null : DocumentFile.fromTreeUri(context, uri);
         boolean configured = root != null && root.exists() && root.isDirectory();
-        JSONObject out = new JSONObject();
-        out.put("configured", configured);
-        out.put("name", configured && root.getName() != null ? root.getName() : "");
-        out.put("uri", uri == null ? "" : uri.toString());
-        return out;
+        return new RootInfo(
+                configured,
+                configured && root.getName() != null ? root.getName() : "",
+                uri == null ? "" : uri.toString()
+        );
     }
 
     private static DocumentFile root(Context context) throws IOException {
@@ -143,7 +139,7 @@ final class SafAgentWorkspace {
         String saved = prefs(context).getString(key, "");
         if (!saved.isEmpty()) {
             try {
-                DocumentFile existing = DocumentFile.fromSingleUri(context, Uri.parse(saved));
+                DocumentFile existing = DocumentFile.fromTreeUri(context, Uri.parse(saved));
                 if (existing != null && existing.exists() && existing.isDirectory()) {
                     return existing;
                 }
@@ -153,10 +149,8 @@ final class SafAgentWorkspace {
         DocumentFile root = root(context);
         String name = folderName(chatId, title);
         DocumentFile dir = root.findFile(name);
-        boolean created = false;
         if (dir == null && create) {
             dir = root.createDirectory(name);
-            created = true;
             if (dir == null) dir = root.findFile(name);
         }
         if (dir == null || !dir.isDirectory()) {
@@ -164,54 +158,169 @@ final class SafAgentWorkspace {
             throw new IOException("Не удалось создать папку проекта");
         }
         prefs(context).edit().putString(key, dir.getUri().toString()).apply();
-        if (created) migrateInternal(context, chatId, dir);
         return dir;
     }
 
     /**
-     * One-time move of files that were imported before the SAF root was
-     * selected. The private copy is left in place; the public one is the live
-     * workspace from now on.
+     * Pulls new or newer files from the user-visible SAF folder into the private
+     * QEMU 9p workspace directory. Safe no-op when no SAF root is configured.
      */
-    private static void migrateInternal(Context context, String chatId, DocumentFile dir) {
+    static void syncFromSaf(Context context, String chatId, String title) {
+        if (!hasRoot(context) || chatId == null || chatId.isEmpty()) return;
         try {
-            File source = AgentWorkspace.root(context, chatId);
-            if (!source.isDirectory()) return;
-            long[] total = {0};
-            copyInternalTree(context, source, source, dir, total);
+            DocumentFile safDir = chatDir(context, chatId, title, false);
+            if (safDir == null) return;
+            File localRoot = AgentWorkspace.root(context, chatId);
+            String rootCanonical = localRoot.getCanonicalPath();
+            long[] totalBytes = {0L};
+            int[] fileCount = {0};
+            pullTree(context, safDir, localRoot, rootCanonical, totalBytes, fileCount);
         } catch (Exception ignored) {
-            // The public folder remains usable even if migration is incomplete.
         }
     }
 
-    private static void copyInternalTree(Context context, File root, File file, DocumentFile dir, long[] total) {
-        File[] children = file.listFiles();
+    /**
+     * Pushes new or newer files from the private QEMU 9p workspace directory
+     * into the user-visible SAF folder. Safe no-op when no SAF root is configured.
+     */
+    static void syncToSaf(Context context, String chatId, String title) {
+        if (!hasRoot(context) || chatId == null || chatId.isEmpty()) return;
+        try {
+            File localRoot = AgentWorkspace.root(context, chatId);
+            if (!localRoot.isDirectory()) return;
+            File[] top = localRoot.listFiles();
+            if (top == null || top.length == 0) return;
+            DocumentFile safDir = chatDir(context, chatId, title, true);
+            if (safDir == null) return;
+            long[] totalBytes = {0L};
+            int[] fileCount = {0};
+            pushTree(context, localRoot, safDir, totalBytes, fileCount);
+        } catch (Exception ignored) {
+        }
+    }
+
+    static boolean delete(Context context, String chatId, String title, String name) {
+        if (!hasRoot(context) || !AgentWorkspace.safeRelative(name)) return false;
+        try {
+            DocumentFile file = find(context, chatId, title, name);
+            return file != null && deleteRecursive(file);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static void pullTree(
+            Context context,
+            DocumentFile safDir,
+            File localDir,
+            String rootCanonical,
+            long[] totalBytes,
+            int[] fileCount
+    ) {
+        DocumentFile[] children = safDir.listFiles();
+        if (children == null) return;
+        for (DocumentFile child : children) {
+            if (fileCount[0] >= MAX_SYNC_FILES || totalBytes[0] >= MAX_TOTAL_BYTES) return;
+            String name = child.getName();
+            if (name == null || name.isEmpty() || name.equals(".") || name.equals("..")
+                    || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+                continue;
+            }
+            File target = new File(localDir, name);
+            String targetCanonical;
+            try {
+                targetCanonical = target.getCanonicalPath();
+            } catch (IOException e) {
+                continue;
+            }
+            if (!targetCanonical.startsWith(rootCanonical + File.separator)) continue;
+
+            if (child.isDirectory()) {
+                if (!target.isDirectory() && !target.mkdirs()) continue;
+                pullTree(context, child, target, rootCanonical, totalBytes, fileCount);
+            } else if (child.isFile()) {
+                long len = child.length();
+                if (len > MAX_FILE_BYTES || totalBytes[0] + len > MAX_TOTAL_BYTES) continue;
+                long safMtime = child.lastModified();
+                if (target.isFile() && target.length() == len
+                        && (safMtime <= 0 || target.lastModified() >= safMtime - 1500)) {
+                    fileCount[0]++;
+                    totalBytes[0] += len;
+                    continue;
+                }
+                try {
+                    InputStream raw = context.getContentResolver().openInputStream(child.getUri());
+                    if (raw == null) continue;
+                    try (InputStream in = raw; OutputStream out = new FileOutputStream(target)) {
+                        byte[] buf = new byte[64 * 1024];
+                        int read;
+                        long copied = 0;
+                        while ((read = in.read(buf)) > 0) {
+                            copied += read;
+                            if (copied > MAX_FILE_BYTES) break;
+                            out.write(buf, 0, read);
+                        }
+                        totalBytes[0] += copied;
+                        fileCount[0]++;
+                    }
+                    if (safMtime > 0) {
+                        //noinspection ResultOfMethodCallIgnored
+                        target.setLastModified(safMtime);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    private static void pushTree(
+            Context context,
+            File localDir,
+            DocumentFile safDir,
+            long[] totalBytes,
+            int[] fileCount
+    ) {
+        File[] children = localDir.listFiles();
         if (children == null) return;
         for (File child : children) {
+            if (fileCount[0] >= MAX_SYNC_FILES || totalBytes[0] >= MAX_TOTAL_BYTES) return;
             String name = child.getName();
+            if (name.isEmpty() || name.equals(".") || name.equals("..")) continue;
             if (child.isDirectory()) {
-                DocumentFile next = ensureDirQuiet(dir, name);
-                if (next != null) copyInternalTree(context, root, child, next, total);
+                DocumentFile next = ensureDirQuiet(safDir, name);
+                if (next != null) pushTree(context, child, next, totalBytes, fileCount);
             } else if (child.isFile()) {
-                if (total[0] > MAX_TOTAL_BYTES) return;
-                try (InputStream in = new FileInputStream(child)) {
-                    DocumentFile target = dir.findFile(name);
-                    if (target != null && target.isDirectory()) continue;
-                    if (target == null) {
-                        target = dir.createFile("application/octet-stream", name);
-                    }
+                long len = child.length();
+                if (len > MAX_FILE_BYTES || totalBytes[0] + len > MAX_TOTAL_BYTES) continue;
+                DocumentFile existing = safDir.findFile(name);
+                if (existing != null && existing.isDirectory()) continue;
+                if (existing != null && existing.isFile() && existing.length() == len
+                        && existing.lastModified() >= child.lastModified() - 1500) {
+                    fileCount[0]++;
+                    totalBytes[0] += len;
+                    continue;
+                }
+                try {
+                    DocumentFile target = existing != null
+                            ? existing
+                            : safDir.createFile("application/octet-stream", name);
                     if (target == null) continue;
-                    OutputStream out = context.getContentResolver()
-                            .openOutputStream(target.getUri(), "wt");
-                    if (out == null) continue;
-                    try (OutputStream sink = out) {
-                        byte[] buffer = new byte[64 * 1024];
+                    OutputStream rawOut;
+                    try {
+                        rawOut = context.getContentResolver().openOutputStream(target.getUri(), "wt");
+                    } catch (Exception first) {
+                        rawOut = context.getContentResolver().openOutputStream(target.getUri(), "w");
+                    }
+                    if (rawOut == null) continue;
+                    try (InputStream in = new FileInputStream(child); OutputStream out = rawOut) {
+                        byte[] buf = new byte[64 * 1024];
                         int read;
-                        while ((read = in.read(buffer)) > 0) {
-                            total[0] += read;
-                            if (total[0] > MAX_TOTAL_BYTES) return;
-                            sink.write(buffer, 0, read);
+                        while ((read = in.read(buf)) > 0) {
+                            totalBytes[0] += read;
+                            if (totalBytes[0] > MAX_TOTAL_BYTES) return;
+                            out.write(buf, 0, read);
                         }
+                        fileCount[0]++;
                     }
                 } catch (Exception ignored) {
                 }
@@ -228,88 +337,6 @@ final class SafAgentWorkspace {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    static JSONArray list(Context context, String chatId, String title) throws IOException {
-        DocumentFile dir = chatDir(context, chatId, title, false);
-        JSONArray out = new JSONArray();
-        if (dir != null) collect(dir, "", out);
-        return out;
-    }
-
-    private static void collect(DocumentFile dir, String prefix, JSONArray out) {
-        if (out.length() >= MAX_LISTED) return;
-        DocumentFile[] files = dir.listFiles();
-        if (files == null) return;
-        Arrays.sort(files, Comparator.comparing(
-                f -> f.getName() == null ? "" : f.getName(),
-                String.CASE_INSENSITIVE_ORDER));
-        for (DocumentFile file : files) {
-            if (out.length() >= MAX_LISTED) return;
-            String name = file.getName();
-            if (name == null || name.isEmpty()) continue;
-            String relative = prefix.isEmpty() ? name : prefix + "/" + name;
-            if (file.isDirectory()) {
-                collect(file, relative, out);
-            } else if (file.isFile()) {
-                try {
-                    JSONObject item = new JSONObject();
-                    item.put("name", relative);
-                    item.put("size", file.length());
-                    out.put(item);
-                } catch (JSONException ignored) {
-                }
-            }
-        }
-    }
-
-    static JSONObject read(Context context, String chatId, String title,
-            String name, int maxBytes) throws IOException, JSONException {
-        DocumentFile file = find(context, chatId, title, name);
-        if (file == null || !file.isFile()) throw new IOException("Файл не найден");
-        int limit = Math.max(1, Math.min(maxBytes, 128 * 1024));
-        long size = file.length();
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        boolean truncated = false;
-        InputStream source = context.getContentResolver().openInputStream(file.getUri());
-        if (source == null) throw new IOException("Не удалось открыть файл");
-        try (InputStream in = source) {
-            byte[] buffer = new byte[16 * 1024];
-            int read;
-            while ((read = in.read(buffer)) > 0) {
-                int room = limit - out.size();
-                if (room <= 0) {
-                    truncated = true;
-                    break;
-                }
-                if (read > room) {
-                    out.write(buffer, 0, room);
-                    truncated = true;
-                    break;
-                }
-                out.write(buffer, 0, read);
-            }
-        }
-        byte[] bytes = out.toByteArray();
-        boolean binary = isBinary(bytes);
-        JSONObject item = new JSONObject();
-        item.put("name", name);
-        item.put("size", size);
-        item.put("truncated", truncated || size > bytes.length);
-        item.put("binary", binary);
-        item.put("text", binary ? "" : new String(bytes, StandardCharsets.UTF_8));
-        return item;
-    }
-
-    private static boolean isBinary(byte[] bytes) {
-        int control = 0;
-        int checked = Math.min(bytes.length, 8192);
-        for (int i = 0; i < checked; i++) {
-            int value = bytes[i] & 0xff;
-            if (value == 0) return true;
-            if (value < 7 || (value > 13 && value < 32)) control++;
-        }
-        return checked > 0 && control * 100 / checked > 5;
     }
 
     private static void verifyWritable(Context context, DocumentFile dir) throws IOException {
@@ -330,6 +357,7 @@ final class SafAgentWorkspace {
         }
         try (OutputStream out = context.getContentResolver()
                 .openOutputStream(probe.getUri(), "wt")) {
+            if (out == null) throw new IOException("no output stream");
             out.write(1);
         } catch (Exception e) {
             probe.delete();
@@ -337,140 +365,6 @@ final class SafAgentWorkspace {
                     + "Выберите папку в памяти устройства", e);
         }
         probe.delete();
-    }
-
-    static String importZip(Context context, String chatId, String title,
-            Uri uri) throws IOException {
-        DocumentFile dir = chatDir(context, chatId, title, true);
-        File temp = new File(context.getCacheDir(), "agent-saf-" + System.nanoTime() + ".zip");
-        try {
-            long compressed = copyLimited(context, uri, temp, MAX_ZIP_BYTES);
-            if (compressed <= 0) throw new IOException("ZIP пустой");
-            int entries = 0;
-            long total = 0;
-            byte[] buffer = new byte[64 * 1024];
-            verifyWritable(context, dir);
-            try (ZipInputStream zin = new ZipInputStream(
-                    new BufferedInputStream(new FileInputStream(temp)))) {
-                ZipEntry entry;
-                while ((entry = zin.getNextEntry()) != null) {
-                    entries++;
-                    if (entries > MAX_ENTRIES) {
-                        throw new IOException("В ZIP слишком много файлов");
-                    }
-                    String rawName = entry.getName();
-                    if (!safeRelative(rawName)) {
-                        throw new IOException("Небезопасный путь в ZIP: " + rawName);
-                    }
-                    String cleanName = rawName.replace('\\', '/');
-                    while (cleanName.endsWith("/")) {
-                        cleanName = cleanName.substring(0, cleanName.length() - 1);
-                    }
-                    if (cleanName.isEmpty()) continue;
-                    java.util.List<String> parts = new java.util.ArrayList<>();
-                    for (String part : cleanName.split("/")) {
-                        if (part.isEmpty() || part.equals(".")) continue;
-                        parts.add(part);
-                    }
-                    if (parts.isEmpty()) continue;
-                    DocumentFile parent = dir;
-                    for (int i = 0; i < parts.size() - 1; i++) {
-                        parent = ensureDir(parent, parts.get(i));
-                    }
-                    String leaf = parts.get(parts.size() - 1);
-                    if (entry.isDirectory()) {
-                        ensureDir(parent, leaf);
-                    } else {
-                        long fileBytes = 0;
-                        DocumentFile target = parent.findFile(leaf);
-                        if (target != null && target.isDirectory()) {
-                            throw new IOException("Конфликт имени: " + cleanName);
-                        }
-                        if (target == null) {
-                            target = parent.createFile("application/octet-stream", leaf);
-                        }
-                        if (target == null) {
-                            throw new IOException("Не удалось создать " + cleanName);
-                        }
-                        OutputStream output;
-                        try {
-                            output = context.getContentResolver()
-                                    .openOutputStream(target.getUri(), "wt");
-                        } catch (Exception first) {
-                            output = context.getContentResolver()
-                                    .openOutputStream(target.getUri(), "w");
-                        }
-                        if (output == null) throw new IOException("Нет записи " + cleanName);
-                        try (OutputStream out = output) {
-                            int read;
-                            while ((read = zin.read(buffer)) > 0) {
-                                fileBytes += read;
-                                total += read;
-                                if (fileBytes > MAX_FILE_BYTES) {
-                                    throw new IOException("Файл больше 32 МБ: " + cleanName);
-                                }
-                                if (total > MAX_TOTAL_BYTES) {
-                                    throw new IOException("Распакованный ZIP больше 120 МБ");
-                                }
-                                out.write(buffer, 0, read);
-                            }
-                        }
-                    }
-                }
-            }
-            return entries + " файлов распаковано";
-        } finally {
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-        }
-    }
-
-    private static DocumentFile ensureDir(DocumentFile parent, String name) throws IOException {
-        DocumentFile dir = parent.findFile(name);
-        if (dir != null && dir.isDirectory()) return dir;
-        if (dir != null) throw new IOException("Конфликт имени: " + name);
-        dir = parent.createDirectory(name);
-        if (dir == null || !dir.isDirectory()) {
-            throw new IOException("Не удалось создать папку " + name);
-        }
-        return dir;
-    }
-
-    private static long copyLimited(Context context, Uri uri, File target, long limit)
-            throws IOException {
-        InputStream in = context.getContentResolver().openInputStream(uri);
-        if (in == null) throw new IOException("Не удалось открыть ZIP");
-        long total = 0;
-        try (InputStream source = in; OutputStream out = new FileOutputStream(target)) {
-            byte[] buffer = new byte[64 * 1024];
-            int read;
-            while ((read = source.read(buffer)) > 0) {
-                total += read;
-                if (total > limit) throw new IOException("ZIP больше 40 МБ");
-                out.write(buffer, 0, read);
-            }
-        }
-        return total;
-    }
-
-    static boolean delete(Context context, String chatId, String title, String name) {
-        if (!safeRelative(name)) return false;
-        try {
-            DocumentFile file = find(context, chatId, title, name);
-            return file != null && deleteRecursive(file);
-        } catch (IOException e) {
-            return false;
-        }
-    }
-
-    static void clear(Context context, String chatId, String title) throws IOException {
-        DocumentFile dir = chatDir(context, chatId, title, false);
-        if (dir == null) return;
-        DocumentFile[] children = dir.listFiles();
-        if (children == null) return;
-        for (DocumentFile child : children) {
-            deleteRecursive(child);
-        }
     }
 
     private static boolean deleteRecursive(DocumentFile file) {
@@ -485,21 +379,9 @@ final class SafAgentWorkspace {
         return file.delete();
     }
 
-    static boolean renameChatDir(Context context, String chatId, String title) {
-        try {
-            DocumentFile dir = chatDir(context, chatId, title, false);
-            if (dir == null) return false;
-            String name = folderName(chatId, title);
-            if (name.equals(dir.getName())) return true;
-            return dir.renameTo(name);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     private static DocumentFile find(Context context, String chatId, String title, String name)
             throws IOException {
-        if (!safeRelative(name)) return null;
+        if (!AgentWorkspace.safeRelative(name)) return null;
         DocumentFile current = chatDir(context, chatId, title, false);
         if (current == null) return null;
         for (String part : name.split("/")) {
@@ -509,16 +391,5 @@ final class SafAgentWorkspace {
             current = next;
         }
         return current;
-    }
-
-    private static boolean safeRelative(String name) {
-        if (name == null || name.isEmpty()) return false;
-        String normalized = name.replace('\\', '/');
-        if (normalized.startsWith("/") || normalized.indexOf('\0') >= 0) return false;
-        for (String part : normalized.split("/")) {
-            if (part.isEmpty()) continue;
-            if (part.equals("..")) return false;
-        }
-        return true;
     }
 }

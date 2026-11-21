@@ -1,4 +1,12 @@
-package dev.localapi.deepseek
+package dev.localapi.deepseek.ui
+
+import dev.localapi.deepseek.AppScreen
+import dev.localapi.deepseek.AppState
+import dev.localapi.deepseek.ChatMessage
+import dev.localapi.deepseek.ChatSummaryItem
+import dev.localapi.deepseek.SandboxNotice
+import dev.localapi.deepseek.SettingsPane
+import dev.localapi.deepseek.ToolBlockData
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -112,6 +120,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -122,6 +131,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -842,10 +852,17 @@ private fun UserMessageBlock(m: ChatMessage, state: AppState) {
                 modifier = Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState())
             ) {
                 m.images.forEach { dataUrl ->
-                    val bmp = remember(dataUrl) { state.decodeImageBitmapCached(dataUrl) }
-                    if (bmp != null) {
+                    val bmp by produceState<ImageBitmap?>(
+                        initialValue = state.getCachedImageBitmap(dataUrl),
+                        key1 = dataUrl
+                    ) {
+                        if (value == null) {
+                            state.decodeImageBitmapAsync(dataUrl) { value = it }
+                        }
+                    }
+                    bmp?.let { image ->
                         Image(
-                            bitmap = bmp,
+                            bitmap = image,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -897,8 +914,17 @@ private fun AssistantMessageBlock(
     val browseQuery = remember(m.content, state.agentMode, streaming) {
         if (!streaming && state.agentMode) AppState.extractBrowse(m.content) else ""
     }
-    val mediaBitmaps = remember(m.content, state.currentChatId, streaming) {
-        if (!streaming && state.agentMode) state.readAgentMediaBitmapCached(m.content) else emptyList()
+    val mediaBitmaps by produceState<List<Pair<String, ImageBitmap>>>(
+        initialValue = if (!streaming && state.agentMode) state.getCachedAgentMedia(m.content).orEmpty() else emptyList(),
+        key1 = m.content,
+        key2 = state.currentChatId,
+        key3 = streaming
+    ) {
+        if (!streaming && state.agentMode) {
+            state.loadAgentMediaBitmapsAsync(m.content) { value = it }
+        } else {
+            value = emptyList()
+        }
     }
     val chevronRot by animateFloatAsState(if (reasoningOpen) 180f else 0f, ExpressiveSpring, label = "reas_chev")
 
@@ -1157,7 +1183,7 @@ private fun AssistantMessageBlock(
                 }
                 if (m.tokPerSec > 0) {
                     Text(
-                        "${String.format(Locale("ru"), "%.0f", m.tokPerSec)} tok/s",
+                        "${String.format(Locale.forLanguageTag("ru"), "%.0f", m.tokPerSec)} tok/s",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

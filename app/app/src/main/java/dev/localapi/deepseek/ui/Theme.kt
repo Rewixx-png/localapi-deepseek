@@ -1,4 +1,4 @@
-package dev.localapi.deepseek
+package dev.localapi.deepseek.ui
 
 import android.app.Activity
 import android.os.Build

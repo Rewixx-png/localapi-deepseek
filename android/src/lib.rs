@@ -1,7 +1,6 @@
 //! Thin JNI surface. Every call returns a JSON envelope:
 //! `{"ok":true,"data":…}` or `{"ok":false,"error":{"kind":…,"message":…}}`.
-//! The Kotlin/Java shell never parses domain data, and the WebView does the
-//! JSON dance once.
+//! Consumed by the native Kotlin/Compose UI via `dev.localapi.deepseek.Rust`.
 
 use std::sync::{LazyLock, Mutex};
 
@@ -171,6 +170,20 @@ pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativeDeleteChat(
     let id = text(&mut env, &id);
     let payload = match with_engine(|e| e.delete_chat(&id)) {
         Ok(()) => ok(Value::Null),
+        Err(e) => fail(e),
+    };
+    reply(&mut env, payload)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_localapi_deepseek_Rust_nativePopLastTurn(
+    mut env: JNIEnv,
+    _class: JClass,
+    id: JString,
+) -> jstring {
+    let id = text(&mut env, &id);
+    let payload = match with_engine(|e| e.pop_last_turn(&id)) {
+        Ok(popped) => ok(popped),
         Err(e) => fail(e),
     };
     reply(&mut env, payload)

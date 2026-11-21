@@ -1,7 +1,7 @@
-package dev.localapi.deepseek
+package dev.localapi.deepseek.ui
 
-import android.graphics.BitmapFactory
-import android.util.Base64
+import dev.localapi.deepseek.AppScreen
+import dev.localapi.deepseek.AppState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,7 +32,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Build
-import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
@@ -45,6 +44,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -67,13 +67,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -108,8 +109,13 @@ fun ModelConfigSheet(state: AppState) {
                 GroupedCardItem(0, 1, containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                     Text("Модель", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(10.dp))
+                    val modelOptions = remember(state.availableModels, state.model) {
+                        val list = state.availableModels.toMutableList()
+                        if (state.model !in list) list.add(0, state.model)
+                        list.take(4).map { it to state.modelDisplayLabel(it) }
+                    }
                     M3SegmentedRow(
-                        options = listOf("deepseek-flash" to "Flash 1017", "deepseek-v4-pro" to "V4 Pro"),
+                        options = modelOptions,
                         selected = state.model,
                         onSelect = { state.updateModel(it) }
                     )
@@ -602,12 +608,13 @@ fun UpdateAlertDialog(state: AppState) {
 @Composable
 fun ImageViewerOverlay(state: AppState) {
     val dataUrl = state.previewImageDataUrl ?: return
-    val bmp = remember(dataUrl) {
-        runCatching {
-            val b64 = dataUrl.substringAfter(",", dataUrl)
-            val bytes = Base64.decode(b64, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }.getOrNull()
+    val bmp by produceState<ImageBitmap?>(
+        initialValue = state.getCachedImageBitmap(dataUrl),
+        key1 = dataUrl
+    ) {
+        if (value == null) {
+            state.decodeImageBitmapAsync(dataUrl) { value = it }
+        }
     }
     Box(
         modifier = Modifier
@@ -616,9 +623,9 @@ fun ImageViewerOverlay(state: AppState) {
             .clickable { state.previewImageDataUrl = null },
         contentAlignment = Alignment.Center
     ) {
-        if (bmp != null) {
+        bmp?.let { image ->
             Image(
-                bitmap = bmp.asImageBitmap(),
+                bitmap = image,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().padding(20.dp)

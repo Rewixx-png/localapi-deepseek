@@ -11,12 +11,11 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
-import android.webkit.WebView;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -35,18 +34,13 @@ import java.security.MessageDigest;
 
 /**
  * In-app update flow: reads update.json from the repository, downloads the APK
- * with progress and hands it to the system installer. The manifest is public,
- * the APK is verified against its SHA-256 before installation.
+ * from an allowlisted HTTPS host with progress, strictly verifies its SHA-256
+ * (fail-closed), and hands it to the system PackageInstaller.
  */
 final class Updater {
-    // The raw CDN can serve a stale update.json for several minutes after a
-    // release. The contents API is current; raw is only a fallback if the
-    // unauthenticated API rate limit is exhausted.
-    static final String MANIFEST_URL =
-            "https://api.github.com/repos/Rewixx-png/localapi-deepseek/contents/update.json?ref=main";
-    static final String MANIFEST_FALLBACK =
-            "https://raw.githubusercontent.com/Rewixx-png/localapi-deepseek/main/update.json";
-    static final String SOURCE_URL = "https://github.com/Rewixx-png/localapi-deepseek";
+    static final String MANIFEST_URL = AppConfig.UPDATE_MANIFEST_URL;
+    static final String MANIFEST_FALLBACK = AppConfig.UPDATE_MANIFEST_FALLBACK;
+    static final String SOURCE_URL = AppConfig.REPO_URL;
     static final int JOB_ID = 9701;
 
     private static final String PREFS = "updater";
@@ -58,6 +52,8 @@ final class Updater {
     private static final int NOTIFICATION_ID = 42;
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 30000;
+    private static final int MAX_REDIRECTS = 5;
+    private static final long MAX_APK_BYTES = 250L * 1024 * 1024;
 
     interface Listener {
         void onUpdateAvailable(String manifestJson, boolean manual);
@@ -70,7 +66,6 @@ final class Updater {
 
     private final Activity activity;
     private volatile Listener listener;
-    private final WebView web;
     private volatile boolean downloading;
     private boolean pendingDownload;
     private File pendingInstall;
@@ -112,9 +107,8 @@ final class Updater {
         return text.toString();
     }
 
-    Updater(Activity activity, WebView web) {
+    Updater(Activity activity) {
         this.activity = activity;
-        this.web = web;
     }
 
     void setListener(Listener listener) {
@@ -141,7 +135,6 @@ final class Updater {
         Intent intent = activity.getIntent();
         if (intent != null && intent.getBooleanExtra("update_notification", false)) {
             intent.removeExtra("update_notification");
-            runJs("window.__showPendingUpdate && window.__showPendingUpdate()");
             ui(() -> { Listener l = listener; if (l != null) l.onShowPendingUpdate(); });
         }
         if (canInstall(activity)) {
@@ -161,8 +154,6 @@ final class Updater {
         if (raw.isEmpty()) return "";
         try {
             JSONObject manifest = new JSONObject(raw);
-            // A pending update left over from an older install must not be
-            // offered again once that version (or newer) is already installed.
             if (manifest.optInt("versionCode", 0) <= versionCode(activity)) return "";
             return raw;
         } catch (Exception e) {
@@ -173,8 +164,6 @@ final class Updater {
     void check(final boolean manual) {
         if (!online(activity)) {
             if (manual) {
-                runJs("window.__updateError && window.__updateError("
-                        + JSONObject.quote("Нет доступа к интернету") + ")");
                 ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Нет доступа к интернету"); });
             }
             return;
@@ -185,20 +174,15 @@ final class Updater {
                 int latest = manifest.optInt("versionCode", 0);
                 if (latest > versionCode(activity)) {
                     storePending(activity, manifest.toString());
-                    runJs("window.__updateAvailable && window.__updateAvailable("
-                            + JSONObject.quote(manifest.toString()) + "," + manual + ")");
                     final String mStr = manifest.toString();
                     ui(() -> { Listener l = listener; if (l != null) l.onUpdateAvailable(mStr, manual); });
                 } else {
                     clearPending(activity);
                     cleanupApks(activity);
-                    runJs("window.__updateNone && window.__updateNone(" + manual + ")");
                     ui(() -> { Listener l = listener; if (l != null) l.onUpdateNone(manual); });
                 }
             } catch (Exception e) {
                 if (manual) {
-                    runJs("window.__updateError && window.__updateError("
-                            + JSONObject.quote("Не удалось проверить обновления") + ")");
                     ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Не удалось проверить обновления"); });
                 }
             }
@@ -208,14 +192,11 @@ final class Updater {
     void download() {
         if (downloading) return;
         if (!online(activity)) {
-            runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote("Нет доступа к интернету") + ")");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Нет доступа к интернету"); });
             return;
         }
         if (!canInstall(activity)) {
             pendingDownload = true;
-            runJs("window.__updateStatus && window.__updateStatus('permission')");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateStatus("permission"); });
             openInstallSettings();
             return;
@@ -224,13 +205,26 @@ final class Updater {
         try {
             manifest = new JSONObject(pendingJson(activity));
         } catch (Exception e) {
-            runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote("Нет данных об обновлении") + ")");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Нет данных об обновлении"); });
             return;
         }
         downloading = true;
         new Thread(() -> downloadAndInstall(manifest), "update-download").start();
+    }
+
+    static boolean isValidSha256(String hex) {
+        return hex != null && hex.trim().matches("(?i)[0-9a-f]{64}");
+    }
+
+    static boolean isAllowedDownloadUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.trim().isEmpty()) return false;
+        try {
+            URL url = new URL(rawUrl.trim());
+            return "https".equalsIgnoreCase(url.getProtocol())
+                    && AppConfig.isAllowedUpdateHost(url.getHost());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void downloadAndInstall(JSONObject manifest) {
@@ -239,32 +233,34 @@ final class Updater {
         HttpURLConnection connection = null;
         try {
             String raw = manifest.optString("url", "");
-            Uri uri = Uri.parse(raw);
-            if (!"https".equals(uri.getScheme())) {
-                throw new IOException("небезопасный адрес обновления");
+            if (!isAllowedDownloadUrl(raw)) {
+                throw new IOException("недоверенный адрес обновления");
+            }
+            String expected = manifest.optString("sha256", "").trim();
+            if (!isValidSha256(expected)) {
+                throw new IOException("в манифесте отсутствует корректная контрольная сумма SHA-256");
             }
             if (part.exists() && !part.delete()) throw new IOException("кэш занят");
-            connection = open(raw, "application/octet-stream");
+            connection = openDownloadVerified(raw);
             int code = connection.getResponseCode();
             if (code != HttpURLConnection.HTTP_OK) throw new IOException("HTTP " + code);
             long total = connection.getContentLengthLong();
+            if (total > MAX_APK_BYTES) throw new IOException("APK превышает допустимый размер");
             long read = 0;
             int lastPercent = -1;
-            runJs("window.__updateProgress && window.__updateProgress(0)");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateProgress(0); });
             try (InputStream in = connection.getInputStream();
                  OutputStream out = new FileOutputStream(part)) {
                 byte[] buffer = new byte[64 * 1024];
                 int count;
                 while ((count = in.read(buffer)) > 0) {
-                    out.write(buffer, 0, count);
                     read += count;
+                    if (read > MAX_APK_BYTES) throw new IOException("превышен лимит размера APK");
+                    out.write(buffer, 0, count);
                     if (total > 0) {
                         int percent = (int) Math.min(100, read * 100 / total);
                         if (percent != lastPercent) {
                             lastPercent = percent;
-                            runJs("window.__updateProgress && window.__updateProgress("
-                                    + percent + ")");
                             final int pct = percent;
                             ui(() -> { Listener l = listener; if (l != null) l.onUpdateProgress(pct); });
                         }
@@ -272,13 +268,11 @@ final class Updater {
                 }
                 out.flush();
             }
-            String expected = manifest.optString("sha256", "");
-            if (!expected.isEmpty() && !expected.equalsIgnoreCase(sha256(part))) {
+            if (!expected.equalsIgnoreCase(sha256(part))) {
                 throw new IOException("контрольная сумма не совпала");
             }
             if (apk.exists() && !apk.delete()) throw new IOException("кэш занят");
             if (!part.renameTo(apk)) throw new IOException("не удалось сохранить APK");
-            runJs("window.__updateProgress && window.__updateProgress(100)");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateProgress(100); });
             install(apk);
         } catch (Exception e) {
@@ -287,8 +281,6 @@ final class Updater {
             String message = e.getMessage();
             if (message == null || message.isEmpty()) message = "ошибка сети";
             final String dlErr = "Не удалось скачать обновление: " + message;
-            runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote(dlErr) + ")");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateError(dlErr); });
         } finally {
             if (connection != null) connection.disconnect();
@@ -296,16 +288,38 @@ final class Updater {
         }
     }
 
+    private static HttpURLConnection openDownloadVerified(String initialUrl) throws IOException {
+        String current = initialUrl;
+        for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
+            if (!isAllowedDownloadUrl(current)) {
+                throw new IOException("редирект на недоверенный хост");
+            }
+            HttpURLConnection conn = open(current, "application/octet-stream", false);
+            int code = conn.getResponseCode();
+            if (code == HttpURLConnection.HTTP_MOVED_PERM
+                    || code == HttpURLConnection.HTTP_MOVED_TEMP
+                    || code == HttpURLConnection.HTTP_SEE_OTHER
+                    || code == 307 || code == 308) {
+                String location = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (location == null || location.trim().isEmpty()) {
+                    throw new IOException("пустой редирект");
+                }
+                current = new URL(new URL(current), location).toString();
+                continue;
+            }
+            return conn;
+        }
+        throw new IOException("слишком много редиректов");
+    }
+
     private void install(File apk) {
         if (!apk.exists()) {
-            runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote("Файл обновления не найден") + ")");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateError("Файл обновления не найден"); });
             return;
         }
         if (!canInstall(activity)) {
             pendingInstall = apk;
-            runJs("window.__updateStatus && window.__updateStatus('permission')");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateStatus("permission"); });
             openInstallSettings();
             return;
@@ -333,8 +347,6 @@ final class Updater {
                         .putExtra("install_result", true);
                 int flags = PendingIntent.FLAG_UPDATE_CURRENT;
                 if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
-                // An activity result sender relaunches the app after a
-                // successful install instead of leaving it dead in the background.
                 PendingIntent pending = PendingIntent.getActivity(activity, 1, result, flags);
                 session.commit(pending.getIntentSender());
                 committed = true;
@@ -343,14 +355,11 @@ final class Updater {
                     try { installer.abandonSession(sessionId); } catch (Exception ignored) { }
                 }
             }
-            runJs("window.__updateStatus && window.__updateStatus('installing')");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateStatus("installing"); });
         } catch (Exception e) {
             String message = e.getMessage();
             if (message == null || message.isEmpty()) message = "установка недоступна";
             final String instErr = "Не удалось установить обновление: " + message;
-            runJs("window.__updateError && window.__updateError("
-                    + JSONObject.quote(instErr) + ")");
             ui(() -> { Listener l = listener; if (l != null) l.onUpdateError(instErr); });
         }
     }
@@ -373,30 +382,18 @@ final class Updater {
         });
     }
 
-    private void runJs(String script) {
-        if (web == null) return;
-        web.post(() -> {
-            try {
-                web.evaluateJavascript(script, null);
-            } catch (Exception ignored) {
-            }
-        });
-    }
-
     // ── static helpers (also used by UpdateJobService) ───────────────────
 
     static JSONObject fetchManifest() throws Exception {
         try {
             return readManifest(MANIFEST_URL, "application/vnd.github.raw+json");
         } catch (Exception primary) {
-            // Rate limit, network hiccup or an API change: raw may be stale,
-            // but it is better than failing the check entirely.
             return readManifest(MANIFEST_FALLBACK, "application/json");
         }
     }
 
     private static JSONObject readManifest(String url, String accept) throws Exception {
-        HttpURLConnection connection = open(url, accept);
+        HttpURLConnection connection = open(url, accept, true);
         try {
             int code = connection.getResponseCode();
             if (code != HttpURLConnection.HTTP_OK) throw new IOException("HTTP " + code);
@@ -413,7 +410,8 @@ final class Updater {
                 JSONObject manifest = new JSONObject(
                         new String(out.toByteArray(), StandardCharsets.UTF_8));
                 if (manifest.optInt("versionCode", 0) <= 0
-                        || manifest.optString("url", "").isEmpty()) {
+                        || !isAllowedDownloadUrl(manifest.optString("url", ""))
+                        || !isValidSha256(manifest.optString("sha256", ""))) {
                     throw new IOException("некорректный манифест");
                 }
                 return manifest;
@@ -427,10 +425,15 @@ final class Updater {
         return manifest.optInt("versionCode", 0) > versionCode(context);
     }
 
+    @SuppressWarnings("deprecation")
     static int versionCode(Context context) {
         try {
-            return context.getPackageManager()
-                    .getPackageInfo(context.getPackageName(), 0).versionCode;
+            PackageInfo info = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0);
+            if (Build.VERSION.SDK_INT >= 28) {
+                return (int) info.getLongVersionCode();
+            }
+            return info.versionCode;
         } catch (Exception e) {
             return 0;
         }
@@ -528,15 +531,15 @@ final class Updater {
         }
     }
 
-    private static HttpURLConnection open(String url, String accept) throws IOException {
+    private static HttpURLConnection open(String url, String accept, boolean followRedirects)
+            throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
-        connection.setInstanceFollowRedirects(true);
+        connection.setInstanceFollowRedirects(followRedirects);
         connection.setRequestProperty("User-Agent", "LocalApiDeepSeek");
         connection.setRequestProperty("Accept", accept);
         connection.setUseCaches(false);
-        // update.json sits behind a CDN; never reuse a stale manifest.
         connection.setRequestProperty("Cache-Control", "no-cache");
         connection.setRequestProperty("Pragma", "no-cache");
         return connection;

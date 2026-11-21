@@ -98,15 +98,30 @@ final class AgentBrowser {
     private Runnable pendingCollect;
     private String lastAction = "";
     private boolean pageLoading;
+    private volatile boolean online = true;
 
     AgentBrowser(Activity activity) {
         this.activity = activity;
+    }
+
+    void setOnline(boolean enabled) {
+        this.online = enabled;
+        if (!enabled) {
+            handler.post(() -> {
+                if (web != null) web.stopLoading();
+                failPending("Доступ к интернету выключен");
+            });
+        }
     }
 
     void command(String action, String arg, Callback callback) {
         action = action == null ? "" : action.trim().toLowerCase();
         arg = arg == null ? "" : arg.trim();
         if (action.isEmpty() || callback == null) return;
+        if (!online && !"close".equals(action)) {
+            callback.done(error("Доступ к интернету выключен"));
+            return;
+        }
         if (pending != null) {
             callback.done(error("Браузер занят предыдущей командой"));
             return;
@@ -263,6 +278,15 @@ final class AgentBrowser {
         cookies.setAcceptThirdPartyCookies(web, true);
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (!online) return true;
+                String scheme = request != null && request.getUrl() != null
+                        ? request.getUrl().getScheme()
+                        : null;
+                return !"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme);
+            }
+
+            @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 pageLoading = true;
                 if (subtitle != null && url != null) subtitle.setText(url);
@@ -344,7 +368,7 @@ final class AgentBrowser {
             callback.done(error("Разрешены только http/https URL"));
             return;
         } else {
-            url = "https://duckduckgo.com/?q=" + android.net.Uri.encode(arg);
+            url = AppConfig.DEFAULT_SEARCH_URL_PREFIX + android.net.Uri.encode(arg);
         }
         title.setText(url);
         if (subtitle != null) subtitle.setText(url);

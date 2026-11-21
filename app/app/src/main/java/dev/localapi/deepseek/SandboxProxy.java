@@ -18,17 +18,22 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Local HTTP/1.1 + CONNECT proxy for the QEMU guest (10.0.2.2:18991 -> 127.0.0.1:18991).
- * Routes guest traffic through Android's Java network stack so apt, pip, curl,
- * wget and git keep working reliably even behind VPNs with fake-IP DNS.
+ * On-demand HTTP/1.1 + CONNECT proxy for the QEMU guest
+ * (10.0.2.2:18991 -> 127.0.0.1:18991).
+ *
+ * Security:
+ * - Only runs while the sandbox/net-test is active and online mode is enabled.
+ * - Blocks loopback, link-local, RFC1918/ULA private, CGNAT and multicast
+ *   targets so the guest cannot reach host localhost (e.g. Local API) or LAN.
  */
 final class SandboxProxy {
     private static final String TAG = "SandboxProxy";
-    static final int PORT = 18991;
+    static final int PORT = AppConfig.SANDBOX_PROXY_PORT;
     private static final int MAX_REQUEST_BODY = 32 * 1024 * 1024;
     private static final String[] FORWARD_RESP_HEADERS = {
             "Location", "Last-Modified", "ETag", "Content-Range",
@@ -39,10 +44,19 @@ final class SandboxProxy {
     private static Thread acceptThread;
     private static ExecutorService pool;
     private static volatile boolean running;
+    private static volatile boolean online = true;
 
     private SandboxProxy() { }
 
+    static synchronized void setOnline(boolean enabled) {
+        online = enabled;
+        if (!enabled) {
+            stop();
+        }
+    }
+
     static synchronized void start() {
+        if (!online) return;
         if (running && server != null && !server.isClosed()) return;
         try {
             server = new ServerSocket();
@@ -92,6 +106,8 @@ final class SandboxProxy {
 
     /** End-to-end diagnostic through the local proxy to ports.ubuntu.com. */
     static String selfTest() {
+        if (!online) return "Доступ к интернету выключен";
+        boolean wasRunning = running;
         start();
         if (!running) return "Прокси 127.0.0.1:" + PORT + " не запущен";
         long started = System.currentTimeMillis();
@@ -111,7 +127,59 @@ final class SandboxProxy {
             return "Пустой ответ прокси (" + ms + " мс)";
         } catch (Exception e) {
             return "Ошибка прокси: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        } finally {
+            if (!wasRunning) {
+                stop();
+            }
         }
+    }
+
+    static boolean isBlockedAddress(InetAddress addr) {
+        if (addr == null) return true;
+        if (addr.isAnyLocalAddress()
+                || addr.isLoopbackAddress()
+                || addr.isLinkLocalAddress()
+                || addr.isSiteLocalAddress()
+                || addr.isMulticastAddress()) {
+            return true;
+        }
+        byte[] raw = addr.getAddress();
+        if (raw.length == 4) {
+            int b0 = raw[0] & 0xFF;
+            int b1 = raw[1] & 0xFF;
+            // 0.0.0.0/8 ("this network")
+            if (b0 == 0) return true;
+            // 100.64.0.0/10 (CGNAT)
+            if (b0 == 100 && (b1 & 0xC0) == 64) return true;
+            // 192.0.0.0/24, 198.18.0.0/15 (benchmarking), 240.0.0.0/4 (reserved)
+            if (b0 == 198 && (b1 == 18 || b1 == 19)) return true;
+            if (b0 >= 240) return true;
+        } else if (raw.length == 16) {
+            int b0 = raw[0] & 0xFF;
+            // fc00::/7 Unique Local Addresses
+            if ((b0 & 0xFE) == 0xFC) return true;
+        }
+        return false;
+    }
+
+    private static InetAddress resolvePublicPreferIpv4(String host) throws IOException {
+        if (host == null || host.trim().isEmpty()) {
+            throw new SecurityException("empty host");
+        }
+        InetAddress[] all = InetAddress.getAllByName(host);
+        if (all.length == 0) {
+            throw new IOException("DNS lookup failed for " + host);
+        }
+        InetAddress chosen = null;
+        for (InetAddress addr : all) {
+            if (isBlockedAddress(addr)) {
+                throw new SecurityException("blocked private or loopback target: " + host);
+            }
+            if (chosen == null && addr instanceof Inet4Address) {
+                chosen = addr;
+            }
+        }
+        return chosen != null ? chosen : all[0];
     }
 
     private static void handle(Socket client) {
@@ -121,8 +189,6 @@ final class SandboxProxy {
             BufferedInputStream in = new BufferedInputStream(socket.getInputStream(), 32 * 1024);
             OutputStream out = new BufferedOutputStream(socket.getOutputStream(), 32 * 1024);
 
-            // Handle HTTP/1.1 persistent connections cleanly while still closing
-            // whenever a response has unknown length or the client asks to close.
             for (int reqCount = 0; reqCount < 64; reqCount++) {
                 String requestLine = readLine(in);
                 if (requestLine == null || requestLine.isEmpty()) return;
@@ -133,6 +199,7 @@ final class SandboxProxy {
 
                 List<String[]> headers = new ArrayList<>();
                 long contentLength = -1;
+                boolean chunked = false;
                 boolean clientWantsClose = false;
                 String line;
                 while ((line = readLine(in)) != null && !line.isEmpty()) {
@@ -143,10 +210,17 @@ final class SandboxProxy {
                         headers.add(new String[]{name, val});
                         if ("content-length".equalsIgnoreCase(name)) {
                             try { contentLength = Long.parseLong(val); } catch (NumberFormatException ignored) { }
+                        } else if ("transfer-encoding".equalsIgnoreCase(name)) {
+                            if (val.toLowerCase(Locale.US).contains("chunked")) chunked = true;
                         } else if ("connection".equalsIgnoreCase(name) || "proxy-connection".equalsIgnoreCase(name)) {
-                            if (val.toLowerCase().contains("close")) clientWantsClose = true;
+                            if (val.toLowerCase(Locale.US).contains("close")) clientWantsClose = true;
                         }
                     }
+                }
+
+                if (!online) {
+                    respondError(out, 503, "Service Unavailable", "offline mode");
+                    return;
                 }
 
                 if ("CONNECT".equalsIgnoreCase(method)) {
@@ -167,8 +241,15 @@ final class SandboxProxy {
                     respondError(out, 413, "Payload Too Large", "request body too large");
                     return;
                 }
+                try {
+                    resolvePublicPreferIpv4(url.getHost());
+                } catch (SecurityException se) {
+                    respondError(out, 403, "Forbidden", se.getMessage());
+                    return;
+                }
 
-                boolean keepAlive = forwardHttp(url, method, headers, contentLength, clientWantsClose, in, out);
+                boolean keepAlive = forwardHttp(
+                        url, method, headers, contentLength, chunked, clientWantsClose, in, out);
                 if (!keepAlive) return;
             }
         } catch (Exception e) {
@@ -181,12 +262,19 @@ final class SandboxProxy {
             String method,
             List<String[]> headers,
             long contentLength,
+            boolean chunked,
             boolean clientWantsClose,
             InputStream clientIn,
             OutputStream clientOut
     ) throws IOException {
         HttpURLConnection connection = null;
         try {
+            byte[] chunkedBody = null;
+            if (chunked) {
+                chunkedBody = readChunkedBody(clientIn, MAX_REQUEST_BODY);
+                contentLength = chunkedBody.length;
+            }
+
             connection = (HttpURLConnection) url.openConnection();
             // Let apt/curl/wget handle redirects directly (RFC 9110 proxy semantics).
             connection.setInstanceFollowRedirects(false);
@@ -197,17 +285,24 @@ final class SandboxProxy {
 
             for (String[] h : headers) {
                 String name = h[0];
-                String lname = name.toLowerCase();
+                String lname = name.toLowerCase(Locale.US);
                 if (lname.equals("proxy-connection") || lname.equals("connection")
                         || lname.equals("keep-alive") || lname.equals("host")
                         || lname.equals("proxy-authorization") || lname.equals("content-length")
                         || lname.equals("transfer-encoding") || lname.equals("accept-encoding")) {
                     continue;
                 }
-                connection.setRequestProperty(name, h[1]);
+                connection.addRequestProperty(name, h[1]);
             }
 
-            if (contentLength > 0) {
+            if (chunkedBody != null) {
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(chunkedBody.length);
+                try (OutputStream reqOut = connection.getOutputStream()) {
+                    reqOut.write(chunkedBody);
+                    reqOut.flush();
+                }
+            } else if (contentLength > 0) {
                 connection.setDoOutput(true);
                 connection.setFixedLengthStreamingMode(contentLength);
                 try (OutputStream reqOut = connection.getOutputStream()) {
@@ -247,12 +342,14 @@ final class SandboxProxy {
             clientOut.write(head.toString().getBytes(StandardCharsets.ISO_8859_1));
 
             if (!noBody) {
-                InputStream body = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
-                if (body != null) {
-                    byte[] buffer = new byte[32 * 1024];
-                    int read;
-                    while ((read = body.read(buffer)) > 0) {
-                        clientOut.write(buffer, 0, read);
+                InputStream rawBody = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                if (rawBody != null) {
+                    try (InputStream body = rawBody) {
+                        byte[] buffer = new byte[32 * 1024];
+                        int read;
+                        while ((read = body.read(buffer)) > 0) {
+                            clientOut.write(buffer, 0, read);
+                        }
                     }
                 }
             }
@@ -263,13 +360,42 @@ final class SandboxProxy {
         }
     }
 
-    private static InetAddress resolvePreferIpv4(String host) throws IOException {
-        InetAddress[] all = InetAddress.getAllByName(host);
-        for (InetAddress addr : all) {
-            if (addr instanceof Inet4Address) return addr;
+    private static byte[] readChunkedBody(InputStream in, int maxBytes) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[16 * 1024];
+        while (true) {
+            String sizeLine = readLine(in);
+            if (sizeLine == null) throw new IOException("unexpected EOF in chunked body");
+            int semi = sizeLine.indexOf(';');
+            String hex = (semi >= 0 ? sizeLine.substring(0, semi) : sizeLine).trim();
+            int chunkSize;
+            try {
+                chunkSize = Integer.parseInt(hex, 16);
+            } catch (NumberFormatException e) {
+                throw new IOException("invalid chunk size");
+            }
+            if (chunkSize < 0) throw new IOException("negative chunk size");
+            if (chunkSize == 0) {
+                String trailer;
+                while ((trailer = readLine(in)) != null && !trailer.isEmpty()) {
+                    // skip trailers
+                }
+                break;
+            }
+            if (out.size() + chunkSize > maxBytes) {
+                throw new IOException("chunked body too large");
+            }
+            int remaining = chunkSize;
+            while (remaining > 0) {
+                int r = in.read(buf, 0, Math.min(buf.length, remaining));
+                if (r < 0) throw new IOException("unexpected EOF in chunk");
+                out.write(buf, 0, r);
+                remaining -= r;
+            }
+            // trailing CRLF after chunk payload
+            readLine(in);
         }
-        if (all.length > 0) return all[0];
-        throw new IOException("DNS lookup failed for " + host);
+        return out.toByteArray();
     }
 
     private static void tunnel(Socket client, InputStream clientIn, OutputStream clientOut,
@@ -293,9 +419,23 @@ final class SandboxProxy {
             return;
         }
 
+        InetAddress addr;
+        try {
+            addr = resolvePublicPreferIpv4(host);
+        } catch (SecurityException se) {
+            try {
+                respondError(clientOut, 403, "Forbidden", se.getMessage());
+            } catch (IOException ignored) { }
+            return;
+        } catch (Exception e) {
+            try {
+                respondError(clientOut, 502, "Bad Gateway", "DNS failed: " + e.getMessage());
+            } catch (IOException ignored) { }
+            return;
+        }
+
         try (Socket remote = new Socket()) {
             remote.setTcpNoDelay(true);
-            InetAddress addr = resolvePreferIpv4(host);
             remote.connect(new InetSocketAddress(addr, port), 15_000);
             client.setSoTimeout(0);
             remote.setSoTimeout(0);
@@ -348,7 +488,7 @@ final class SandboxProxy {
 
     private static void respondError(OutputStream out, int code, String message,
                                      String text) throws IOException {
-        byte[] body = text.getBytes(StandardCharsets.UTF_8);
+        byte[] body = (text == null ? message : text).getBytes(StandardCharsets.UTF_8);
         out.write(("HTTP/1.1 " + code + " " + message + "\r\n"
                 + "Content-Type: text/plain; charset=utf-8\r\n"
                 + "Content-Length: " + body.length + "\r\n"

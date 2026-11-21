@@ -47,6 +47,9 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
+      - name: Run Rust workspace tests
+        run: cargo test --workspace
+
       - name: Decode release keystore
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -60,6 +63,10 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./build.sh release
+
+      - name: Run Android unit tests
+        working-directory: app
+        run: ./gradlew --no-daemon testDebugUnitTest
 
       - name: Prepare release asset
         id: pkg

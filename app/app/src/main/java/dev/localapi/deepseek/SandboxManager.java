@@ -5,9 +5,6 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Base64;
-import android.webkit.WebView;
-
-import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -39,13 +36,10 @@ import java.util.zip.ZipInputStream;
  * proxy networking, detects installed tools, and runs base package setup.
  */
 final class SandboxManager {
-    static final String VERSION = "ubuntu-disk-1";
-    static final String ASSET_URL =
-            "https://github.com/Rewixx-png/localapi-deepseek/releases/download/"
-                    + "sandbox-ubuntu-disk-1/ubuntu-sandbox.zip";
-    static final String ASSET_SHA =
-            "22d2c6d4feba7d514e1406ce3ad394daa61b98fcd72e47fee01650c16f0775b6";
-    static final long ASSET_SIZE = 132758428L;
+    static final String VERSION = AppConfig.SANDBOX_VERSION;
+    static final String ASSET_URL = AppConfig.SANDBOX_ASSET_URL;
+    static final String ASSET_SHA = AppConfig.SANDBOX_ASSET_SHA256;
+    static final long ASSET_SIZE = AppConfig.SANDBOX_ASSET_SIZE;
 
     private static final String NET_READY_MARKER = "__LOCALAPI_NET_READY__";
     private static final Pattern TOOLS_MARKER_RE =
@@ -55,6 +49,61 @@ final class SandboxManager {
     private static final long MAX_LOG_BYTES = 2L * 1024 * 1024;
     private static final Pattern ANSI_PATTERN =
             Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
+
+    static final class Status {
+        final boolean installed;
+        final boolean installing;
+        final boolean running;
+        final boolean shellReady;
+        final boolean baseInstalled;
+        final boolean installingBase;
+        final String installedTools;
+        final String networkStatus;
+        final String version;
+        final long size;
+        final int ramMb;
+        final int cores;
+        final int maxRamMb;
+        final int maxCores;
+        final String abi;
+        final String log;
+
+        Status(
+                boolean installed,
+                boolean installing,
+                boolean running,
+                boolean shellReady,
+                boolean baseInstalled,
+                boolean installingBase,
+                String installedTools,
+                String networkStatus,
+                String version,
+                long size,
+                int ramMb,
+                int cores,
+                int maxRamMb,
+                int maxCores,
+                String abi,
+                String log
+        ) {
+            this.installed = installed;
+            this.installing = installing;
+            this.running = running;
+            this.shellReady = shellReady;
+            this.baseInstalled = baseInstalled;
+            this.installingBase = installingBase;
+            this.installedTools = installedTools;
+            this.networkStatus = networkStatus;
+            this.version = version;
+            this.size = size;
+            this.ramMb = ramMb;
+            this.cores = cores;
+            this.maxRamMb = maxRamMb;
+            this.maxCores = maxCores;
+            this.abi = abi;
+            this.log = log;
+        }
+    }
 
     interface Listener {
         void onProgress(int percent);
@@ -69,11 +118,11 @@ final class SandboxManager {
     }
 
     private final Activity activity;
-    private final WebView web;
     private volatile Listener listener;
     private volatile Process process;
     private volatile boolean installing;
     private volatile boolean running;
+    private volatile boolean online = true;
     private volatile boolean networkConfigured;
     private volatile boolean shellReady;
     private volatile boolean baseInstalled;
@@ -96,13 +145,17 @@ final class SandboxManager {
     private int ramMb = 2048;
     private int cores = 2;
 
-    SandboxManager(Activity activity, WebView web) {
+    SandboxManager(Activity activity) {
         this.activity = activity;
-        this.web = web;
     }
 
     void setListener(Listener listener) {
         this.listener = listener;
+    }
+
+    void setOnline(boolean enabled) {
+        this.online = enabled;
+        SandboxProxy.setOnline(enabled);
     }
 
     private void ui(Runnable r) {
@@ -133,13 +186,15 @@ final class SandboxManager {
             ActivityManager am = (ActivityManager) activity.getSystemService(
                     Context.ACTIVITY_SERVICE);
             ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
-            am.getMemoryInfo(info);
-            long total = info.totalMem / (1024L * 1024L);
-            if (total < 1024) total = 1024;
-            return (int) Math.min(6144L, Math.max(512L, total - 1024L));
-        } catch (Exception e) {
-            return 2048;
+            if (am != null) {
+                am.getMemoryInfo(info);
+                long total = info.totalMem / (1024L * 1024L);
+                if (total < 1024) total = 1024;
+                return (int) Math.min(6144L, Math.max(512L, total - 1024L));
+            }
+        } catch (Exception ignored) {
         }
+        return 2048;
     }
 
     private int maxCores() {
@@ -154,14 +209,14 @@ final class SandboxManager {
         cores = Math.max(1, Math.min(maxCores(), cores));
     }
 
-    JSONObject setConfig(int ramMb, int cores) throws Exception {
+    Status setConfig(int ramMb, int cores) {
         this.ramMb = Math.max(512, Math.min(maxRamMb(), ramMb));
         this.cores = Math.max(1, Math.min(maxCores(), cores));
         prefs(activity).edit()
                 .putInt(KEY_RAM, this.ramMb)
                 .putInt(KEY_CORES, this.cores)
                 .apply();
-        return status();
+        return snapshot();
     }
 
     static boolean installed(Context context) {
@@ -171,35 +226,39 @@ final class SandboxManager {
                 && new File(dir, "qemu-data/efi-virtio.rom").isFile();
     }
 
-    JSONObject status() throws Exception {
-        JSONObject out = new JSONObject();
+    Status snapshot() {
         loadConfig();
-        out.put("installed", installed(activity));
-        out.put("installing", installing);
-        out.put("running", running);
-        out.put("shellReady", shellReady);
-        out.put("baseInstalled", baseInstalled);
-        out.put("installingBase", installingBase);
-        out.put("installedTools", installedTools);
-        out.put("networkStatus", networkStatus);
-        out.put("version", VERSION);
-        out.put("size", ASSET_SIZE);
-        out.put("ramMb", ramMb);
-        out.put("cores", cores);
-        out.put("maxRamMb", maxRamMb());
-        out.put("maxCores", maxCores());
-        out.put("abi", android.os.Build.SUPPORTED_ABIS.length > 0
-                ? android.os.Build.SUPPORTED_ABIS[0] : "");
-        File log = new File(activity.getCacheDir(), "sandbox.log");
-        out.put("log", tail(log, 64 * 1024));
-        return out;
+        File logFile = new File(activity.getCacheDir(), "sandbox.log");
+        String abi = android.os.Build.SUPPORTED_ABIS.length > 0
+                ? android.os.Build.SUPPORTED_ABIS[0] : "";
+        return new Status(
+                installed(activity),
+                installing,
+                running,
+                shellReady,
+                baseInstalled,
+                installingBase,
+                installedTools,
+                networkStatus,
+                VERSION,
+                ASSET_SIZE,
+                ramMb,
+                cores,
+                maxRamMb(),
+                maxCores(),
+                abi,
+                tail(logFile, 64 * 1024)
+        );
     }
 
     void install() {
         if (installing) return;
         if (installed(activity)) {
-            runJs("window.__sandboxInstalled && window.__sandboxInstalled()");
             ui(() -> { Listener l = listener; if (l != null) l.onInstalled(); });
+            return;
+        }
+        if (!online) {
+            ui(() -> { Listener l = listener; if (l != null) l.onError("Доступ к интернету выключен", ""); });
             return;
         }
         installing = true;
@@ -213,7 +272,6 @@ final class SandboxManager {
                 }
                 unzip(zip, dir(activity));
                 installing = false;
-                runJs("window.__sandboxInstalled && window.__sandboxInstalled()");
                 ui(() -> { Listener l = listener; if (l != null) l.onInstalled(); });
                 log("sandbox installed " + VERSION);
             } catch (Exception e) {
@@ -222,8 +280,6 @@ final class SandboxManager {
                         ? "Не удалось установить песочницу"
                         : e.getMessage();
                 log("sandbox install error: " + message);
-                runJs("window.__sandboxError && window.__sandboxError("
-                        + JSONObject.quote(message) + ")");
                 ui(() -> { Listener l = listener; if (l != null) l.onError(message, ""); });
             } finally {
                 //noinspection ResultOfMethodCallIgnored
@@ -234,18 +290,18 @@ final class SandboxManager {
 
     void start(String chatId) {
         if (!installed(activity)) {
-            runJs("window.__sandboxError && window.__sandboxError("
-                    + JSONObject.quote("Сначала скачайте песочницу") + ")");
-            ui(() -> { Listener l = listener; if (l != null) l.onError("Сначала скачайте песочницу", chatId == null ? "" : chatId); });
+            final String cid = chatId == null ? "" : chatId;
+            ui(() -> { Listener l = listener; if (l != null) l.onError("Сначала скачайте песочницу", cid); });
             return;
         }
-        SandboxProxy.start();
+        if (online) {
+            SandboxProxy.start();
+        }
         final Process started;
         final String currentChat;
         synchronized (startLock) {
             if (running) {
-                runJs("window.__sandboxOutput && window.__sandboxOutput("
-                        + JSONObject.quote("[sandbox уже запущена]") + ")");
+                emitOutput("[sandbox уже запущена]\n");
                 return;
             }
             try {
@@ -309,10 +365,9 @@ final class SandboxManager {
             } catch (Exception e) {
                 running = false;
                 process = null;
+                SandboxProxy.stop();
                 String message = e.getMessage() == null ? "QEMU не запустился" : e.getMessage();
                 log("sandbox start error: " + message);
-                runJs("window.__sandboxError && window.__sandboxError("
-                        + JSONObject.quote(message) + "," + JSONObject.quote(activeChatId) + ")");
                 final String errChat = activeChatId;
                 ui(() -> { Listener l = listener; if (l != null) l.onError(message, errChat); });
                 return;
@@ -320,8 +375,6 @@ final class SandboxManager {
         }
 
         log("sandbox start " + VERSION + " chat=" + currentChat);
-        runJs("window.__sandboxStarted && window.__sandboxStarted("
-                + JSONObject.quote(currentChat) + ")");
         ui(() -> { Listener l = listener; if (l != null) l.onStarted(currentChat); });
 
         new Thread(() -> {
@@ -371,8 +424,6 @@ final class SandboxManager {
                     }
                     if (statusUpdated) notifyStatus();
                     maybeConfigureNetwork(started);
-                    runJs("window.__sandboxOutput && window.__sandboxOutput("
-                            + JSONObject.quote(text) + ")");
                     ui(() -> { Listener l = listener; if (l != null) l.onOutput(text); });
                 }
             } catch (Exception e) {
@@ -395,12 +446,11 @@ final class SandboxManager {
                 exitedChat = activeChatId;
                 activeChatId = "";
             }
+            SandboxProxy.stop();
             synchronized (serialLock) {
                 serialLock.notifyAll();
             }
             log("sandbox exit code=" + code);
-            runJs("window.__sandboxExit && window.__sandboxExit(" + code + ","
-                    + JSONObject.quote(exitedChat) + ")");
             final int exitCode = code;
             ui(() -> { Listener l = listener; if (l != null) l.onExit(exitCode, exitedChat); });
         }, "sandbox-output").start();
@@ -425,8 +475,13 @@ final class SandboxManager {
         }
     }
 
-    /** Tests host proxy and (if running) guest internet access through 10.0.2.2:18991. */
+    /** Tests host proxy and (if running) guest internet access through guest proxy. */
     void testNetwork() {
+        if (!online) {
+            networkStatus = "Доступ к интернету выключен";
+            notifyStatus();
+            return;
+        }
         networkStatus = "Проверка…";
         notifyStatus();
         new Thread(() -> {
@@ -437,17 +492,20 @@ final class SandboxManager {
                 notifyStatus();
                 return;
             }
-            String cmd = "echo \"[net-test] Checking guest -> 10.0.2.2:18991...\"; "
+            String proxyUrl = AppConfig.SANDBOX_GUEST_PROXY_URL;
+            String cmd = "echo \"[net-test] Checking guest -> " + proxyUrl + "...\"; "
                     + "if command -v curl >/dev/null 2>&1; then "
-                    + "  curl -sS -I --max-time 12 -x http://10.0.2.2:18991 http://ports.ubuntu.com/ubuntu-ports/ | head -1 && "
-                    + "  curl -sS -I --max-time 12 -x http://10.0.2.2:18991 https://example.com | head -1; "
+                    + "  curl -sS -I --max-time 12 -x " + proxyUrl + " http://ports.ubuntu.com/ubuntu-ports/ | head -1 && "
+                    + "  curl -sS -I --max-time 12 -x " + proxyUrl + " https://example.com | head -1; "
                     + "elif /bin/busybox --list 2>/dev/null | grep -qx wget; then "
-                    + "  http_proxy=http://10.0.2.2:18991 /bin/busybox wget -S --spider -T 12 http://ports.ubuntu.com/ubuntu-ports/ 2>&1 | head -4; "
+                    + "  http_proxy=" + proxyUrl + " /bin/busybox wget -S --spider -T 12 http://ports.ubuntu.com/ubuntu-ports/ 2>&1 | head -4; "
                     + "else "
-                    + "  printf 'HEAD http://ports.ubuntu.com/ubuntu-ports/ HTTP/1.1\\r\\nHost: ports.ubuntu.com\\r\\nConnection: close\\r\\n\\r\\n' | /bin/busybox nc -w 10 10.0.2.2 18991 | head -1; "
+                    + "  printf 'HEAD http://ports.ubuntu.com/ubuntu-ports/ HTTP/1.1\\r\\nHost: ports.ubuntu.com\\r\\nConnection: close\\r\\n\\r\\n' | /bin/busybox nc -w 10 "
+                    + AppConfig.SANDBOX_GUEST_PROXY_HOST + " " + AppConfig.SANDBOX_PROXY_PORT + " | head -1; "
                     + "fi";
             ExecOutcome outcome = runBlockingExec("nettest_" + System.currentTimeMillis(), cmd, 25_000L, null);
-            if (outcome.code == 0 && (outcome.output.contains("HTTP/") || outcome.output.contains("200") || outcome.output.contains("301") || outcome.output.contains("302"))) {
+            if (outcome.code == 0 && (outcome.output.contains("HTTP/") || outcome.output.contains("200")
+                    || outcome.output.contains("301") || outcome.output.contains("302"))) {
                 networkStatus = "OK (гость + прокси работают)";
             } else {
                 String summary = outcome.output.isEmpty() ? ("код " + outcome.code) : outcome.output.split("\\n")[0];
@@ -461,6 +519,10 @@ final class SandboxManager {
     /** Installs Python, wget, curl, htop, git, jq and CLI utilities persistently into rootfs.img. */
     void installBasePackages() {
         if (!running || installingBase) return;
+        if (!online) {
+            emitOutput("\n==> Нельзя установить пакеты: офлайн-режим.\n");
+            return;
+        }
         installingBase = true;
         notifyStatus();
         new Thread(() -> {
@@ -648,9 +710,6 @@ final class SandboxManager {
                         }
                         if (!chunk.equals(lastChunk)) {
                             lastChunk = chunk;
-                            runJs("window.__sandboxExecChunk && window.__sandboxExecChunk("
-                                    + JSONObject.quote(streamIdForChunks) + ","
-                                    + JSONObject.quote(chunk) + ")");
                             final String cOut = chunk;
                             ui(() -> { Listener l = listener; if (l != null) l.onExecChunk(streamIdForChunks, cOut); });
                         }
@@ -707,8 +766,6 @@ final class SandboxManager {
     void exec(String id, String command) {
         final Process proc = process;
         if (!running || proc == null) {
-            runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                    + JSONObject.quote(id) + "," + JSONObject.quote("Песочница не запущена") + ",-1)");
             ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, "Песочница не запущена", -1); });
             return;
         }
@@ -723,9 +780,6 @@ final class SandboxManager {
         new Thread(() -> {
             ExecOutcome outcome = runBlockingExec(id, cmdText, timeoutMs, id);
             if (outcome.preempted) return;
-            runJs("window.__sandboxExecResult && window.__sandboxExecResult("
-                    + JSONObject.quote(id) + "," + JSONObject.quote(outcome.output)
-                    + "," + outcome.code + ")");
             ui(() -> { Listener l = listener; if (l != null) l.onExecResult(id, outcome.output, outcome.code); });
         }, "sandbox-exec").start();
     }
@@ -741,6 +795,66 @@ final class SandboxManager {
             cleaned.append(line).append('\n');
         }
         return cleaned.toString().trim();
+    }
+
+    private static String buildGuestBootstrapScript(String utcDate) {
+        String proxy = AppConfig.SANDBOX_GUEST_PROXY_URL;
+        String proxyHost = AppConfig.SANDBOX_GUEST_PROXY_HOST;
+        String proxyEnv = "export DEBIAN_FRONTEND=noninteractive\n"
+                + "export APT_LISTCHANGES_FRONTEND=none\n"
+                + "export http_proxy=" + proxy + "\n"
+                + "export https_proxy=" + proxy + "\n"
+                + "export HTTP_PROXY=" + proxy + "\n"
+                + "export HTTPS_PROXY=" + proxy + "\n"
+                + "export no_proxy=localhost,127.0.0.1," + proxyHost + "\n"
+                + "export NO_PROXY=localhost,127.0.0.1," + proxyHost + "\n"
+                + "export PATH=/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n";
+
+        return "/bin/busybox ifconfig lo up 2>/dev/null\n"
+                + "NIC=eth0; for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] || { NIC=\"$n\"; break; }; done\n"
+                + "/bin/busybox ifconfig \"$NIC\" 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
+                + "/bin/busybox route add default gw " + proxyHost + " \"$NIC\" 2>/dev/null\n"
+                + "printf 'nameserver 10.0.2.3\\n' > /etc/resolv.conf\n"
+                + "date -u -s \"" + utcDate + "\" 2>/dev/null\n"
+                + proxyEnv
+                + "mkdir -p /usr/local/bin /etc/profile.d\n"
+                + "for cmd in wget unzip tar ps top ping nslookup nc less vi; do "
+                + "  if /bin/busybox --list 2>/dev/null | /bin/busybox grep -qx \"$cmd\"; then "
+                + "    [ -e \"/usr/local/bin/$cmd\" ] || ln -s /bin/busybox \"/usr/local/bin/$cmd\" 2>/dev/null; "
+                + "  fi; "
+                + "done\n"
+                + "cat << 'PROEOF' > /etc/profile.d/localapi.sh\n"
+                + proxyEnv
+                + "PROEOF\n"
+                + "cat << 'APTEOF' > /etc/apt/apt.conf.d/99proxy\n"
+                + "Acquire::http::Proxy \"" + proxy + "\";\n"
+                + "Acquire::https::Proxy \"" + proxy + "\";\n"
+                + "Acquire::http::Pipeline-Depth \"0\";\n"
+                + "Acquire::ForceIPv4 \"true\";\n"
+                + "Acquire::Retries \"3\";\n"
+                + "Acquire::http::Timeout \"30\";\n"
+                + "Acquire::https::Timeout \"30\";\n"
+                + "DPkg::Options { \"--force-confdef\"; \"--force-confold\"; };\n"
+                + "APTEOF\n"
+                + "cat << 'IBEOF' > /usr/bin/install-base\n"
+                + "#!/bin/sh\n"
+                + "set -e\n"
+                + proxyEnv
+                + "echo '==> Обновление индексов apt...'\n"
+                + "apt-get update\n"
+                + "echo '==> Установка python3, pip, curl, wget, htop, git, jq, unzip, nano, tree, sqlite3...'\n"
+                + "apt-get install -y --no-install-recommends ca-certificates curl wget python3 python3-pip python3-venv git htop procps jq unzip zip nano file tree sqlite3 dnsutils iputils-ping net-tools\n"
+                + "touch /var/lib/localapi-base-v2\n"
+                + "echo '==> Готово! Пакеты сохранены в rootfs.img.'\n"
+                + "IBEOF\n"
+                + "chmod +x /usr/bin/install-base\n"
+                + "cd /workspace 2>/dev/null || true\n"
+                + "__tools=\"\"; for t in python3 pip3 curl wget htop git jq unzip zip nano tree sqlite3; do "
+                + "  [ -x \"/usr/bin/$t\" ] || [ -x \"/bin/$t\" ] && __tools=\"${__tools}${__tools:+,}$t\"; "
+                + "done\n"
+                + "printf '%s%s=%s\\n' '__LOCALAPI_' 'TOOLS__' \"$__tools\"\n"
+                + "if [ -f /var/lib/localapi-base-v2 ]; then printf '%s%s=1\\n' '__LOCALAPI_' 'BASE_V2__'; else printf '%s%s=0\\n' '__LOCALAPI_' 'BASE_V2__'; fi\n"
+                + "printf '%s%s\\n' '__LOCALAPI_' 'NET_READY__'\n";
     }
 
     private void maybeConfigureNetwork(Process proc) {
@@ -759,78 +873,13 @@ final class SandboxManager {
         }
         SimpleDateFormat utc = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
         utc.setTimeZone(TimeZone.getTimeZone("UTC"));
-        String date = utc.format(new Date());
-        String setup = "/bin/busybox ifconfig lo up 2>/dev/null\n"
-                + "NIC=eth0; for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] || { NIC=\"$n\"; break; }; done\n"
-                + "/bin/busybox ifconfig \"$NIC\" 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null\n"
-                + "/bin/busybox route add default gw 10.0.2.2 \"$NIC\" 2>/dev/null\n"
-                + "printf 'nameserver 10.0.2.3\\n' > /etc/resolv.conf\n"
-                + "date -u -s \"" + date + "\" 2>/dev/null\n"
-                + "export DEBIAN_FRONTEND=noninteractive\n"
-                + "export APT_LISTCHANGES_FRONTEND=none\n"
-                + "export http_proxy=http://10.0.2.2:18991\n"
-                + "export https_proxy=http://10.0.2.2:18991\n"
-                + "export HTTP_PROXY=http://10.0.2.2:18991\n"
-                + "export HTTPS_PROXY=http://10.0.2.2:18991\n"
-                + "export no_proxy=localhost,127.0.0.1,10.0.2.2\n"
-                + "export NO_PROXY=localhost,127.0.0.1,10.0.2.2\n"
-                + "export PATH=/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n"
-                + "mkdir -p /usr/local/bin /etc/profile.d\n"
-                + "for cmd in wget unzip tar ps top ping nslookup nc less vi; do "
-                + "  if /bin/busybox --list 2>/dev/null | /bin/busybox grep -qx \"$cmd\"; then "
-                + "    [ -e \"/usr/local/bin/$cmd\" ] || ln -s /bin/busybox \"/usr/local/bin/$cmd\" 2>/dev/null; "
-                + "  fi; "
-                + "done\n"
-                + "cat << 'PROEOF' > /etc/profile.d/localapi.sh\n"
-                + "export DEBIAN_FRONTEND=noninteractive\n"
-                + "export APT_LISTCHANGES_FRONTEND=none\n"
-                + "export http_proxy=http://10.0.2.2:18991\n"
-                + "export https_proxy=http://10.0.2.2:18991\n"
-                + "export HTTP_PROXY=http://10.0.2.2:18991\n"
-                + "export HTTPS_PROXY=http://10.0.2.2:18991\n"
-                + "export no_proxy=localhost,127.0.0.1,10.0.2.2\n"
-                + "export NO_PROXY=localhost,127.0.0.1,10.0.2.2\n"
-                + "export PATH=/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\n"
-                + "PROEOF\n"
-                + "cat << 'APTEOF' > /etc/apt/apt.conf.d/99proxy\n"
-                + "Acquire::http::Proxy \"http://10.0.2.2:18991\";\n"
-                + "Acquire::https::Proxy \"http://10.0.2.2:18991\";\n"
-                + "Acquire::http::Pipeline-Depth \"0\";\n"
-                + "Acquire::ForceIPv4 \"true\";\n"
-                + "Acquire::Retries \"3\";\n"
-                + "Acquire::http::Timeout \"30\";\n"
-                + "Acquire::https::Timeout \"30\";\n"
-                + "DPkg::Options { \"--force-confdef\"; \"--force-confold\"; };\n"
-                + "APTEOF\n"
-                + "cat << 'IBEOF' > /usr/bin/install-base\n"
-                + "#!/bin/sh\n"
-                + "set -e\n"
-                + "export DEBIAN_FRONTEND=noninteractive\n"
-                + "export APT_LISTCHANGES_FRONTEND=none\n"
-                + "export http_proxy=http://10.0.2.2:18991\n"
-                + "export https_proxy=http://10.0.2.2:18991\n"
-                + "export HTTP_PROXY=http://10.0.2.2:18991\n"
-                + "export HTTPS_PROXY=http://10.0.2.2:18991\n"
-                + "echo '==> Обновление индексов apt...'\n"
-                + "apt-get update\n"
-                + "echo '==> Установка python3, pip, curl, wget, htop, git, jq, unzip, nano, tree, sqlite3...'\n"
-                + "apt-get install -y --no-install-recommends ca-certificates curl wget python3 python3-pip python3-venv git htop procps jq unzip zip nano file tree sqlite3 dnsutils iputils-ping net-tools\n"
-                + "touch /var/lib/localapi-base-v2\n"
-                + "echo '==> Готово! Пакеты сохранены в rootfs.img.'\n"
-                + "IBEOF\n"
-                + "chmod +x /usr/bin/install-base\n"
-                + "cd /workspace 2>/dev/null || true\n"
-                + "__tools=\"\"; for t in python3 pip3 curl wget htop git jq unzip zip nano tree sqlite3; do "
-                + "  [ -x \"/usr/bin/$t\" ] || [ -x \"/bin/$t\" ] && __tools=\"${__tools}${__tools:+,}$t\"; "
-                + "done\n"
-                + "printf '%s%s=%s\\n' '__LOCALAPI_' 'TOOLS__' \"$__tools\"\n"
-                + "if [ -f /var/lib/localapi-base-v2 ]; then printf '%s%s=1\\n' '__LOCALAPI_' 'BASE_V2__'; else printf '%s%s=0\\n' '__LOCALAPI_' 'BASE_V2__'; fi\n"
-                + "printf '%s%s\\n' '__LOCALAPI_' 'NET_READY__'\n";
+        String setup = buildGuestBootstrapScript(utc.format(new Date()));
         try {
             synchronized (writeLock) {
                 writeUartSafe(proc.getOutputStream(), setup.getBytes(StandardCharsets.UTF_8));
             }
-            log("sandbox network & apt configured (slirp 10.0.2.15 -> proxy 10.0.2.2:18991)");
+            log("sandbox network & apt configured (slirp 10.0.2.15 -> proxy "
+                    + AppConfig.SANDBOX_GUEST_PROXY_URL + ")");
         } catch (Exception e) {
             shellReady = true;
             log("sandbox network setup error: " + e.getMessage());
@@ -847,6 +896,7 @@ final class SandboxManager {
             installingBase = false;
         }
         if (p != null) p.destroy();
+        SandboxProxy.stop();
         synchronized (serialLock) {
             serialLock.notifyAll();
         }
@@ -877,6 +927,9 @@ final class SandboxManager {
             throw new IOException("HTTP " + code);
         }
         long total = connection.getContentLengthLong();
+        if (total > AppConfig.SANDBOX_MAX_DOWNLOAD_BYTES) {
+            throw new IOException("Архив песочницы превышает допустимый размер");
+        }
         try (InputStream in = new BufferedInputStream(connection.getInputStream());
              OutputStream out = new FileOutputStream(target)) {
             byte[] buffer = new byte[64 * 1024];
@@ -884,14 +937,15 @@ final class SandboxManager {
             int read;
             int lastPercent = -1;
             while ((read = in.read(buffer)) > 0) {
-                out.write(buffer, 0, read);
                 readTotal += read;
+                if (readTotal > AppConfig.SANDBOX_MAX_DOWNLOAD_BYTES) {
+                    throw new IOException("Превышен лимит размера загрузки песочницы");
+                }
+                out.write(buffer, 0, read);
                 if (total > 0) {
-                    int percent = (int) (readTotal * 100 / total);
+                    int percent = (int) Math.min(100, readTotal * 100 / total);
                     if (percent != lastPercent) {
                         lastPercent = percent;
-                        runJs("window.__sandboxProgress && window.__sandboxProgress("
-                                + percent + ")");
                         final int pct = percent;
                         ui(() -> { Listener l = listener; if (l != null) l.onProgress(pct); });
                     }
@@ -978,16 +1032,28 @@ final class SandboxManager {
         return out.toString();
     }
 
-    private static String tail(File file, int max) {
-        if (!file.isFile()) return "";
+    static String tail(File file, int max) {
+        if (file == null || !file.isFile() || max <= 0) return "";
         try (FileInputStream in = new FileInputStream(file)) {
             long length = file.length();
-            long skip = Math.max(0, length - max);
-            long skipped = 0;
-            while (skipped < skip && in.skip(skip - skipped) > 0) skipped++;
-            byte[] data = new byte[(int) Math.min(max, length)];
-            int read = in.read(data);
-            return read > 0 ? new String(data, 0, read, StandardCharsets.UTF_8) : "";
+            if (length <= 0) return "";
+            long skip = Math.max(0L, length - max);
+            long skipped = 0L;
+            while (skipped < skip) {
+                long n = in.skip(skip - skipped);
+                if (n <= 0) break;
+                skipped += n;
+            }
+            int want = (int) Math.min(max, Math.max(0L, length - skipped));
+            if (want == 0) return "";
+            byte[] data = new byte[want];
+            int offset = 0;
+            while (offset < want) {
+                int read = in.read(data, offset, want - offset);
+                if (read < 0) break;
+                offset += read;
+            }
+            return offset > 0 ? new String(data, 0, offset, StandardCharsets.UTF_8) : "";
         } catch (Exception e) {
             return "";
         }
@@ -1011,11 +1077,5 @@ final class SandboxManager {
                     .getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) {
         }
-    }
-
-    private void runJs(String js) {
-        activity.runOnUiThread(() -> {
-            if (web != null) web.evaluateJavascript(js, null);
-        });
     }
 }

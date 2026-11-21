@@ -1,4 +1,8 @@
-package dev.localapi.deepseek
+package dev.localapi.deepseek.ui
+
+import dev.localapi.deepseek.AppConfig
+import dev.localapi.deepseek.AppState
+import dev.localapi.deepseek.SettingsPane
 
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
@@ -248,8 +252,7 @@ private fun TokenSettingsPane(state: AppState) {
         val web = state.isWebSession()
         KeyValueRow("Активный режим", if (web) "веб-сессия chat.deepseek.com" else "официальный API")
         if (!web) {
-            val mName = if (state.model == "deepseek-v4-pro") "V4 Pro" else "Flash 1017"
-            KeyValueRow("Модель", mName + if (state.thinking) " · reasoning" else "")
+            KeyValueRow("Модель", state.modelDisplayLabel(state.model) + if (state.thinking) " · reasoning" else "")
         }
         val keyState = buildString {
             append(if (state.hasToken) "сохранён" else "не добавлен")
@@ -316,7 +319,7 @@ private fun TokenSettingsPane(state: AppState) {
     }
     GroupedCardItem(1, 2) {
         FilledTonalButton(onClick = {
-            state.openUrl("https://github.com/Rewixx-png/localapi-deepseek/blob/main/docs/get-token.md")
+            state.openUrl(AppConfig.TOKEN_DOCS_URL)
         }) {
             Text("Инструкция по токену")
         }
@@ -342,34 +345,64 @@ private fun TokenSettingsPane(state: AppState) {
 
 @Composable
 private fun ServerSettingsPane(state: AppState) {
+    var portInput by remember(state.serverPort) { mutableStateOf(state.serverPort.toString()) }
+    val portParsed = portInput.trim().toIntOrNull()
+    val portValid = portParsed != null && portParsed in AppConfig.MIN_LOCAL_API_PORT..AppConfig.MAX_LOCAL_API_PORT
+    val activeModel = if (state.isWebSession()) AppConfig.DEFAULT_MODEL_ID else state.model
+    val itemCount = if (state.serverInfo.running) 4 else 3
+
     SectionLabel("Локальный OpenAI-совместимый сервер")
-    GroupedCardItem(0, if (state.serverInfo.running) 3 else 2) {
+    GroupedCardItem(0, itemCount) {
         SettingsSwitchRow(
             title = "Сервер",
-            subtitle = if (state.serverInfo.running) "127.0.0.1:${state.serverInfo.port}" else "127.0.0.1:8787",
+            subtitle = if (state.serverInfo.running) "127.0.0.1:${state.serverInfo.port}" else "127.0.0.1:${state.serverPort}",
             icon = Icons.Rounded.Dns,
             checked = state.serverInfo.running,
             enabled = state.online,
             onCheckedChange = { state.toggleServer(it) }
         )
     }
+    GroupedCardItem(1, itemCount) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
+                value = portInput,
+                onValueChange = { raw -> portInput = raw.filter { it.isDigit() }.take(5) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                label = { Text("Порт (${AppConfig.MIN_LOCAL_API_PORT}–${AppConfig.MAX_LOCAL_API_PORT})") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = portInput.isNotEmpty() && !portValid
+            )
+            FilledTonalButton(
+                onClick = { if (portParsed != null) state.updateServerPort(portParsed) },
+                enabled = portValid && portParsed != state.serverPort
+            ) {
+                Text("Применить")
+            }
+        }
+    }
     if (state.serverInfo.running) {
-        GroupedCardItem(1, 3) {
+        GroupedCardItem(2, itemCount) {
             KeyValueRow("Endpoint", state.serverInfo.baseUrl, mono = true)
-            KeyValueRow("Модель", if (state.isWebSession()) "deepseek-flash" else state.model, mono = true)
+            KeyValueRow("Модель", activeModel, mono = true)
             KeyValueRow("Ключ", state.serverInfo.key, mono = true)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TonalActionPill("Ключ", Icons.Rounded.ContentCopy, onClick = { state.copyText(state.serverInfo.key) })
                 TonalActionPill("URL", Icons.Rounded.ContentCopy, onClick = { state.copyText(state.serverInfo.baseUrl) })
                 TonalActionPill("Модель", Icons.Rounded.ContentCopy, onClick = {
-                    state.copyText(if (state.isWebSession()) "deepseek-flash" else state.model)
+                    state.copyText(activeModel)
                 })
             }
         }
     }
-    val lastIdx = if (state.serverInfo.running) 2 else 1
-    GroupedCardItem(lastIdx, lastIdx + 1) {
+    val lastIdx = itemCount - 1
+    GroupedCardItem(lastIdx, itemCount) {
         Text(
             "Если система усыпляет сервер в фоне: на Samsung разрешите фоновую работу в настройках батареи, на Xiaomi включите автозапуск и «Без ограничений».",
             style = MaterialTheme.typography.bodySmall,
@@ -513,7 +546,7 @@ private fun SystemSettingsPane(state: AppState) {
             onCheckedChange = { state.setUpdateRemindEnabled(it) }
         )
     }
-    GroupedCardItem(2, 3, onClick = { state.openUrl("https://github.com/Rewixx-png/localapi-deepseek") }) {
+    GroupedCardItem(2, 3, onClick = { state.openUrl(AppConfig.REPO_URL) }) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -527,7 +560,7 @@ private fun SystemSettingsPane(state: AppState) {
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("Исходный код", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                Text("github.com/Rewixx-png/localapi-deepseek", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("github.com/${AppConfig.REPO_OWNER}/${AppConfig.REPO_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }

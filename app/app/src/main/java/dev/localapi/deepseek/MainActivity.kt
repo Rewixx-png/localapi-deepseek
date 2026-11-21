@@ -55,6 +55,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.localapi.deepseek.ui.AgentToolsSheet
+import dev.localapi.deepseek.ui.BootScreen
+import dev.localapi.deepseek.ui.ChatScreen
+import dev.localapi.deepseek.ui.ImageViewerOverlay
+import dev.localapi.deepseek.ui.JournalSheet
+import dev.localapi.deepseek.ui.LocalApiTheme
+import dev.localapi.deepseek.ui.ModelConfigSheet
+import dev.localapi.deepseek.ui.OnboardingScreen
+import dev.localapi.deepseek.ui.SandboxSheet
+import dev.localapi.deepseek.ui.SettingsScreen
+import dev.localapi.deepseek.ui.TerminalScreen
+import dev.localapi.deepseek.ui.TokenScreen
+import dev.localapi.deepseek.ui.UpdateAlertDialog
+import dev.localapi.deepseek.ui.WorkspaceSheet
 
 class MainActivity : ComponentActivity() {
     private lateinit var appState: AppState
@@ -74,7 +88,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        SandboxProxy.start()
         appState = AppState(this).apply {
             hostActions = object : AppState.HostActions {
                 override fun pickImages() {

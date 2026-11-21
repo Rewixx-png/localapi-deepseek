@@ -9,9 +9,9 @@ use crate::api::{Api, Delta, WebHit};
 use crate::server::{Backend, LocalServer};
 use crate::store::Store;
 use crate::types::{
-    AuthMode, Balance, ChatSummary, Conversation, Error, ErrorKind, Message, Poll,
-    truncate_title, SendStart, Source, Usage, DEFAULT_BASE_URL, MODEL_ID, MODEL_LABEL,
-    MODEL_VERSION,
+    supports_images, truncate_title, AuthMode, Balance, ChatSummary, Conversation, Error,
+    ErrorKind, Message, Poll, PopLastTurn, SendStart, Source, Usage, DEFAULT_BASE_URL, MODEL_ID,
+    MODEL_LABEL, MODEL_REASONER_ID, MODEL_VERSION, SUPPORTED_MODELS,
 };
 use crate::web::{self, WebApi, WebDelta, WEB_BASE_URL};
 
@@ -544,6 +544,41 @@ impl Engine {
         Ok(())
     }
 
+    /// Removes the last user turn and trailing assistant/tool replies so the
+    /// caller can regenerate without duplicating the user message in history.
+    pub fn pop_last_turn(&self, chat_id: &str) -> Result<PopLastTurn, Error> {
+        if chat_id.is_empty() {
+            return Err(Error::not_found("Нет активного чата"));
+        }
+        {
+            let streams = lock(&self.streams);
+            if streams
+                .values()
+                .any(|s| s.chat_id == chat_id && !lock(&s.state).done)
+            {
+                return Err(Error::new(ErrorKind::Invalid, "В этом чате ещё идёт ответ"));
+            }
+        }
+        let (old_session, web, popped, conv) = {
+            let inner = lock(&self.inner);
+            let mut conv = inner.store.get(chat_id)?;
+            let old_session = conv.web_session_id.clone();
+            let popped = inner.store.pop_last_turn(&mut conv)?;
+            (old_session, inner.web.clone(), popped, conv)
+        };
+        if !old_session.is_empty() && self.online.load(Ordering::Relaxed) {
+            if let Some(web) = web {
+                std::thread::spawn(move || {
+                    let _ = web.delete_session(&old_session);
+                });
+            }
+        }
+        let Some((text, images)) = popped else {
+            return Err(Error::not_found("Нет сообщения для повтора"));
+        };
+        Ok(PopLastTurn { text, images, chat: conv })
+    }
+
     pub fn send(&self, chat_id: &str, text: &str, effort: &str) -> Result<SendStart, Error> {
         self.send_opts(chat_id, text, MODEL_ID, true, false, Vec::new(), effort)
     }
@@ -701,18 +736,14 @@ impl Engine {
         if text.is_empty() && images.is_empty() {
             return Err(Error::new(ErrorKind::Invalid, "Сообщение пустое"));
         }
-        let model = match model {
-            "deepseek-v4-pro" => "deepseek-v4-pro",
-            _ => MODEL_ID,
-        }
-        .to_string();
+        let requested_model = model.trim();
         let effort = match effort {
             "low" | "high" | "max" => effort,
             _ => "high",
         }
         .to_string();
 
-        let (mode, api, web, store) = {
+        let (mode, api, web, store, model) = {
             let inner = lock(&self.inner);
             let mode = inner.mode.ok_or_else(|| {
                 Error::new(ErrorKind::Unauthorized, "Сначала добавьте токен DeepSeek")
@@ -723,15 +754,26 @@ impl Engine {
                     "Сначала добавьте токен DeepSeek",
                 ));
             }
+            let resolved_model = if requested_model.is_empty() {
+                MODEL_ID.to_string()
+            } else if SUPPORTED_MODELS.contains(&requested_model)
+                || requested_model == MODEL_REASONER_ID
+                || inner.models.iter().any(|m| m == requested_model)
+            {
+                requested_model.to_string()
+            } else {
+                MODEL_ID.to_string()
+            };
             (
                 mode,
                 inner.api.clone(),
                 inner.web.clone(),
                 Arc::clone(&inner.store),
+                resolved_model,
             )
         };
 
-        if mode == AuthMode::Api && !images.is_empty() && model == "deepseek-v4-pro" {
+        if mode == AuthMode::Api && !images.is_empty() && !supports_images(&model) {
             return Err(Error::new(
                 ErrorKind::Invalid,
                 "V4 Pro не поддерживает изображения. Выберите Flash 1017",
@@ -750,7 +792,7 @@ impl Engine {
 
         let mut conv = if chat_id.is_empty() { store.create() } else { store.get(chat_id)? };
         if mode == AuthMode::Api
-            && model == "deepseek-v4-pro"
+            && !supports_images(&model)
             && conv.messages.iter().any(|m| !m.images.is_empty())
         {
             return Err(Error::new(
@@ -1055,5 +1097,4 @@ impl Engine {
         stream.cancel.store(true, Ordering::Relaxed);
         Ok(())
     }
-
 }

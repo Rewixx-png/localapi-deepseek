@@ -12,8 +12,8 @@ android {
         applicationId 'dev.localapi.deepseek'
         minSdk 26
         targetSdk 35
-        versionCode 79
-        versionName '1.11.18'
+        versionCode 80
+        versionName '1.11.19'
     }
 
     signingConfigs {
@@ -33,11 +33,17 @@ android {
             applicationIdSuffix ''
         }
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (System.getenv('ANDROID_KEYSTORE_PATH')) {
                 signingConfig signingConfigs.release
             }
         }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
     }
 
     compileOptions {
@@ -81,4 +87,5 @@ dependencies {
     implementation 'androidx.compose.material:material-icons-core'
     implementation 'androidx.compose.material:material-icons-extended'
     implementation 'androidx.activity:activity-compose:1.10.1'
+    testImplementation 'junit:junit:4.13.2'
 }

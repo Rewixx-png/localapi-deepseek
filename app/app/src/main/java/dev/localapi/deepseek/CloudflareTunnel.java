@@ -5,7 +5,6 @@ import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.os.Handler;
 import android.os.Looper;
-import android.webkit.WebView;
 
 import org.json.JSONObject;
 
@@ -16,7 +15,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.lang.ref.WeakReference;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URL;
@@ -35,18 +33,31 @@ final class CloudflareTunnel {
     private static final int MAX_EDGES = 3;
     private static CloudflareTunnel instance;
 
+    static final class Status {
+        final String state;
+        final String mode;
+        final String url;
+        final String error;
+        final String detail;
+        final int port;
+
+        Status(String state, String mode, String url, String error, String detail, int port) {
+            this.state = state;
+            this.mode = mode;
+            this.url = url;
+            this.error = error;
+            this.detail = detail;
+            this.port = port;
+        }
+    }
+
+    interface Listener {
+        void onTunnelStatus(Status status);
+    }
+
     private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
-    interface Listener {
-        void onTunnelStatus(String statusJson);
-    }
-
-    private WeakReference<WebView> webView = new WeakReference<>(null);
     private volatile Listener listener;
-
-    void setListener(Listener listener) {
-        this.listener = listener;
-    }
 
     private Process process;
     private Thread reader;
@@ -55,6 +66,7 @@ final class CloudflareTunnel {
     private volatile long launchSeq;
     private int restartAttempts;
 
+    private volatile boolean online = true;
     private volatile boolean stopped = true;
     private long generation;
     private volatile String state = "stopped";
@@ -83,15 +95,18 @@ final class CloudflareTunnel {
         }
     }
 
-    void attachWebView(WebView view) {
-        webView = new WeakReference<>(view);
+    void setListener(Listener listener) {
+        this.listener = listener;
     }
 
-    void detachWebView() {
-        webView = new WeakReference<>(null);
+    synchronized void setOnline(boolean enabled) {
+        this.online = enabled;
+        if (!enabled) {
+            stop();
+        }
     }
 
-    synchronized String start(String requestedMode, String token, String hostname, int localPort) {
+    synchronized Status start(String requestedMode, String token, String hostname, int localPort) {
         stopInternal(false);
         long ticket = ++generation;
         mode = "token".equals(requestedMode) ? "token" : "quick";
@@ -105,14 +120,18 @@ final class CloudflareTunnel {
         publicUrl = "";
         String cleanToken = token == null ? "" : token.trim();
 
+        if (!online) {
+            fail(ticket, "Доступ к интернету выключен");
+            return status();
+        }
         if (port <= 0) {
             fail(ticket, "Сначала запусти локальный API");
-            return statusJson();
+            return status();
         }
         if ("token".equals(mode)) {
             if (cleanToken.isEmpty()) {
                 fail(ticket, "Нужен токен именованного туннеля");
-                return statusJson();
+                return status();
             }
             publicUrl = normalizeHost(hostname);
         }
@@ -122,7 +141,7 @@ final class CloudflareTunnel {
         Thread starter = new Thread(() -> startWorker(ticket, cleanToken, cleanHost), "cf-tunnel-start");
         starter.setDaemon(true);
         starter.start();
-        return statusJson();
+        return status();
     }
 
     synchronized void stop() {
@@ -130,19 +149,8 @@ final class CloudflareTunnel {
         notifyStatus();
     }
 
-    synchronized String statusJson() {
-        try {
-            JSONObject out = new JSONObject();
-            out.put("state", state);
-            out.put("mode", mode);
-            out.put("url", publicUrl);
-            out.put("error", error);
-            out.put("detail", lastLogError);
-            out.put("port", port);
-            return out.toString();
-        } catch (Exception e) {
-            return "{\"state\":\"error\",\"error\":\"status\"}";
-        }
+    synchronized Status status() {
+        return new Status(state, mode, publicUrl, error, lastLogError, port);
     }
 
     private void startWorker(long ticket, String token, String hostname) {
@@ -214,7 +222,7 @@ final class CloudflareTunnel {
                         "  - service: \"http_status:404\"\n");
 
                 synchronized (this) {
-                    if (stopped || ticket != generation) {
+                    if (stopped || !online || ticket != generation) {
                         deleteRecursive(localWorkDir);
                         return;
                     }
@@ -262,7 +270,7 @@ final class CloudflareTunnel {
             Process started = builder.start();
             long sequence;
             synchronized (this) {
-                if (stopped || ticket != generation) {
+                if (stopped || !online || ticket != generation) {
                     started.destroy();
                     return;
                 }
@@ -297,7 +305,7 @@ final class CloudflareTunnel {
     }
 
     private synchronized boolean isStale(long ticket) {
-        return stopped || ticket != generation;
+        return stopped || !online || ticket != generation;
     }
 
     private List<String> resolveEdges() throws IOException {
@@ -404,7 +412,6 @@ final class CloudflareTunnel {
                 }
             }
         } catch (IOException ignored) {
-            // The process was stopped or the pipe closed.
         }
 
         int exit = -1;
@@ -418,7 +425,7 @@ final class CloudflareTunnel {
         int attempt = 0;
         List<String> command = null;
         synchronized (this) {
-            if (started != process || stopped || ticket != generation) {
+            if (started != process || stopped || !online || ticket != generation) {
                 return;
             }
             command = lastCommand;
@@ -437,7 +444,7 @@ final class CloudflareTunnel {
             final List<String> restartCmd = new ArrayList<>(command);
             main.postDelayed(() -> {
                 synchronized (CloudflareTunnel.this) {
-                    if (stopped || ticket != generation || targetAttempt != restartAttempts) {
+                    if (stopped || !online || ticket != generation || targetAttempt != restartAttempts) {
                         return;
                     }
                 }
@@ -503,22 +510,11 @@ final class CloudflareTunnel {
     }
 
     private void notifyStatus() {
-        String payload = statusJson();
+        Status snapshot = status();
         Listener l = listener;
         if (l != null) {
-            main.post(() -> l.onTunnelStatus(payload));
+            main.post(() -> l.onTunnelStatus(snapshot));
         }
-        WebView view = webView.get();
-        if (view == null) {
-            return;
-        }
-        main.post(() -> {
-            try {
-                view.evaluateJavascript("window.__tunnelStatus(" + JSONObject.quote(payload) + ")", null);
-            } catch (Exception ignored) {
-                // WebView is going away.
-            }
-        });
     }
 
     private void writeFile(File file, String text) throws IOException {

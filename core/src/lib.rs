@@ -13,6 +13,7 @@ pub mod web;
 
 pub use engine::{Engine, ServerStatus, Status};
 pub use types::{
-    Balance, ChatSummary, Conversation, Error, ErrorKind, Message, Poll, SendStart, Usage,
-    DEFAULT_BASE_URL, MODEL_ID, MODEL_LABEL, MODEL_VERSION, Source,
+    supports_images, Balance, ChatSummary, Conversation, Error, ErrorKind, Message, Poll,
+    PopLastTurn, SendStart, Source, Usage, DEFAULT_BASE_URL, MODEL_ID, MODEL_LABEL, MODEL_PRO_ID,
+    MODEL_REASONER_ID, MODEL_VERSION, SUPPORTED_MODELS,
 };
